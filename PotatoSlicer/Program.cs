@@ -11,6 +11,7 @@
 
 using System;
 using System.Diagnostics;
+using System.IO;
 using System.Threading;
 
 namespace PotatoSlicer
@@ -73,6 +74,9 @@ namespace PotatoSlicer
         const int CTR   = 25;   // bar centre index
         const int SCR_W = 74;   // width used for centring text
         const int POTS  = 5;    // potatoes per stage
+        const int LIVES = 3;    // misses allowed per run
+        const int GOLD  = 6;    // index of the golden potato in pots[]
+        const double GOLD_CHANCE = 0.07;   // chance a draw becomes golden
 
         // ── Stage definitions ─────────────────────────────────────
         static readonly string[] SN = {
@@ -95,7 +99,7 @@ namespace PotatoSlicer
             new int[]{ 0, 0, 1, 1 },
             new int[]{ 0, 1, 2, 2 },
             new int[]{ 1, 2, 3, 3 },
-            new int[]{ 1, 3, 4, 4 },
+            new int[]{ 1, 3, 4, 4, 5 },
             new int[]{ 0, 1, 2, 3, 4, 5 }
         };
 
@@ -103,6 +107,10 @@ namespace PotatoSlicer
         int    score, coins, combo, maxCombo, stage;
         bool   fever;   int fvStr;
         bool   quit;
+        int    lives;                             // run ends at 0
+        bool   dead;
+        int    hiScore;  bool newBest;
+        bool   sound = true;
         int    cP, cGr, cGd, cPo, cMs, cTotal;  // cut-quality counters
         double rxnSum;                            // sum of decision times (ms)
         int    stageBase;                         // score at start of stage
@@ -212,6 +220,19 @@ namespace PotatoSlicer
                   " \\ || || || || /",
                   "  `=========='"
                 }),
+
+              // ── 6: Golden Potato (rare bonus — never drawn from stage pools) ────
+              new Potato("GOLDEN POTATO",
+                "It glows. It hums. Do not let it get away.",
+                "Luxury spuds are real: La Bonnotte potatoes have sold for ~500 EUR per kilo.",
+                1, 500, 1.50, false, ConsoleColor.Yellow,
+                new string[]{
+                  "    .-$$$$-.",
+                  "   /  $$$$  \\",
+                  "  |  $ ** $  |",
+                  "   \\  $$$$  /",
+                  "    `-$$$$-'"
+                }),
             };
         }
 
@@ -223,6 +244,7 @@ namespace PotatoSlicer
             Console.OutputEncoding = System.Text.Encoding.UTF8;
             Console.CursorVisible  = false;
             TryResize(84, 46);
+            LoadHi();
             ShowTitle();
             MainMenu();
         }
@@ -273,16 +295,20 @@ namespace PotatoSlicer
                 Ink(ConsoleColor.White);
                 Console.WriteLine("  [1]  New Game");
                 Console.WriteLine("  [2]  How to Play");
-                Console.WriteLine("  [3]  Quit");
+                Console.WriteLine("  [3]  Sound: " + (sound ? "ON" : "OFF"));
+                Console.WriteLine("  [4]  Quit");
                 Console.WriteLine();
                 Ink(ConsoleColor.Gray);
                 Console.WriteLine("  Knife: " + knives[kEq].Name);
+                if (hiScore > 0)
+                    Console.WriteLine("  Best : " + hiScore + "   (" + GetRank(hiScore) + ")");
                 Console.ResetColor();
 
                 ConsoleKey k = Console.ReadKey(true).Key;
                 if (k == ConsoleKey.D1 || k == ConsoleKey.NumPad1) NewGame();
                 else if (k == ConsoleKey.D2 || k == ConsoleKey.NumPad2) HowToPlay();
-                else if (k == ConsoleKey.D3 || k == ConsoleKey.NumPad3)
+                else if (k == ConsoleKey.D3 || k == ConsoleKey.NumPad3) sound = !sound;
+                else if (k == ConsoleKey.D4 || k == ConsoleKey.NumPad4)
                 { Console.CursorVisible = true; Environment.Exit(0); }
             }
         }
@@ -305,6 +331,8 @@ namespace PotatoSlicer
             Ink(ConsoleColor.Cyan);
             Console.WriteLine("  COMBO :  Chain GOOD+ cuts. Bonus = +5%/level, cap at x20 (= +100%).");
             Console.WriteLine("  FEVER :  5 GREAT+ in a row -> 2x multiplier until streak breaks.");
+            Console.WriteLine("  LIVES :  You have 3. Every MISS costs one. Lose all -> GAME OVER.");
+            Console.WriteLine("  QUICK :  A GOOD+ cut inside 1.5 seconds earns a +25% bonus.");
             Console.WriteLine();
             Ink(ConsoleColor.Yellow);
             Console.WriteLine("  Some potatoes need multiple cuts: DICE = 2, JULIENNE = 3.");
@@ -315,11 +343,16 @@ namespace PotatoSlicer
             Console.WriteLine("  This is because Ipomoea batatas is a morning glory, not a");
             Console.WriteLine("  nightshade (Solanum tuberosum). The game is aware of this.");
             Console.WriteLine();
+            Ink(ConsoleColor.Yellow);
+            Console.WriteLine("  GOLDEN POTATO: ~7% chance to replace any potato. 500 base points,");
+            Console.WriteLine("  tiny sweet spot, and it drops 15 bonus coins when finished.");
+            Console.WriteLine();
             Ink(ConsoleColor.DarkCyan);
             Console.WriteLine("  GAME SCIENCE:");
             Console.WriteLine("    pts        = basePts x qualMult x comboBonus x feverBonus");
             Console.WriteLine("    comboBonus = 1.0 + min(combo, 20) x 0.05   [cap 2.0 at combo=20]");
             Console.WriteLine("    feverBonus = 2.0 if >=5 consecutive GREAT+, else 1.0");
+            Console.WriteLine("    quickBonus = +25% if decision < 1500 ms and quality >= GOOD");
             Console.WriteLine("    zoneHalf   = max(minWidth, floor(knifeHalf / potatoHardness))");
             Console.WriteLine("    chaos time (sweet potato) ~ Uniform(0.4, 2.0) seconds");
             Console.WriteLine();
@@ -339,6 +372,7 @@ namespace PotatoSlicer
         {
             score = 0; coins = 40; combo = 0; maxCombo = 0;
             fever = false; fvStr = 0; quit = false;
+            lives = LIVES; dead = false; newBest = false;
             cP = cGr = cGd = cPo = cMs = cTotal = 0; rxnSum = 0.0;
 
             for (int s = 0; s < SN.Length; s++)
@@ -350,6 +384,7 @@ namespace PotatoSlicer
                 stageBase = score;
                 PlayStage();
                 if (quit) break;
+                if (dead) { GameOver(); return; }
                 int ce = StageResult();
                 coins += ce;
                 if (s < SN.Length - 1 && !quit)
@@ -373,6 +408,7 @@ namespace PotatoSlicer
             Console.WriteLine("  Speed multiplier : " + SM[stage].ToString("F2") + "x  (" + eff.ToString("F0") + " chars/sec with current knife)");
             Console.WriteLine("  Potatoes to cut  : " + POTS);
             Console.WriteLine("  Your knife       : " + knives[kEq].Name);
+            Console.WriteLine("  Lives remaining  : " + new string('♥', lives));
             Console.WriteLine();
             Console.WriteLine("  [SPACE] Start   [ESC] Quit to menu");
             Console.ResetColor();
@@ -392,10 +428,12 @@ namespace PotatoSlicer
             int[] pool = SP[stage];
             for (int i = 0; i < POTS; i++)
             {
-                if (quit) return;
-                int id = pool[rng.Next(pool.Length)];
+                if (quit || dead) return;
+                int id = rng.NextDouble() < GOLD_CHANCE
+                    ? GOLD
+                    : pool[rng.Next(pool.Length)];
                 DoCutSequence(pots[id], i + 1);
-                if (!quit) Thread.Sleep(250);
+                if (!quit && !dead) Thread.Sleep(250);
             }
         }
 
@@ -427,14 +465,34 @@ namespace PotatoSlicer
                 if (quit) return;
 
                 int pts = CalcPts(q, p.Base);
+                // Quick-cut bonus: a scoring cut inside 1.5s earns +25%
+                bool quick = rxn < 1500.0 &&
+                             (q == CutQuality.Perfect || q == CutQuality.Great || q == CutQuality.Good);
+                if (quick) pts += pts / 4;
                 UpdStats(q);
                 score  += pts;
                 cTotal++;
                 rxnSum += rxn;
 
                 Console.SetCursorPosition(0, barRow + 3);
-                PrintResult(q, pts, rxn);
+                PrintResult(q, pts, rxn, quick);
+
+                if (q == CutQuality.Miss)
+                {
+                    lives--;
+                    Ink(ConsoleColor.Red);
+                    Ctr(lives > 0 ? "-1 life!  (" + new string('♥', lives) + " left)" : "OUT OF LIVES!");
+                    Console.ResetColor();
+                    if (lives <= 0) { Snd(150, 400); Thread.Sleep(1200); dead = true; return; }
+                }
                 Thread.Sleep(850);
+            }
+
+            if (p == pots[GOLD])
+            {
+                coins += 15;
+                Ink(ConsoleColor.Yellow); Ctr("The golden potato drops 15 bonus coins!");
+                Console.ResetColor();
             }
 
             Console.WriteLine();
@@ -454,7 +512,8 @@ namespace PotatoSlicer
             Ink(ConsoleColor.DarkGray); Console.Write("  S" + (stage+1) + "/" + SN.Length + " " + SN[stage] + "   ");
             Ink(ConsoleColor.Yellow);   Console.Write("Score: " + score + "   ");
             Ink(ConsoleColor.Cyan);     Console.Write("Combo: x" + Math.Max(1, combo) + "   ");
-            Ink(ConsoleColor.DarkGray); Console.Write("Coins: " + coins);
+            Ink(ConsoleColor.DarkGray); Console.Write("Coins: " + coins + "   ");
+            Ink(ConsoleColor.Red);      Console.Write(new string('♥', lives));
             if (fever) { Ink(ConsoleColor.Magenta); Console.Write("   [FEVER 2x]"); }
             Console.ResetColor(); Console.WriteLine(); Console.WriteLine();
 
@@ -586,15 +645,37 @@ namespace PotatoSlicer
                     }
                     if (key.Key == ConsoleKey.Escape)
                     {
-                        quit    = true;
-                        quality = CutQuality.Miss;
-                        rxnMs   = 0.0;
-                        return;
+                        if (ConfirmQuit(barRow))
+                        {
+                            quit    = true;
+                            quality = CutQuality.Miss;
+                            rxnMs   = 0.0;
+                            return;
+                        }
+                        // Resume: restart the sweep so the 5s timeout is fair
+                        sw.Restart();
+                        prev = 0.0;
                     }
                 }
 
                 if (t > 5.0) return;    // timeout → Miss (defaults already set)
                 Thread.Sleep(14);       // ~70 fps
+            }
+        }
+
+        // Asks before abandoning the run. Prompt overwrites the info line,
+        // which the next animation frame repaints.
+        bool ConfirmQuit(int barRow)
+        {
+            try { Console.SetCursorPosition(0, barRow + 1); } catch { }
+            Ink(ConsoleColor.Red);
+            Console.Write("  Abandon this run? All progress is lost. [Y/N]              ");
+            Console.ResetColor();
+            for (;;)
+            {
+                ConsoleKey k = Console.ReadKey(true).Key;
+                if (k == ConsoleKey.Y) return true;
+                if (k == ConsoleKey.N || k == ConsoleKey.Escape) return false;
             }
         }
 
@@ -688,19 +769,20 @@ namespace PotatoSlicer
         // ────────────────────────────────────────────────────────
         //  CUT RESULT DISPLAY  (written below the bar rows)
         // ────────────────────────────────────────────────────────
-        void PrintResult(CutQuality q, int pts, double rxn)
+        void PrintResult(CutQuality q, int pts, double rxn, bool quick)
         {
             string lbl; ConsoleColor col;
             switch (q)
             {
-                case CutQuality.Perfect: lbl = "  *** PERFECT! ***  "; col = ConsoleColor.White;      break;
-                case CutQuality.Great:   lbl = "   ** GREAT! **     "; col = ConsoleColor.Green;      break;
-                case CutQuality.Good:    lbl = "      GOOD           "; col = ConsoleColor.Yellow;    break;
-                case CutQuality.Poor:    lbl = "      poor...        "; col = ConsoleColor.DarkYellow; break;
-                default:                 lbl = "      MISS           "; col = ConsoleColor.Red;        break;
+                case CutQuality.Perfect: lbl = "  *** PERFECT! ***  "; col = ConsoleColor.White;      Snd(1200, 120); break;
+                case CutQuality.Great:   lbl = "   ** GREAT! **     "; col = ConsoleColor.Green;      Snd(900, 100);  break;
+                case CutQuality.Good:    lbl = "      GOOD           "; col = ConsoleColor.Yellow;    Snd(700, 80);   break;
+                case CutQuality.Poor:    lbl = "      poor...        "; col = ConsoleColor.DarkYellow; Snd(300, 80);  break;
+                default:                 lbl = "      MISS           "; col = ConsoleColor.Red;        Snd(150, 200); break;
             }
             Ink(col); Ctr(lbl);
             if (pts > 0)      { Ink(ConsoleColor.Yellow);   Ctr("+ " + pts + " pts"); }
+            if (quick)        { Ink(ConsoleColor.Green);    Ctr("QUICK CUT! +25% bonus"); }
             if (combo > 2)    { Ink(ConsoleColor.Cyan);     Ctr("Combo x" + combo + "!"); }
             if (fever)        { Ink(ConsoleColor.Magenta);  Ctr("[ FEVER: 2x points! ]"); }
             if (rxn < 4999.0) { Ink(ConsoleColor.DarkGray); Ctr("Decision time: " + rxn.ToString("F0") + " ms"); }
@@ -800,6 +882,7 @@ namespace PotatoSlicer
                     kOwned[idx] = true;
                     kEq         = idx;
                     Ink(ConsoleColor.Green); Ctr("Purchased & equipped: " + knives[idx].Name + "!");
+                    Snd(1000, 80);
                     Thread.Sleep(800);
                 }
                 else
@@ -816,6 +899,8 @@ namespace PotatoSlicer
         // ────────────────────────────────────────────────────────
         void Victory()
         {
+            SaveBest();
+            Snd(900, 100); Snd(1100, 100); Snd(1400, 200);
             Console.Clear(); Console.WriteLine();
             Ink(ConsoleColor.Yellow);
             Ctr("##########################################");
@@ -825,8 +910,53 @@ namespace PotatoSlicer
             Ctr("##########################################");
             Console.WriteLine();
             Ink(ConsoleColor.White); Ctr("FINAL SCORE: " + score);
+            if (newBest)          { Ink(ConsoleColor.Green);    Ctr("*** NEW HIGH SCORE! ***"); }
+            else if (hiScore > 0) { Ink(ConsoleColor.DarkGray); Ctr("Best: " + hiScore); }
             Console.WriteLine();
 
+            FinalStats();
+            Console.WriteLine();
+            Ink(ConsoleColor.Cyan); Ctr("RANK: " + GetRank(score));
+            Console.WriteLine();
+            Ink(ConsoleColor.DarkGray); Ctr("Press any key to return to menu...");
+            Console.ResetColor();
+            Console.ReadKey(true);
+        }
+
+        // ────────────────────────────────────────────────────────
+        //  GAME OVER SCREEN  —  shown when all lives are lost
+        // ────────────────────────────────────────────────────────
+        void GameOver()
+        {
+            SaveBest();
+            Snd(400, 150); Snd(300, 150); Snd(150, 400);
+            Console.Clear(); Console.WriteLine();
+            Ink(ConsoleColor.Red);
+            Ctr("##########################################");
+            Ctr("#                                        #");
+            Ctr("#         G A M E    O V E R            #");
+            Ctr("#                                        #");
+            Ctr("##########################################");
+            Console.WriteLine();
+            Ink(ConsoleColor.Gray);
+            Ctr("You ran out of lives in stage " + (stage+1) + ": " + SN[stage] + ".");
+            Console.WriteLine();
+            Ink(ConsoleColor.White); Ctr("FINAL SCORE: " + score);
+            if (newBest)          { Ink(ConsoleColor.Green);    Ctr("*** NEW HIGH SCORE! ***"); }
+            else if (hiScore > 0) { Ink(ConsoleColor.DarkGray); Ctr("Best: " + hiScore); }
+            Console.WriteLine();
+
+            FinalStats();
+            Console.WriteLine();
+            Ink(ConsoleColor.Cyan); Ctr("RANK: " + GetRank(score));
+            Console.WriteLine();
+            Ink(ConsoleColor.DarkGray); Ctr("Press any key to return to menu...");
+            Console.ResetColor();
+            Console.ReadKey(true);
+        }
+
+        void FinalStats()
+        {
             Ink(ConsoleColor.Gray);
             Console.WriteLine("  PERFECT  : " + cP);
             Console.WriteLine("  GREAT    : " + cGr);
@@ -841,12 +971,6 @@ namespace PotatoSlicer
                 Console.WriteLine("  ACCURACY : " + acc.ToString("F1") + "%");
                 Console.WriteLine("  AVG DT   : " + avg.ToString("F0") + " ms  (mean decision time per cut)");
             }
-            Console.WriteLine();
-            Ink(ConsoleColor.Cyan); Ctr("RANK: " + GetRank(score));
-            Console.WriteLine();
-            Ink(ConsoleColor.DarkGray); Ctr("Press any key to return to menu...");
-            Console.ResetColor();
-            Console.ReadKey(true);
         }
 
         static string GetRank(int s)
@@ -859,6 +983,44 @@ namespace PotatoSlicer
             if (s >= 4000)  return "B   LINE COOK";
             if (s >= 2000)  return "C   HOME COOK";
             return                 "D   You tried. Potatoes are hard.";
+        }
+
+        // ────────────────────────────────────────────────────────
+        //  High score persistence  —  plain text file next to the binary
+        // ────────────────────────────────────────────────────────
+        static string HiPath => Path.Combine(AppContext.BaseDirectory, "highscore.txt");
+
+        void LoadHi()
+        {
+            try
+            {
+                if (File.Exists(HiPath))
+                    int.TryParse(File.ReadAllText(HiPath).Trim(), out hiScore);
+            }
+            catch { /* unreadable file -> no high score */ }
+        }
+
+        void SaveBest()
+        {
+            if (score <= hiScore) return;
+            hiScore = score;
+            newBest = true;
+            try { File.WriteAllText(HiPath, hiScore.ToString()); }
+            catch { /* read-only install dir -> score not persisted */ }
+        }
+
+        // ────────────────────────────────────────────────────────
+        //  Sound  —  tones on Windows, terminal bell elsewhere
+        // ────────────────────────────────────────────────────────
+        void Snd(int freq, int dur)
+        {
+            if (!sound) return;
+            try
+            {
+                if (OperatingSystem.IsWindows()) Console.Beep(freq, dur);
+                else Console.Beep();
+            }
+            catch { /* no console / no audio device */ }
         }
 
         // ────────────────────────────────────────────────────────
