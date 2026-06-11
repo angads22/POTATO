@@ -1,0 +1,56 @@
+name: Release
+
+# Builds self-contained single-file binaries and attaches them to a
+# GitHub Release. Trigger by pushing a tag like v1.1.0 (the tag must
+# match the VERSION constant in Program.cs so the in-game update
+# checker agrees with the release). Manual runs upload the binaries
+# as workflow artifacts instead of creating a release.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish win-x64
+        run: >
+          dotnet publish PotatoSlicer/PotatoSlicer.csproj -c Release -r win-x64
+          --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true
+          -o out/win
+
+      - name: Publish linux-x64
+        run: >
+          dotnet publish PotatoSlicer/PotatoSlicer.csproj -c Release -r linux-x64
+          --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true
+          -o out/linux
+
+      - name: Rename assets
+        run: |
+          mv out/win/PotatoSlicer.exe out/PotatoSlicer-win-x64.exe
+          mv out/linux/PotatoSlicer out/PotatoSlicer-linux-x64
+
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/PotatoSlicer-win-x64.exe
+            out/PotatoSlicer-linux-x64
+
+      - name: Upload artifacts (manual run)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: PotatoSlicer
+          path: out/PotatoSlicer-*
