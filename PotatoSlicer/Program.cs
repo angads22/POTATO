@@ -246,13 +246,15 @@ namespace PotatoSlicer
         // ────────────────────────────────────────────────────────
         //  Run  —  entry point
         // ────────────────────────────────────────────────────────
-        public void Run()
+        public void Run(string[] args)
         {
             Console.OutputEncoding = System.Text.Encoding.UTF8;
             Console.CursorVisible  = false;
             TryResize(84, 46);
             LoadHi();
             CleanupOldBinary();
+            if (Array.IndexOf(args, "--no-update") < 0)
+                AutoUpdateOnLaunch();
             ShowTitle();
             MainMenu();
         }
@@ -1116,22 +1118,15 @@ namespace PotatoSlicer
 
         void DoUpdate(HttpClient http, JsonDocument doc, string tag)
         {
-            string exe = Environment.ProcessPath ?? "";
-            string stem = Path.GetFileNameWithoutExtension(exe);
-            if (stem == "dotnet" || exe.Length == 0)
+            if (RunningFromSource())
             {
                 Ink(ConsoleColor.Gray);
                 Console.WriteLine("  You are running from source — update with: git pull");
                 return;
             }
 
-            string want = OperatingSystem.IsWindows() ? "win-x64.exe" : "linux-x64";
-            string url = null, name = null;
-            foreach (JsonElement a in doc.RootElement.GetProperty("assets").EnumerateArray())
-            {
-                string an = a.GetProperty("name").GetString() ?? "";
-                if (an.EndsWith(want)) { url = a.GetProperty("browser_download_url").GetString(); name = an; break; }
-            }
+            string name;
+            string url = FindAssetUrl(doc, out name);
             if (url == null)
             {
                 Ink(ConsoleColor.Red);
@@ -1145,6 +1140,80 @@ namespace PotatoSlicer
             if (Console.ReadKey(true).Key != ConsoleKey.Y) return;
 
             Console.WriteLine("  Downloading...");
+            InstallBinary(http, url);
+
+            Ink(ConsoleColor.Green);
+            Console.WriteLine("  Updated to " + tag + "!  Restart the game to play the new version.");
+        }
+
+        // ────────────────────────────────────────────────────────
+        //  AUTO-UPDATE ON LAUNCH
+        //  Quietly checks for a newer release; if one exists it is
+        //  installed and the game restarts itself. Any failure
+        //  (offline, no releases yet) silently drops into the game.
+        //  The restarted process gets --no-update so a release tag
+        //  that mismatches VERSION can't cause a restart loop.
+        // ────────────────────────────────────────────────────────
+        void AutoUpdateOnLaunch()
+        {
+            if (RunningFromSource()) return;
+            try
+            {
+                using (HttpClient http = new HttpClient())
+                {
+                    http.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoSlicer/" + VERSION);
+                    http.Timeout = TimeSpan.FromSeconds(6);
+                    string json = http.GetStringAsync(
+                        "https://api.github.com/repos/" + REPO + "/releases/latest").GetAwaiter().GetResult();
+
+                    using (JsonDocument doc = JsonDocument.Parse(json))
+                    {
+                        string tag = doc.RootElement.GetProperty("tag_name").GetString() ?? "";
+                        if (tag.TrimStart('v', 'V') == VERSION) return;
+                        string name;
+                        string url = FindAssetUrl(doc, out name);
+                        if (url == null) return;
+
+                        Console.Clear();
+                        Console.WriteLine();
+                        Ink(ConsoleColor.Yellow); Ctr("A new version is available: " + tag);
+                        Ink(ConsoleColor.Gray);   Ctr("Updating automatically...");
+                        Console.ResetColor();
+                        InstallBinary(http, url);
+                        Ink(ConsoleColor.Green);  Ctr("Updated! Restarting...");
+                        Console.ResetColor();
+                        Thread.Sleep(900);
+                        Process.Start(new ProcessStartInfo(Environment.ProcessPath, "--no-update")
+                                      { UseShellExecute = false });
+                        Environment.Exit(0);
+                    }
+                }
+            }
+            catch { /* offline or no release yet — just play */ }
+        }
+
+        // Running via `dotnet run` rather than as a published binary?
+        static bool RunningFromSource()
+        {
+            string exe = Environment.ProcessPath ?? "";
+            return exe.Length == 0 || Path.GetFileNameWithoutExtension(exe) == "dotnet";
+        }
+
+        static string FindAssetUrl(JsonDocument doc, out string name)
+        {
+            string want = OperatingSystem.IsWindows() ? "win-x64.exe" : "linux-x64";
+            foreach (JsonElement a in doc.RootElement.GetProperty("assets").EnumerateArray())
+            {
+                string an = a.GetProperty("name").GetString() ?? "";
+                if (an.EndsWith(want)) { name = an; return a.GetProperty("browser_download_url").GetString(); }
+            }
+            name = null;
+            return null;
+        }
+
+        static void InstallBinary(HttpClient http, string url)
+        {
+            string exe  = Environment.ProcessPath;
             byte[] data = http.GetByteArrayAsync(url).GetAwaiter().GetResult();
 
             string fresh = exe + ".new";
@@ -1155,24 +1224,29 @@ namespace PotatoSlicer
                     UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
                     UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
 
+            // A running exe can be renamed but not deleted or overwritten.
+            // If .old is still locked (second update without a restart, so
+            // .old IS the running image), park it under a unique name.
             string old = exe + ".old";
-            if (File.Exists(old)) File.Delete(old);
+            try { if (File.Exists(old)) File.Delete(old); }
+            catch { old = exe + ".old" + Environment.TickCount64; }
             File.Move(exe, old);
             File.Move(fresh, exe);
-
-            Ink(ConsoleColor.Green);
-            Console.WriteLine("  Updated to " + tag + "!  Restart the game to play the new version.");
         }
 
-        // Removes the renamed-aside binary left behind by a previous update
+        // Removes renamed-aside binaries left behind by previous updates
         void CleanupOldBinary()
         {
             try
             {
-                string old = (Environment.ProcessPath ?? "") + ".old";
-                if (old.Length > 4 && File.Exists(old)) File.Delete(old);
+                string exe = Environment.ProcessPath ?? "";
+                if (exe.Length == 0) return;
+                string dir = Path.GetDirectoryName(exe);
+                if (dir == null) return;
+                foreach (string f in Directory.GetFiles(dir, Path.GetFileName(exe) + ".old*"))
+                    try { File.Delete(f); } catch { /* still locked — next launch gets it */ }
             }
-            catch { /* still locked by the old process — next launch gets it */ }
+            catch { /* directory unreadable — nothing to clean */ }
         }
 
         // ────────────────────────────────────────────────────────
@@ -1230,6 +1304,6 @@ namespace PotatoSlicer
     // ──────────────────────────────────────────────────────────────
     class Program
     {
-        static void Main() => new Game().Run();
+        static void Main(string[] args) => new Game().Run(args);
     }
 }

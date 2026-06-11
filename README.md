@@ -14,8 +14,9 @@ Championship. Earn coins, buy better knives, chain combos, and chase FEVER mode.
 - Rare golden potato (~7% chance) worth 500 base points and bonus coins
 - Persistent high score, shown on the main menu with your best rank
 - Sound effects (toggle in the menu)
-- Built-in update checker: the menu's "Check for Updates" compares your
-  version against the latest GitHub release and installs it for you
+- Auto-updates: the standalone app checks the latest GitHub release on
+  launch and updates itself, then restarts (skip with `--no-update`);
+  there's also a manual "Check for Updates" in the menu
 
 ## Download (no .NET required)
 

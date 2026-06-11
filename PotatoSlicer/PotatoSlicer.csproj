@@ -7,5 +7,7 @@
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
     <Version>1.1.0</Version>
     <AssemblyTitle>SLICE IT! - The Potato Cutting Championship</AssemblyTitle>
+    <!-- Compresses the bundled runtime when publishing single-file -->
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
 </Project>
