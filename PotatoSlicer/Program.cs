@@ -20,6 +20,6 @@ namespace PotatoSlicer
 {
     class Program
     {
-        static void Main() => new Game().Run();
+        static void Main(string[] args) => new Game().Run(args);
     }
 }

@@ -32,6 +32,7 @@ namespace PotatoSlicer
         int    cP, cGr, cGd, cPo, cMs, cTotal;  // cut-quality counters
         double rxnSum;                            // sum of decision times (ms)
         int    stageBase;                         // score at start of stage
+        int    artRow = -1;                       // console row of the potato art
         bool   stageClean;                        // no misses this stage (recipe/achv)
         bool   everFever, dodgedRotten, gotGolden, anyCleanStage;  // achievement flags
 
@@ -73,11 +74,14 @@ namespace PotatoSlicer
         // ────────────────────────────────────────────────────────
         //  Run  —  entry point
         // ────────────────────────────────────────────────────────
-        public void Run()
+        public void Run(string[] args)
         {
             Console.OutputEncoding = System.Text.Encoding.UTF8;
             Console.CursorVisible  = false;
             TryResize(84, 46);
+            Updater.CleanupOldBinaries();
+            if (Array.IndexOf(args, "--no-update") < 0)
+                Updater.AutoUpdateOnLaunch();
             save = SaveData.Load();
             LoadHi();                                  // legacy highscore.txt seed
             hiScore = Math.Max(hiScore, save.OverallBest());
@@ -109,11 +113,25 @@ namespace PotatoSlicer
             Ctr(@"\__ \| |__| |\__ \| _|    | |  | |  | |");
             Ctr(@"|___/|____|_||___/|___|   |_|  |_|  |_|");
             Console.WriteLine();
-            Ink(ConsoleColor.White);    Ctr("==========================================");
-            Ink(ConsoleColor.Cyan);     Ctr("   THE POTATO CUTTING CHAMPIONSHIP   ");
-            Ink(ConsoleColor.White);    Ctr("==========================================");
+            Ink(ConsoleColor.Gray);
+            Ctr(@"      _______________________            ");
+            Ctr(@"     |  ___________________  |\          ");
+            Ctr(@"     | |                   | | \         ");
+            Ctr(@"     |_|___________________|_|  \        ");
+            Ctr(@"               | |               \       ");
+            Ink(ConsoleColor.DarkYellow);
+            Ctr(@"               |_|    .-~~~~~~-.         ");
+            Ctr(@"                     /  o    o  \        ");
+            Ctr(@"                    |    ____    |       ");
+            Ctr(@"                     \  \____/  /        ");
+            Ctr(@"                      `-~~~~~~-'         ");
+            Console.WriteLine();
+            Ink(ConsoleColor.White);    Ctr("╔══════════════════════════════════════╗");
+            Ink(ConsoleColor.Cyan);     Ctr("║   THE POTATO CUTTING CHAMPIONSHIP    ║");
+            Ink(ConsoleColor.White);    Ctr("╚══════════════════════════════════════╝");
             Console.WriteLine();
             Ink(ConsoleColor.DarkGray); Ctr("A game about knives, starch, and questionable life choices.");
+            Ink(ConsoleColor.DarkGray); Ctr("v" + Updater.VERSION);
             Console.WriteLine();
             Ink(ConsoleColor.Gray);     Ctr("Press any key to continue...");
             Console.ResetColor();
@@ -135,12 +153,15 @@ namespace PotatoSlicer
                 Console.WriteLine("  [3]  Leaderboard");
                 Console.WriteLine("  [4]  Achievements");
                 Console.WriteLine("  [5]  Sound: " + (Audio.Enabled ? "ON" : "OFF"));
-                Console.WriteLine("  [6]  Quit");
+                Console.WriteLine("  [6]  Check for Updates");
+                Console.WriteLine("  [7]  Quit");
                 Console.WriteLine();
                 Ink(ConsoleColor.Gray);
                 Console.WriteLine("  Knife: " + knives[kEq].Name + "   Chef XP: " + save.ChefXp);
                 if (hiScore > 0)
                     Console.WriteLine("  Best : " + hiScore + "   (" + GetRank(hiScore) + ")");
+                Ink(ConsoleColor.DarkGray);
+                Console.WriteLine("  v" + Updater.VERSION);
                 Console.ResetColor();
 
                 ConsoleKey k = Console.ReadKey(true).Key;
@@ -149,7 +170,8 @@ namespace PotatoSlicer
                 else if (k == ConsoleKey.D3 || k == ConsoleKey.NumPad3) LeaderboardScreen();
                 else if (k == ConsoleKey.D4 || k == ConsoleKey.NumPad4) AchievementsScreen();
                 else if (k == ConsoleKey.D5 || k == ConsoleKey.NumPad5) Audio.Enabled = !Audio.Enabled;
-                else if (k == ConsoleKey.D6 || k == ConsoleKey.NumPad6)
+                else if (k == ConsoleKey.D6 || k == ConsoleKey.NumPad6) Updater.CheckInteractive();
+                else if (k == ConsoleKey.D7 || k == ConsoleKey.NumPad7)
                 { Console.CursorVisible = true; Environment.Exit(0); }
             }
         }
@@ -302,6 +324,11 @@ namespace PotatoSlicer
                 DispatchCut(p, k, sm, ph, gh, gd, barRow, out q, out rxn);
                 if (quit) return;
 
+                // Rotten potatoes are binned, not sliced — no split animation
+                if (p.Cut != CutType.Dodge &&
+                    (q == CutQuality.Perfect || q == CutQuality.Great || q == CutQuality.Good))
+                    SliceAnim(p);
+
                 int pts = CalcPts(q, p.Base, combo, fever);
                 // Quick-cut bonus: a scoring cut inside 1.5s earns +25%
                 bool quick = rxn < 1500.0 &&
@@ -356,6 +383,35 @@ namespace PotatoSlicer
         }
 
         // ────────────────────────────────────────────────────────
+        //  SLICE ANIMATION  —  splits the potato art apart
+        // ────────────────────────────────────────────────────────
+        void SliceAnim(Potato p)
+        {
+            if (artRow < 0) return;
+            int width = 0;
+            foreach (string l in p.Art) if (l.Length > width) width = l.Length;
+            int mid = width / 2;
+            try
+            {
+                for (int gap = 0; gap <= 6; gap += 2)
+                {
+                    Console.SetCursorPosition(0, artRow);
+                    Ink(p.Color);
+                    foreach (string line in p.Art)
+                    {
+                        string s   = line.PadRight(width);
+                        int    pad = Math.Max(0, (Layout.SCR_W - width - gap) / 2);
+                        Console.WriteLine(new string(' ', pad) +
+                                          s.Substring(0, mid) + new string(' ', gap) + s.Substring(mid) + "  ");
+                    }
+                    Console.ResetColor();
+                    Thread.Sleep(55);
+                }
+            }
+            catch { /* cursor ops fail when output is redirected */ }
+        }
+
+        // ────────────────────────────────────────────────────────
         //  STATIC SCREEN LAYOUT  (drawn once per cut)
         // ────────────────────────────────────────────────────────
         void DrawPlayfield(Potato p, int num, int cut, Knife k, int ph, int gh, int gd)
@@ -374,7 +430,8 @@ namespace PotatoSlicer
             { Ink(ConsoleColor.Green); Console.Write("   Time: " + Math.Max(0.0, 60.0 - taClock.Elapsed.TotalSeconds).ToString("F0") + "s"); }
             Console.ResetColor(); Console.WriteLine(); Console.WriteLine();
 
-            // Potato art
+            // Potato art (artRow is remembered so SliceAnim can split it later)
+            artRow = Console.CursorTop;
             Ink(p.Color);
             foreach (string line in p.Art) Ctr(line);
             Console.WriteLine();
