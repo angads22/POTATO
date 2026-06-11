@@ -12,6 +12,8 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
+using System.Text.Json;
 using System.Threading;
 
 namespace PotatoSlicer
@@ -69,6 +71,10 @@ namespace PotatoSlicer
     // ──────────────────────────────────────────────────────────────
     sealed class Game
     {
+        // ── Version / update source ───────────────────────────────
+        const string VERSION = "1.1.0";          // must match the release tag (v1.1.0)
+        const string REPO    = "angads22/POTATO";
+
         // ── Layout constants ──────────────────────────────────────
         const int BAR   = 50;   // bar width in characters
         const int CTR   = 25;   // bar centre index
@@ -114,6 +120,7 @@ namespace PotatoSlicer
         int    cP, cGr, cGd, cPo, cMs, cTotal;  // cut-quality counters
         double rxnSum;                            // sum of decision times (ms)
         int    stageBase;                         // score at start of stage
+        int    artRow = -1;                       // console row of the potato art
 
         // ── Data arrays ───────────────────────────────────────────
         Knife[]  knives;
@@ -245,6 +252,7 @@ namespace PotatoSlicer
             Console.CursorVisible  = false;
             TryResize(84, 46);
             LoadHi();
+            CleanupOldBinary();
             ShowTitle();
             MainMenu();
         }
@@ -272,11 +280,25 @@ namespace PotatoSlicer
             Ctr(@"\__ \| |__| |\__ \| _|    | |  | |  | |");
             Ctr(@"|___/|____|_||___/|___|   |_|  |_|  |_|");
             Console.WriteLine();
-            Ink(ConsoleColor.White);    Ctr("==========================================");
-            Ink(ConsoleColor.Cyan);     Ctr("   THE POTATO CUTTING CHAMPIONSHIP   ");
-            Ink(ConsoleColor.White);    Ctr("==========================================");
+            Ink(ConsoleColor.Gray);
+            Ctr(@"      _______________________            ");
+            Ctr(@"     |  ___________________  |\          ");
+            Ctr(@"     | |                   | | \         ");
+            Ctr(@"     |_|___________________|_|  \        ");
+            Ctr(@"               | |               \       ");
+            Ink(ConsoleColor.DarkYellow);
+            Ctr(@"               |_|    .-~~~~~~-.         ");
+            Ctr(@"                     /  o    o  \        ");
+            Ctr(@"                    |    ____    |       ");
+            Ctr(@"                     \  \____/  /        ");
+            Ctr(@"                      `-~~~~~~-'         ");
+            Console.WriteLine();
+            Ink(ConsoleColor.White);    Ctr("╔══════════════════════════════════════╗");
+            Ink(ConsoleColor.Cyan);     Ctr("║   THE POTATO CUTTING CHAMPIONSHIP    ║");
+            Ink(ConsoleColor.White);    Ctr("╚══════════════════════════════════════╝");
             Console.WriteLine();
             Ink(ConsoleColor.DarkGray); Ctr("A game about knives, starch, and questionable life choices.");
+            Ink(ConsoleColor.DarkGray); Ctr("v" + VERSION);
             Console.WriteLine();
             Ink(ConsoleColor.Gray);     Ctr("Press any key to continue...");
             Console.ResetColor();
@@ -296,19 +318,23 @@ namespace PotatoSlicer
                 Console.WriteLine("  [1]  New Game");
                 Console.WriteLine("  [2]  How to Play");
                 Console.WriteLine("  [3]  Sound: " + (sound ? "ON" : "OFF"));
-                Console.WriteLine("  [4]  Quit");
+                Console.WriteLine("  [4]  Check for Updates");
+                Console.WriteLine("  [5]  Quit");
                 Console.WriteLine();
                 Ink(ConsoleColor.Gray);
                 Console.WriteLine("  Knife: " + knives[kEq].Name);
                 if (hiScore > 0)
                     Console.WriteLine("  Best : " + hiScore + "   (" + GetRank(hiScore) + ")");
+                Ink(ConsoleColor.DarkGray);
+                Console.WriteLine("  v" + VERSION);
                 Console.ResetColor();
 
                 ConsoleKey k = Console.ReadKey(true).Key;
                 if (k == ConsoleKey.D1 || k == ConsoleKey.NumPad1) NewGame();
                 else if (k == ConsoleKey.D2 || k == ConsoleKey.NumPad2) HowToPlay();
                 else if (k == ConsoleKey.D3 || k == ConsoleKey.NumPad3) sound = !sound;
-                else if (k == ConsoleKey.D4 || k == ConsoleKey.NumPad4)
+                else if (k == ConsoleKey.D4 || k == ConsoleKey.NumPad4) CheckUpdate();
+                else if (k == ConsoleKey.D5 || k == ConsoleKey.NumPad5)
                 { Console.CursorVisible = true; Environment.Exit(0); }
             }
         }
@@ -399,7 +425,12 @@ namespace PotatoSlicer
         void StageIntro()
         {
             Console.Clear();
-            Ink(ConsoleColor.Yellow); Ctr(">> STAGE " + (stage+1) + " / " + SN.Length + " <<"); Console.WriteLine();
+            string banner = "   STAGE " + (stage+1) + " / " + SN.Length + "   ";
+            Ink(ConsoleColor.Yellow);
+            Ctr("╔" + new string('═', banner.Length) + "╗");
+            Ctr("║" + banner + "║");
+            Ctr("╚" + new string('═', banner.Length) + "╝");
+            Console.WriteLine();
             Ink(ConsoleColor.White);  Ctr(SN[stage].ToUpper());
             Ink(ConsoleColor.Gray);   Ctr(ST[stage]);
             Console.WriteLine();
@@ -464,6 +495,9 @@ namespace PotatoSlicer
                 AnimBar(p, k, sm, ph, gh, gd, barRow, out q, out rxn);
                 if (quit) return;
 
+                if (q == CutQuality.Perfect || q == CutQuality.Great || q == CutQuality.Good)
+                    SliceAnim(p);
+
                 int pts = CalcPts(q, p.Base);
                 // Quick-cut bonus: a scoring cut inside 1.5s earns +25%
                 bool quick = rxn < 1500.0 &&
@@ -515,9 +549,12 @@ namespace PotatoSlicer
             Ink(ConsoleColor.DarkGray); Console.Write("Coins: " + coins + "   ");
             Ink(ConsoleColor.Red);      Console.Write(new string('♥', lives));
             if (fever) { Ink(ConsoleColor.Magenta); Console.Write("   [FEVER 2x]"); }
-            Console.ResetColor(); Console.WriteLine(); Console.WriteLine();
+            Console.ResetColor(); Console.WriteLine();
+            Ink(ConsoleColor.DarkGray); Console.WriteLine("  " + new string('─', 70));
+            Console.ResetColor();
 
-            // Potato art
+            // Potato art (artRow is remembered so SliceAnim can split it later)
+            artRow = Console.CursorTop;
             Ink(p.Color);
             foreach (string line in p.Art) Ctr(line);
             Console.WriteLine();
@@ -566,6 +603,39 @@ namespace PotatoSlicer
                 Console.Write(i < num ? "\u25cf " : i == num ? "\u25c6 " : "\u25cb ");
             }
             Console.ResetColor(); Console.WriteLine(); Console.WriteLine();
+
+            // Centre marker above the bar ("  [" prefix is 3 columns wide)
+            Ink(ConsoleColor.DarkGray);
+            Console.WriteLine(new string(' ', 3 + CTR) + "\u25bc");
+            Console.ResetColor();
+        }
+
+        // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        //  SLICE ANIMATION  \u2014  splits the potato art apart
+        // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        void SliceAnim(Potato p)
+        {
+            int width = 0;
+            foreach (string l in p.Art) if (l.Length > width) width = l.Length;
+            int mid = width / 2;
+            try
+            {
+                for (int gap = 0; gap <= 6; gap += 2)
+                {
+                    Console.SetCursorPosition(0, artRow);
+                    Ink(p.Color);
+                    foreach (string line in p.Art)
+                    {
+                        string s   = line.PadRight(width);
+                        int    pad = Math.Max(0, (SCR_W - width - gap) / 2);
+                        Console.WriteLine(new string(' ', pad) +
+                                          s.Substring(0, mid) + new string(' ', gap) + s.Substring(mid) + "  ");
+                    }
+                    Console.ResetColor();
+                    Thread.Sleep(55);
+                }
+            }
+            catch { /* cursor ops fail when output is redirected */ }
         }
 
         // ────────────────────────────────────────────────────────
@@ -835,9 +905,9 @@ namespace PotatoSlicer
             {
                 Console.Clear();
                 Ink(ConsoleColor.Cyan);
-                Ctr("+---------------------+");
-                Ctr("|  K N I F E  S H O P  |");
-                Ctr("+---------------------+");
+                Ctr("╔═══════════════════════╗");
+                Ctr("║  K N I F E   S H O P  ║");
+                Ctr("╚═══════════════════════╝");
                 Console.WriteLine();
                 Ink(ConsoleColor.Yellow); Console.WriteLine("  Coins: " + coins); Console.WriteLine();
 
@@ -903,11 +973,11 @@ namespace PotatoSlicer
             Snd(900, 100); Snd(1100, 100); Snd(1400, 200);
             Console.Clear(); Console.WriteLine();
             Ink(ConsoleColor.Yellow);
-            Ctr("##########################################");
-            Ctr("#                                        #");
-            Ctr("#    [ TROPHY ]   WORLD  CHAMPION!      #");
-            Ctr("#                                        #");
-            Ctr("##########################################");
+            Ctr("╔════════════════════════════════════════╗");
+            Ctr("║                                        ║");
+            Ctr("║    ★ ★ ★   WORLD  CHAMPION!   ★ ★ ★    ║");
+            Ctr("║                                        ║");
+            Ctr("╚════════════════════════════════════════╝");
             Console.WriteLine();
             Ink(ConsoleColor.White); Ctr("FINAL SCORE: " + score);
             if (newBest)          { Ink(ConsoleColor.Green);    Ctr("*** NEW HIGH SCORE! ***"); }
@@ -932,11 +1002,11 @@ namespace PotatoSlicer
             Snd(400, 150); Snd(300, 150); Snd(150, 400);
             Console.Clear(); Console.WriteLine();
             Ink(ConsoleColor.Red);
-            Ctr("##########################################");
-            Ctr("#                                        #");
-            Ctr("#         G A M E    O V E R            #");
-            Ctr("#                                        #");
-            Ctr("##########################################");
+            Ctr("╔════════════════════════════════════════╗");
+            Ctr("║                                        ║");
+            Ctr("║           G A M E    O V E R           ║");
+            Ctr("║                                        ║");
+            Ctr("╚════════════════════════════════════════╝");
             Console.WriteLine();
             Ink(ConsoleColor.Gray);
             Ctr("You ran out of lives in stage " + (stage+1) + ": " + SN[stage] + ".");
@@ -983,6 +1053,126 @@ namespace PotatoSlicer
             if (s >= 4000)  return "B   LINE COOK";
             if (s >= 2000)  return "C   HOME COOK";
             return                 "D   You tried. Potatoes are hard.";
+        }
+
+        // ────────────────────────────────────────────────────────
+        //  UPDATE CHECKER
+        //  Compares VERSION against the repo's latest GitHub release
+        //  and self-updates the published binary if they differ.
+        //  A running executable cannot be overwritten, but it CAN be
+        //  renamed — so the old binary is moved aside and cleaned up
+        //  on the next launch.
+        // ────────────────────────────────────────────────────────
+        void CheckUpdate()
+        {
+            Console.Clear();
+            Ink(ConsoleColor.Cyan); Ctr("CHECK FOR UPDATES"); Console.WriteLine();
+            Ink(ConsoleColor.Gray);
+            Console.WriteLine("  Installed version : v" + VERSION);
+            Console.WriteLine("  Checking github.com/" + REPO + " ...");
+            Console.WriteLine();
+            Console.ResetColor();
+            try
+            {
+                using (HttpClient http = new HttpClient())
+                {
+                    http.DefaultRequestHeaders.UserAgent.ParseAdd("PotatoSlicer/" + VERSION);
+                    http.Timeout = TimeSpan.FromSeconds(15);
+                    string json = http.GetStringAsync(
+                        "https://api.github.com/repos/" + REPO + "/releases/latest").GetAwaiter().GetResult();
+
+                    using (JsonDocument doc = JsonDocument.Parse(json))
+                    {
+                        string tag    = doc.RootElement.GetProperty("tag_name").GetString() ?? "";
+                        string latest = tag.TrimStart('v', 'V');
+
+                        if (latest == VERSION)
+                        {
+                            Ink(ConsoleColor.Green);
+                            Console.WriteLine("  You are up to date (v" + VERSION + ").");
+                        }
+                        else
+                        {
+                            Ink(ConsoleColor.Yellow);
+                            Console.WriteLine("  New version available: " + tag + "   (installed: v" + VERSION + ")");
+                            Console.WriteLine();
+                            DoUpdate(http, doc, tag);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Ink(ConsoleColor.Red);
+                Console.WriteLine("  Update check failed: " + ex.Message);
+                Ink(ConsoleColor.Gray);
+                Console.WriteLine("  (No internet access, or no releases published yet.)");
+            }
+            Console.WriteLine();
+            Ink(ConsoleColor.DarkGray); Ctr("Press any key to go back...");
+            Console.ResetColor();
+            Console.ReadKey(true);
+        }
+
+        void DoUpdate(HttpClient http, JsonDocument doc, string tag)
+        {
+            string exe = Environment.ProcessPath ?? "";
+            string stem = Path.GetFileNameWithoutExtension(exe);
+            if (stem == "dotnet" || exe.Length == 0)
+            {
+                Ink(ConsoleColor.Gray);
+                Console.WriteLine("  You are running from source — update with: git pull");
+                return;
+            }
+
+            string want = OperatingSystem.IsWindows() ? "win-x64.exe" : "linux-x64";
+            string url = null, name = null;
+            foreach (JsonElement a in doc.RootElement.GetProperty("assets").EnumerateArray())
+            {
+                string an = a.GetProperty("name").GetString() ?? "";
+                if (an.EndsWith(want)) { url = a.GetProperty("browser_download_url").GetString(); name = an; break; }
+            }
+            if (url == null)
+            {
+                Ink(ConsoleColor.Red);
+                Console.WriteLine("  The release has no downloadable build for this platform.");
+                return;
+            }
+
+            Ink(ConsoleColor.White);
+            Console.WriteLine("  Download and install " + name + "? [Y/N]");
+            Console.ResetColor();
+            if (Console.ReadKey(true).Key != ConsoleKey.Y) return;
+
+            Console.WriteLine("  Downloading...");
+            byte[] data = http.GetByteArrayAsync(url).GetAwaiter().GetResult();
+
+            string fresh = exe + ".new";
+            File.WriteAllBytes(fresh, data);
+            if (!OperatingSystem.IsWindows())
+                File.SetUnixFileMode(fresh,
+                    UnixFileMode.UserRead  | UnixFileMode.UserWrite  | UnixFileMode.UserExecute |
+                    UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                    UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+
+            string old = exe + ".old";
+            if (File.Exists(old)) File.Delete(old);
+            File.Move(exe, old);
+            File.Move(fresh, exe);
+
+            Ink(ConsoleColor.Green);
+            Console.WriteLine("  Updated to " + tag + "!  Restart the game to play the new version.");
+        }
+
+        // Removes the renamed-aside binary left behind by a previous update
+        void CleanupOldBinary()
+        {
+            try
+            {
+                string old = (Environment.ProcessPath ?? "") + ".old";
+                if (old.Length > 4 && File.Exists(old)) File.Delete(old);
+            }
+            catch { /* still locked by the old process — next launch gets it */ }
         }
 
         // ────────────────────────────────────────────────────────
