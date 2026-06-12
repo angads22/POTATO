@@ -49,3 +49,9 @@ jobs:
           cd godot
           ~/godot-bin/godot --headless --path . res://tests/FarmSmokeTest.tscn --quit-after 600 2>&1 | tee farm.log
           grep -q "FARM SMOKE OK" farm.log
+
+      - name: Headless town smoke test
+        run: |
+          cd godot
+          ~/godot-bin/godot --headless --path . res://tests/TownSmokeTest.tscn --quit-after 600 2>&1 | tee town.log
+          grep -q "TOWN SMOKE OK" town.log

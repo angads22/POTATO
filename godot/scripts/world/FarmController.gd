@@ -1,97 +1,48 @@
-extends Node2D
+extends WorldController
 class_name FarmController
 
-# Open-world farm hub: walk the chef potato around the homestead, plant and
-# water crops, sell the harvest, buy seeds and knives, and enter the
-# championship kitchen. Coins persist in SaveDataManager.farm and flow both
-# ways — slicing runs bank coins, the farm grows and sells potatoes, and
-# better knives multiply slicing scores.
+# The farm: walk the chef potato around the homestead, plow the fields tile
+# by tile, plant and water crops, and haul the harvest through the east gate
+# into town to sell. Three fenced fields unlock section by section for
+# escalating sums; wild tiles must be plowed (the plow wears out) before a
+# seed goes in, and harvested soil stays plowed. Coins persist in
+# SaveDataManager.farm and flow both ways — slicing runs bank coins, the
+# farm grows potatoes, and better knives multiply slicing scores.
 
-const WORLD = Vector2(2560, 1440)
-const PLAYER_SPEED = 290.0
-const DAY_LENGTH = 180.0   # seconds for a full day-night cycle
-const POPUP_LIFE = 1.4
-const PLOT_COLS = 4
-const PLOT_ROWS = 3
-const PLOT_ORIGIN = Vector2(590, 660)
-const PLOT_STEP = Vector2(170, 150)
-
-var player: FarmerVisual
-var camera: Camera2D
 var bg: FarmBackground
-var hud: FarmHUD
-var tint: ColorRect
 var fireflies: CPUParticles2D
-var plots: Array[FarmPlot] = []
-var rng := RandomNumberGenerator.new()
-
-var day_t := 0.18          # start mid-morning (0.25 = noon, 0.75 = midnight)
-var night01 := 0.0
-var prompt := ""
-var prompt_action := Callable()
-var open_shop := ""        # "", "seeds", "market", "knives", "plant", "tools", "enhance"
-var plant_target: FarmPlot = null
-var enhance_target: FarmPlot = null
-var prompt_plot: FarmPlot = null   # plot the current prompt refers to
-var popups: Array = []
-var banner_text := ""
-var banner_age := 99.0
-var auto_t := 0.0          # auto-farming tick accumulator
-
-# Rects the player can't walk through (buildings, stands, the well)
-var blockers: Array = []
+var tiles: Array[FarmTile] = []
+var tile_map: Dictionary = {}      # "field:row:col" -> FarmTile
+var sections: Array = []           # flattened section dicts in unlock order
+var plant_target: FarmTile = null
+var enhance_target: FarmTile = null
+var prompt_tile: FarmTile = null   # tile the current prompt refers to
+var auto_t := 0.0                  # auto-farming tick accumulator
 
 func _ready():
-	rng.randomize()
-	AudioManager.play_music("menu")
+	super._ready()
+	_show_banner("POTATO FARM")
 
+func _world_size() -> Vector2:
+	return FarmBackground.WORLD
+
+func _spawn_point() -> Vector2:
+	if WorldController.travel_spawn == "from_town":
+		WorldController.travel_spawn = ""
+		return Vector2(2410, 870)
+	return Vector2(1450, 620)
+
+func _build_world():
 	bg = FarmBackground.new()
 	add_child(bg)
+	world_bg = bg
 
 	blockers = [
 		FarmBackground.HOUSE_WALL.grow(6),
-		FarmBackground.KITCHEN_WALL.grow(6),
-		FarmBackground.SEED_STAND.grow(4),
-		FarmBackground.KNIFE_STAND.grow(4),
-		FarmBackground.MARKET.grow(4),
-		FarmBackground.TOOL_STAND.grow(4),
 		Rect2(FarmBackground.WELL_POS - Vector2(55, 45), Vector2(110, 90)),
 	]
 
-	# plots, restored from the save so crops kept growing while away
-	var saved: Array = SaveDataManager.farm.get("plots", [])
-	var owned := plots_owned()
-	# migration: saves from before farm expansion may have crops on plots
-	# past the default boundary — those plots stay unlocked
-	for i in range(saved.size()):
-		if saved[i] is Dictionary and saved[i].has("potato_id"):
-			owned = maxi(owned, i + 1)
-	SaveDataManager.farm["plots_owned"] = owned
-	for row in range(PLOT_ROWS):
-		for col in range(PLOT_COLS):
-			var plot := FarmPlot.new()
-			plot.index = row * PLOT_COLS + col
-			plot.position = PLOT_ORIGIN + Vector2(col * PLOT_STEP.x, row * PLOT_STEP.y)
-			plot.locked = plot.index >= owned
-			if plot.index < saved.size() and saved[plot.index] is Dictionary:
-				plot.from_dict(saved[plot.index])
-			add_child(plot)
-			plots.append(plot)
-
-	player = FarmerVisual.new()
-	player.position = Vector2(1450, 620)
-	player.z_index = 2
-	add_child(player)
-
-	camera = Camera2D.new()
-	camera.limit_left = 0
-	camera.limit_top = 0
-	camera.limit_right = int(WORLD.x)
-	camera.limit_bottom = int(WORLD.y)
-	camera.position_smoothing_enabled = true
-	camera.position_smoothing_speed = 6.0
-	player.add_child(camera)
-	camera.make_current()
+	_build_fields()
 
 	# fireflies wake up at night around the pond
 	fireflies = CPUParticles2D.new()
@@ -110,84 +61,50 @@ func _ready():
 	fireflies.z_index = 3
 	add_child(fireflies)
 
-	# night tint sits between the world and the HUD
-	var tint_layer := CanvasLayer.new()
-	tint_layer.layer = 5
-	tint = ColorRect.new()
-	tint.size = Vector2(1280, 720)
-	tint.color = Color(0.04, 0.05, 0.18, 0.0)
-	tint.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	tint_layer.add_child(tint)
-	add_child(tint_layer)
+# Build the tile grid for every field, restored from the save so crops kept
+# growing while away
+func _build_fields():
+	var saved: Dictionary = SaveDataManager.farm.get("tiles", {})
+	var cell = GameData.field_cell()
+	var owned = sections_owned()
+	var section_i = 0
+	var fields = GameData.fields()
+	for f in range(fields.size()):
+		var fd: Dictionary = fields[f]
+		var origin = Vector2(float(fd["origin"][0]), float(fd["origin"][1]))
+		var sec_of = {}
+		for s in fd.get("sections", []):
+			sections.append(s)
+			for srow in range(int(s["rows"][0]), int(s["rows"][1]) + 1):
+				for scol in range(int(s["cols"][0]), int(s["cols"][1]) + 1):
+					sec_of[Vector2i(scol, srow)] = section_i
+			section_i += 1
+		for row in range(int(fd["rows"])):
+			for col in range(int(fd["cols"])):
+				var tile := FarmTile.new()
+				tile.field = f
+				tile.row = row
+				tile.col = col
+				tile.section = sec_of.get(Vector2i(col, row), 999)
+				tile.position = origin + Vector2(col * cell.x, row * cell.y)
+				tile.locked = tile.section >= owned
+				if saved.get(tile.key()) is Dictionary:
+					tile.from_dict(saved[tile.key()])
+				add_child(tile)
+				tiles.append(tile)
+				tile_map[tile.key()] = tile
 
-	var hud_layer := CanvasLayer.new()
-	hud_layer.layer = 10
-	hud = FarmHUD.new()
-	hud.ctrl = self
-	hud_layer.add_child(hud)
-	add_child(hud_layer)
-
-	_show_banner("POTATO FARM")
-
-func _process(delta):
-	# day-night cycle
-	day_t = fposmod(day_t + delta / DAY_LENGTH, 1.0)
-	night01 = (1.0 - cos((day_t - 0.25) * TAU)) * 0.5
-	bg.night01 = night01
-	tint.color.a = night01 * 0.45
+func _tick(delta):
 	fireflies.emitting = night01 > 0.5
-
-	if open_shop == "":
-		_move_player(delta)
-	else:
-		player.moving = false
-	player.carrying_water = int(SaveDataManager.farm.get("water", 0)) > 0
-
-	# auto-farming gear works the field every couple of seconds
+	# auto-farming gear works the fields every couple of seconds
 	auto_t += delta
 	if auto_t >= 2.0:
 		auto_t = 0.0
 		_auto_farm()
 
-	_scan_interactions()
-
-	banner_age += delta
-	for p in popups:
-		p.age += delta
-	popups = popups.filter(func(p): return p.age < POPUP_LIFE)
-	hud.queue_redraw()
-
-func _move_player(delta):
-	var dir = Vector2.ZERO
-	if Input.is_physical_key_pressed(KEY_W) or Input.is_physical_key_pressed(KEY_UP):
-		dir.y -= 1
-	if Input.is_physical_key_pressed(KEY_S) or Input.is_physical_key_pressed(KEY_DOWN):
-		dir.y += 1
-	if Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_LEFT):
-		dir.x -= 1
-	if Input.is_physical_key_pressed(KEY_D) or Input.is_physical_key_pressed(KEY_RIGHT):
-		dir.x += 1
-
-	player.moving = dir != Vector2.ZERO
-	if dir == Vector2.ZERO:
-		return
-	if dir.x != 0:
-		player.face = signf(dir.x)
-
-	var step = dir.normalized() * PLAYER_SPEED * delta
-	# slide along blockers: try the full move, then each axis alone
-	for attempt in [step, Vector2(step.x, 0), Vector2(0, step.y)]:
-		var target = player.position + attempt
-		target.x = clampf(target.x, 60, WORLD.x - 60)
-		target.y = clampf(target.y, 70, WORLD.y - 50)
-		if _walkable(target):
-			player.position = target
-			return
-
 func _walkable(p: Vector2) -> bool:
-	for r in blockers:
-		if r.has_point(p):
-			return false
+	if not super._walkable(p):
+		return false
 	var d = (p - FarmBackground.POND_C) / (FarmBackground.POND_R + Vector2(28, 30))
 	return d.length() > 1.0
 
@@ -198,37 +115,29 @@ func _walkable(p: Vector2) -> bool:
 func _scan_interactions():
 	prompt = ""
 	prompt_action = Callable()
-	prompt_plot = null
+	prompt_tile = null
 	if open_shop != "":
 		return
 
-	# nearest plot first — they sit inside the fence away from the stations
+	# nearest tile first — they sit inside the fences away from the stations
 	var best_d = 90.0
-	var best_plot: FarmPlot = null
-	for plot in plots:
-		var d = player.position.distance_to(plot.position)
+	var best_tile: FarmTile = null
+	for tile in tiles:
+		var d = player.position.distance_to(tile.position)
 		if d < best_d:
 			best_d = d
-			best_plot = plot
-	if best_plot:
-		_set_plot_prompt(best_plot)
+			best_tile = tile
+	if best_tile:
+		_set_tile_prompt(best_tile)
 		return
 
 	var stations = [
 		{"pos": FarmBackground.WELL_POS + Vector2(0, 50), "r": 110.0,
 			"text": "[E] Draw water — refill the can", "act": fill_water},
-		{"pos": FarmBackground.SEED_STAND.get_center() + Vector2(0, 70), "r": 120.0,
-			"text": "[E] Browse the seed shop", "act": func(): open_shop = "seeds"},
-		{"pos": FarmBackground.KNIFE_STAND.get_center() + Vector2(0, 70), "r": 120.0,
-			"text": "[E] Browse the knife stand", "act": func(): open_shop = "knives"},
-		{"pos": FarmBackground.MARKET.get_center() + Vector2(0, 80), "r": 130.0,
-			"text": "[E] Sell at the market", "act": func(): open_shop = "market"},
-		{"pos": FarmBackground.TOOL_STAND.get_center() + Vector2(0, 70), "r": 120.0,
-			"text": "[E] Browse the tool shed", "act": func(): open_shop = "tools"},
-		{"pos": Vector2(FarmBackground.KITCHEN_WALL.get_center().x, FarmBackground.KITCHEN_WALL.end.y + 30), "r": 120.0,
-			"text": "[E] Enter the championship kitchen", "act": _enter_kitchen},
 		{"pos": Vector2(FarmBackground.HOUSE_WALL.get_center().x, FarmBackground.HOUSE_WALL.end.y + 25), "r": 100.0,
 			"text": "[E] Nap until morning", "act": _nap},
+		{"pos": FarmBackground.TOWN_GATE_POS, "r": 120.0,
+			"text": "[E] Take the road into town", "act": _goto_town},
 	]
 	for s in stations:
 		if player.position.distance_to(s.pos) < s.r:
@@ -236,125 +145,170 @@ func _scan_interactions():
 			prompt_action = s.act
 			return
 
-func _set_plot_prompt(plot: FarmPlot):
-	prompt_plot = plot
-	if plot.locked:
-		if plot.index == plots_owned():
-			prompt = "[E] Clear and till this plot — %d coins" % expand_cost()
-			prompt_action = func(): buy_plot(plot)
+func _set_tile_prompt(tile: FarmTile):
+	prompt_tile = tile
+	if tile.locked:
+		if tile.section == sections_owned():
+			prompt = "[E] Buy this stretch of land — %d coins" % section_price(tile.section)
+			prompt_action = func(): buy_section()
 		else:
-			prompt = "Overgrown ground — the farm expands plot by plot"
+			prompt = "Overgrown ground — buy the nearer sections first"
 		return
-	match plot.state:
-		FarmPlot.PState.EMPTY:
+	if tile.has_sprinkler:
+		prompt = "Sprinkler — waters the 8 tiles around it  ·  [F] Pick up"
+		return
+	match tile.state:
+		FarmTile.TState.UNPLOWED:
+			if plow_uses() > 0:
+				prompt = "[E] Plow the soil — plow has %d uses left" % plow_uses()
+				prompt_action = func(): plow_tile(tile)
+			else:
+				prompt = "Wild soil — your plow is broken; buy a new one in town"
+			if sprinkler_stock() > 0:
+				prompt += "  ·  [F] Place sprinkler"
+		FarmTile.TState.PLOWED:
 			if _total_seeds() > 0:
 				prompt = "[E] Plant a seed"
-				prompt_action = func(): _open_plant_menu(plot)
+				prompt_action = func(): _open_plant_menu(tile)
 			else:
-				prompt = "Empty plot — buy seeds at the seed stand"
-		FarmPlot.PState.PLANTED:
-			var pct = int(plot.progress() * 100.0)
-			var nm = GameData.potato_by_id(plot.potato_id).get("name", "?")
-			if not plot.watered and int(SaveDataManager.farm.get("water", 0)) > 0:
+				prompt = "Plowed soil — buy seeds at the town seed shop"
+			if sprinkler_stock() > 0:
+				prompt += "  ·  [F] Place sprinkler"
+		FarmTile.TState.PLANTED:
+			var pct = int(tile.progress() * 100.0)
+			var nm = GameData.potato_by_id(tile.potato_id).get("name", "?")
+			if not tile.watered and int(SaveDataManager.farm.get("water", 0)) > 0:
 				prompt = "[E] Water the %s — %d%% grown" % [nm, pct]
-				prompt_action = func(): _water_plot(plot)
-			elif plot.watered:
+				prompt_action = func(): _water_tile(tile)
+			elif tile.watered:
 				prompt = "%s growing fast — %d%%" % [nm, pct]
 			else:
 				prompt = "%s growing — %d%% (fetch water to speed up)" % [nm, pct]
-			if plot.boost >= 1.0 and _total_enhancers() > 0:
-				prompt += "  ·  [F] Enhance"
-		FarmPlot.PState.READY:
-			var nm2 = GameData.potato_by_id(plot.potato_id).get("name", "?")
+			if tile.boost >= 1.0 and _total_enhancers() > 0:
+				prompt += "  ·  [F] Fertilize"
+		FarmTile.TState.READY:
+			var nm2 = GameData.potato_by_id(tile.potato_id).get("name", "?")
 			prompt = "[E] Harvest the %s!" % nm2
-			prompt_action = func(): _harvest_plot(plot)
+			prompt_action = func(): _harvest_tile(tile)
 
-func _input(event: InputEvent):
-	if not (event is InputEventKey and event.pressed and not event.echo):
+# [F]: pick up / place sprinklers, or open the fertilizer menu on a crop
+func _on_alt_interact():
+	if prompt_tile == null or prompt_tile.locked:
 		return
-
-	if event.keycode == KEY_ESCAPE:
-		if open_shop != "":
-			open_shop = ""
-			plant_target = null
-			enhance_target = null
-		else:
-			get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
+	var tile = prompt_tile
+	if tile.has_sprinkler:
+		pickup_sprinkler(tile)
 		return
-
-	if open_shop != "":
-		_shop_input(event.keycode)
-		return
-
-	if event.keycode == KEY_E or event.keycode == KEY_SPACE:
-		if prompt_action.is_valid():
-			prompt_action.call()
-	elif event.keycode == KEY_F:
-		if prompt_plot and prompt_plot.state == FarmPlot.PState.PLANTED \
-				and prompt_plot.boost >= 1.0 and _total_enhancers() > 0:
-			enhance_target = prompt_plot
-			open_shop = "enhance"
+	match tile.state:
+		FarmTile.TState.UNPLOWED, FarmTile.TState.PLOWED:
+			if sprinkler_stock() > 0:
+				place_sprinkler(tile)
+		FarmTile.TState.PLANTED:
+			if tile.boost >= 1.0 and _total_enhancers() > 0:
+				enhance_target = tile
+				open_shop = "enhance"
 
 func _shop_input(key: Key):
 	var idx = key - KEY_1  # 0-based row number
 	match open_shop:
-		"seeds":
-			var farmables = GameData.farmable_potatoes()
-			if idx >= 0 and idx < farmables.size():
-				buy_seed(farmables[idx]["id"])
 		"plant":
-			var farmables2 = GameData.farmable_potatoes()
-			if idx >= 0 and idx < farmables2.size() and plant_target:
-				if plant_on(plant_target, farmables2[idx]["id"]):
+			var farmables = GameData.farmable_potatoes()
+			if idx >= 0 and idx < farmables.size() and plant_target:
+				if plant_on(plant_target, farmables[idx]["id"]):
 					open_shop = ""
 					plant_target = null
-		"market":
-			if key == KEY_A:
-				sell_all()
-			else:
-				var farmables3 = GameData.farmable_potatoes()
-				if idx >= 0 and idx < farmables3.size():
-					sell_spuds(farmables3[idx]["id"])
-		"knives":
-			var knives = GameData.knives()
-			if idx >= 0 and idx < knives.size():
-				buy_or_equip_knife(knives[idx]["id"])
-		"tools":
-			# tools first, then enhancers, numbered straight through
-			var tools = GameData.tools()
-			var enhancers = GameData.enhancers()
-			if idx >= 0 and idx < tools.size():
-				buy_tool(tools[idx]["id"])
-			elif idx >= tools.size() and idx < tools.size() + enhancers.size():
-				buy_enhancer(enhancers[idx - tools.size()]["id"])
 		"enhance":
 			var owned_enh = owned_enhancers()
 			if idx >= 0 and idx < owned_enh.size() and enhance_target:
 				if apply_enhancer(enhance_target, owned_enh[idx]["id"]):
 					open_shop = ""
 					enhance_target = null
+		_:
+			super._shop_input(key)
+
+func _on_shop_closed():
+	plant_target = null
+	enhance_target = null
 
 # ────────────────────────────────────────────────────────
-#  Economy actions (public so the smoke test can drive them)
+#  Working the land (public so the smoke test can drive them)
 # ────────────────────────────────────────────────────────
 
-func buy_seed(id: String) -> bool:
-	var cost = int(GameData.potato_by_id(id).get("seed_cost", 9999))
-	if not SaveDataManager.spend_coins(cost):
+func sections_owned() -> int:
+	return int(SaveDataManager.farm.get("sections_owned", 1))
+
+func section_price(si: int) -> int:
+	if si < 0 or si >= sections.size():
+		return 0
+	return int(sections[si].get("price", 0))
+
+func buy_section() -> bool:
+	var si = sections_owned()
+	if si >= sections.size():
+		return false
+	if not SaveDataManager.spend_coins(section_price(si)):
 		_popup("Not enough coins!", Color.ORANGE_RED)
 		return false
-	SaveDataManager.add_item("seeds", id, 1)
-	_popup("Bought a %s seed" % GameData.potato_by_id(id).get("name", id), Color.LIGHT_GREEN)
-	AudioManager.play_sfx("coin_collect")
+	SaveDataManager.farm["sections_owned"] = si + 1
+	SaveDataManager.save_game()
+	for tile in tiles:
+		if tile.section == si:
+			tile.locked = false
+	_popup("New land! Break it in with the plow", Color.GOLD)
+	if SaveDataManager.settings.get("particle_effects", true):
+		for tile in tiles:
+			if tile.section == si:
+				Fx.burst(self, tile.position, Color(0.46, 0.32, 0.18), 6, 140.0)
+				break
+	AudioManager.play_sfx("level_complete")
 	return true
 
-func plant_on(plot: FarmPlot, id: String) -> bool:
+func plow_tile(tile: FarmTile) -> bool:
+	if plow_uses() <= 0:
+		_popup("The plow is broken — the town tool shed sells new ones", Color.ORANGE_RED)
+		return false
+	if not tile.plow():
+		return false
+	SaveDataManager.farm["plow_uses"] = plow_uses() - 1
+	_sync_tiles()
+	if plow_uses() <= 0:
+		_popup("CRACK! The plow gave out on that one", Color.ORANGE_RED)
+	else:
+		_popup("Soil plowed — ready for a seed", Color.LIGHT_GREEN)
+	if SaveDataManager.settings.get("particle_effects", true):
+		Fx.burst(self, tile.position, Color(0.46, 0.32, 0.18), 10, 160.0)
+	return true
+
+func place_sprinkler(tile: FarmTile) -> bool:
+	if sprinkler_stock() <= 0 or tile.locked or tile.has_sprinkler:
+		return false
+	if tile.state == FarmTile.TState.PLANTED or tile.state == FarmTile.TState.READY:
+		_popup("There's a crop in the way!", Color.ORANGE_RED)
+		return false
+	tile.has_sprinkler = true
+	SaveDataManager.farm["sprinkler_stock"] = sprinkler_stock() - 1
+	_sync_tiles()
+	_popup("Sprinkler placed — it waters the 8 tiles around it", Color(0.5, 0.8, 1.0))
+	return true
+
+func pickup_sprinkler(tile: FarmTile) -> bool:
+	if not tile.has_sprinkler:
+		return false
+	tile.has_sprinkler = false
+	SaveDataManager.farm["sprinkler_stock"] = sprinkler_stock() + 1
+	_sync_tiles()
+	_popup("Sprinkler packed up", Color(0.5, 0.8, 1.0))
+	return true
+
+func plant_on(tile: FarmTile, id: String) -> bool:
 	if SaveDataManager.item_count("seeds", id) <= 0:
 		_popup("No %s seeds!" % GameData.potato_by_id(id).get("name", id), Color.ORANGE_RED)
 		return false
+	if not tile.plant(id):
+		_popup("That soil needs plowing first!", Color.ORANGE_RED)
+		return false
 	SaveDataManager.add_item("seeds", id, -1)
-	plot.plant(id)
-	_sync_plots()
+	_sync_tiles()
 	_popup("Planted %s" % GameData.potato_by_id(id).get("name", id), Color.LIGHT_GREEN)
 	return true
 
@@ -363,204 +317,103 @@ func fill_water():
 	SaveDataManager.save_game()
 	_popup("Watering can filled!", Color(0.5, 0.8, 1.0))
 
-func _water_plot(plot: FarmPlot):
+func _water_tile(tile: FarmTile):
 	var water = int(SaveDataManager.farm.get("water", 0))
-	if water <= 0 or plot.watered:
+	if water <= 0 or tile.watered:
 		return
 	SaveDataManager.farm["water"] = water - 1
-	plot.water()
-	_sync_plots()
+	tile.water()
+	_sync_tiles()
 	_popup("Watered — growing fast!", Color(0.5, 0.8, 1.0))
 
-func _harvest_plot(plot: FarmPlot):
-	var id = plot.potato_id
+func _harvest_tile(tile: FarmTile):
+	var id = tile.potato_id
 	var data = GameData.potato_by_id(id)
-	var n = plot.harvest(rng)
+	var n = tile.harvest(rng)
 	SaveDataManager.add_item("spuds", id, n)
-	_sync_plots()
+	_sync_tiles()
 	_popup("+%d %s!" % [n, data.get("name", id)], Color.GOLD if data.get("rare", false) else Color.LIGHT_GREEN)
 	if SaveDataManager.settings.get("particle_effects", true):
 		if data.get("rare", false):
-			Fx.sparkle(self, plot.position)
+			Fx.sparkle(self, tile.position)
 		else:
-			Fx.burst(self, plot.position + Vector2(0, -10), Color(data.get("color", "#b87333")), 12, 180.0)
+			Fx.burst(self, tile.position + Vector2(0, -10), Color(data.get("color", "#b87333")), 12, 180.0)
 	AudioManager.play_sfx("coin_collect")
 
-func sell_spuds(id: String) -> int:
-	var n = SaveDataManager.item_count("spuds", id)
-	if n <= 0:
-		return 0
-	var value = n * int(GameData.potato_by_id(id).get("sell_value", 0))
-	SaveDataManager.add_item("spuds", id, -n)
-	SaveDataManager.add_coins(value)
-	_popup("Sold %d for %d coins" % [n, value], Color.GOLD)
-	AudioManager.play_sfx("coin_collect")
-	return value
-
-func sell_all():
-	var total = 0
-	for p in GameData.farmable_potatoes():
-		var n = SaveDataManager.item_count("spuds", p["id"])
-		if n > 0:
-			var value = n * int(p.get("sell_value", 0))
-			SaveDataManager.add_item("spuds", p["id"], -n)
-			SaveDataManager.add_coins(value)
-			total += value
-	if total > 0:
-		_popup("Sold the lot for %d coins!" % total, Color.GOLD)
-		AudioManager.play_sfx("coin_collect")
-
-func buy_or_equip_knife(id: String) -> bool:
-	var owned: Array = SaveDataManager.farm.get("owned_knives", [])
-	var k = GameData.knife_by_id(id)
-	if id in owned:
-		SaveDataManager.farm["equipped_knife"] = id
-		SaveDataManager.save_game()
-		_popup("%s equipped (×%.2f score)" % [k.get("name", id), float(k.get("damage", 1.0))], Color.LIGHT_GREEN)
-		return true
-	if not SaveDataManager.spend_coins(int(k.get("cost", 99999))):
-		_popup("Not enough coins!", Color.ORANGE_RED)
-		return false
-	owned.append(id)
-	SaveDataManager.farm["owned_knives"] = owned
-	SaveDataManager.farm["equipped_knife"] = id
-	SaveDataManager.save_game()
-	_popup("%s bought and equipped!" % k.get("name", id), Color.GOLD)
-	AudioManager.play_sfx("level_complete")
-	return true
-
-# ── farm expansion ──
-
-func plots_owned() -> int:
-	return int(SaveDataManager.farm.get("plots_owned", 6))
-
-func expand_cost() -> int:
-	return 50 + 40 * (plots_owned() - 6)
-
-func buy_plot(plot: FarmPlot) -> bool:
-	if not plot.locked or plot.index != plots_owned():
-		return false
-	if not SaveDataManager.spend_coins(expand_cost()):
-		_popup("Not enough coins!", Color.ORANGE_RED)
-		return false
-	plot.locked = false
-	SaveDataManager.farm["plots_owned"] = plots_owned() + 1
-	SaveDataManager.save_game()
-	_popup("New plot tilled!", Color.GOLD)
-	if SaveDataManager.settings.get("particle_effects", true):
-		Fx.burst(self, plot.position, Color(0.46, 0.32, 0.18), 14, 200.0)
-	AudioManager.play_sfx("level_complete")
-	return true
-
-# ── tools and growth enhancers ──
-
-func owns_tool(id: String) -> bool:
-	return id in SaveDataManager.farm.get("tools", [])
-
-func buy_tool(id: String) -> bool:
-	if owns_tool(id):
-		_popup("Already installed!", Color(0.7, 0.65, 0.55))
-		return false
-	var tool_data = GameData.tool_by_id(id)
-	if not SaveDataManager.spend_coins(int(tool_data.get("cost", 99999))):
-		_popup("Not enough coins!", Color.ORANGE_RED)
-		return false
-	var owned: Array = SaveDataManager.farm.get("tools", [])
-	owned.append(id)
-	SaveDataManager.farm["tools"] = owned
-	SaveDataManager.save_game()
-	_popup("%s installed!" % tool_data.get("name", id), Color.GOLD)
-	AudioManager.play_sfx("level_complete")
-	return true
-
-func buy_enhancer(id: String) -> bool:
-	var e = GameData.enhancer_by_id(id)
-	if not SaveDataManager.spend_coins(int(e.get("cost", 9999))):
-		_popup("Not enough coins!", Color.ORANGE_RED)
-		return false
-	SaveDataManager.add_item("items", id, 1)
-	_popup("Bought %s" % e.get("name", id), Color.LIGHT_GREEN)
-	AudioManager.play_sfx("coin_collect")
-	return true
-
-func apply_enhancer(plot: FarmPlot, id: String) -> bool:
+# Spends one fertilizer charge on a planted tile; one application per crop
+func apply_enhancer(tile: FarmTile, id: String) -> bool:
 	if SaveDataManager.item_count("items", id) <= 0:
 		return false
 	var e = GameData.enhancer_by_id(id)
-	if not plot.enhance(float(e.get("boost", 1.0)), int(e.get("bonus_yield", 0))):
-		_popup("Already enhanced!", Color.ORANGE_RED)
+	if not tile.enhance(float(e.get("boost", 1.0)), int(e.get("bonus_yield", 0))):
+		_popup("Already fertilized!", Color.ORANGE_RED)
 		return false
 	SaveDataManager.add_item("items", id, -1)
-	_sync_plots()
-	_popup("%s worked into the soil!" % e.get("name", id), Color(0.55, 0.95, 0.4))
+	_sync_tiles()
+	_popup("%s worked into the soil! (%d charges left)" % [e.get("name", id), SaveDataManager.item_count("items", id)], Color(0.55, 0.95, 0.4))
 	if SaveDataManager.settings.get("particle_effects", true):
-		Fx.sparkle(self, plot.position)
+		Fx.sparkle(self, tile.position)
 	return true
 
-func owned_enhancers() -> Array:
-	return GameData.enhancers().filter(
-		func(e): return SaveDataManager.item_count("items", e["id"]) > 0)
+# ── auto-farming: sprinklers and owned gear work the fields on a slow tick ──
 
-func _total_enhancers() -> int:
-	var total = 0
-	for n in SaveDataManager.farm.get("items", {}).values():
-		total += int(n)
-	return total
-
-# ── auto-farming: owned tools work the field on a slow tick ──
+func _neighbours(tile: FarmTile) -> Array:
+	var out: Array = []
+	for dr in [-1, 0, 1]:
+		for dc in [-1, 0, 1]:
+			if dr == 0 and dc == 0:
+				continue
+			var k = "%d:%d:%d" % [tile.field, tile.row + dr, tile.col + dc]
+			if tile_map.has(k):
+				out.append(tile_map[k])
+	return out
 
 func _auto_farm():
 	var changed := false
-	if owns_tool("sprinkler"):
-		for plot in plots:
-			if not plot.locked and plot.state == FarmPlot.PState.PLANTED and not plot.watered:
-				plot.water()
+	# each placed sprinkler waters the 8 tiles around it
+	for tile in tiles:
+		if not tile.has_sprinkler or tile.locked:
+			continue
+		for n in _neighbours(tile):
+			if not n.locked and n.state == FarmTile.TState.PLANTED and not n.watered:
+				n.water()
 				changed = true
 	if owns_tool("harvest_drone"):
-		for plot in plots:
-			if not plot.locked and plot.state == FarmPlot.PState.READY:
-				_harvest_plot(plot)  # syncs the save itself
+		for tile in tiles:
+			if not tile.locked and tile.state == FarmTile.TState.READY:
+				_harvest_tile(tile)  # syncs the save itself
 				break  # one per tick, so popups stay readable
 	if owns_tool("auto_seeder"):
-		for plot in plots:
-			if plot.locked or plot.state != FarmPlot.PState.EMPTY:
+		for tile in tiles:
+			if tile.locked or tile.has_sprinkler or tile.state != FarmTile.TState.PLOWED:
 				continue
-			if plot.last_potato_id == "" or SaveDataManager.item_count("seeds", plot.last_potato_id) <= 0:
+			if tile.last_potato_id == "" or SaveDataManager.item_count("seeds", tile.last_potato_id) <= 0:
 				continue
-			SaveDataManager.add_item("seeds", plot.last_potato_id, -1)
-			plot.plant(plot.last_potato_id)
+			SaveDataManager.add_item("seeds", tile.last_potato_id, -1)
+			tile.plant(tile.last_potato_id)
 			changed = true
 			break  # one per tick
 	if changed:
-		_sync_plots()
+		_sync_tiles()
 
-func _open_plant_menu(plot: FarmPlot):
-	plant_target = plot
+func _open_plant_menu(tile: FarmTile):
+	plant_target = tile
 	open_shop = "plant"
 
-func _enter_kitchen():
-	get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
+func _goto_town():
+	WorldController.travel_spawn = "from_farm"
+	WorldController.carry_day_t = day_t
+	get_tree().change_scene_to_file("res://scenes/Town/TownScene.tscn")
 
 func _nap():
 	day_t = 0.2
 	_popup("Good morning!", Color(1.0, 0.9, 0.5))
 
-func _total_seeds() -> int:
-	var total = 0
-	for n in SaveDataManager.farm.get("seeds", {}).values():
-		total += int(n)
-	return total
-
-func _sync_plots():
-	var arr = []
-	for plot in plots:
-		arr.append(plot.to_dict())
-	SaveDataManager.farm["plots"] = arr
+func _sync_tiles():
+	var d = {}
+	for tile in tiles:
+		var td = tile.to_dict()
+		if not td.is_empty():
+			d[tile.key()] = td
+	SaveDataManager.farm["tiles"] = d
 	SaveDataManager.save_game()
-
-func _popup(text: String, color: Color):
-	popups.append({"text": text, "color": color, "age": 0.0})
-
-func _show_banner(text: String):
-	banner_text = text
-	banner_age = 0.0

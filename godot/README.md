@@ -16,7 +16,7 @@ godot/
 │   ├── core/                  # Managers (GameManager, SaveDataManager, AudioManager)
 │   ├── gameplay/              # Gameplay orchestration and flow
 │   ├── minigames/             # Cut mechanics (Slice, Peel, Speed, Julienne, Dodge)
-│   ├── world/                 # Open-world farm (controller, plots, player, HUD)
+│   ├── world/                 # Open-world farm + town (controllers, tiles, player, HUD)
 │   ├── visuals/               # Procedural backdrops and effects
 │   ├── ui/                    # Menu controllers, HUD elements
 │   └── utils/                 # Helper functions, data structures
@@ -67,6 +67,30 @@ These are global managers available everywhere:
   and a life restored every other stage
 - **Endless** — Infinite waves with escalating wave bonuses and golden-potato
   odds that climb the deeper you survive
+
+### The Overworld (Farm + Town)
+
+Two walkable maps share a `WorldController` base (movement, blockers, camera,
+day-night cycle, prompts, shop overlays, economy actions) and a `WorldHUD`:
+
+- **The farm** (`FarmController`, `scenes/Farm/FarmScene.tscn`) — three fenced
+  fields of grid tiles (`FarmTile`, 12 + 20 + 27 tiles) that unlock section by
+  section for escalating sums (`resources/game_data/fields.json`). Tiles start
+  wild: plow them (the plow wears out after 10 uses; replacements cost more
+  each time), plant, water (or place a sprinkler on a tile to auto-water its
+  8 neighbours), fertilize (multi-charge), harvest — the soil stays plowed.
+  The farmhouse, well and pond live here.
+- **The town** (`TownController`, `scenes/Town/TownScene.tscn`) — the seed
+  shop, knife stand, sell-market and tool shed around a fountain plaza, plus
+  the championship kitchen (walk in to start a run). Future non-farming
+  content belongs here (there's a boarded "coming soon" lot on the plaza).
+- Gates on the farm's east hedge and the town's west hedge travel between the
+  two; the time of day carries across.
+
+Farm state lives in `SaveDataManager.farm` (schema 2: sparse `tiles` dict
+keyed `"field:row:col"`, `sections_owned`, `plow_uses`/`plows_bought`,
+`sprinkler_stock`, fertilizer charges in `items`). Schema-1 saves (fixed
+`plots` array) are migrated automatically on load.
 
 ## Adding New Features
 
@@ -151,17 +175,25 @@ GameManager.combo_changed.connect(func(combo):
 # Press F5 to run
 ```
 
-### Headless Smoke Test
+### Headless Smoke Tests
 
 An auto-player drives a championship run — it watches the active minigame,
-cuts at the centre, locks the peel in the band and bins rotten potatoes:
+cuts at the centre, locks the peel in the band and bins rotten potatoes —
+and two more drive the farm economy and the town stalls:
 
 ```bash
 godot --headless --path godot res://tests/SmokeTest.tscn --quit-after 900
 # prints "SMOKE OK — score=... lives=..." and exits 0 on success
+
+godot --headless --path godot res://tests/FarmSmokeTest.tscn --quit-after 600
+# plow/plant/water/harvest/sell, sections, sprinklers, fertilizer charges,
+# drone+seeder and the schema-1 save migration — prints "FARM SMOKE OK"
+
+godot --headless --path godot res://tests/TownSmokeTest.tscn --quit-after 600
+# walks the plaza, buys/sells at every stall — prints "TOWN SMOKE OK"
 ```
 
-CI runs this on every PR touching `godot/` (see `.github/workflows/godot.yml`).
+CI runs these on every PR touching `godot/` (see `.github/workflows/godot.yml`).
 
 ### Standalone Build
 
@@ -186,18 +218,24 @@ CI runs this on every PR touching `godot/` (see `.github/workflows/godot.yml`).
   pass in `StyleManager` restyles the whole game, cycle with [G] in Settings
 - ✅ Game-over screen with name entry and leaderboard submission
 - ✅ Save/load persistence (JSON: leaderboard, achievements, settings, unlocks)
-- ✅ Data-driven balance: knives and potatoes in `resources/game_data/*.json`
-- ✅ Headless smoke test + CI workflow
+- ✅ Data-driven balance: knives, potatoes, items and fields in
+  `resources/game_data/*.json`
+- ✅ Grid-based farm: three fields bought section by section, a plow that
+  wears out (and costs more each replacement), placeable sprinklers,
+  multi-charge fertilizer, drone/seeder automation, schema-1 save migration
+- ✅ Town map: fountain plaza with the four market stalls and the
+  championship kitchen, gates between farm and town
+- ✅ Headless smoke tests (gameplay, farm, town) + CI workflow
 - ⏳ Audio files (framework wired, OGG assets needed)
-- ⏳ Shop UI and knife/power-up selection
 - ⏳ Boss fight minigame
 - ⏳ Particles and richer juice (squash/stretch, trails)
 
 ## Next Steps
 
 1. **Audio** — Drop OGG files into `assets/audio/` and implement playback in AudioManager
-2. **Shop** — Build the knife shop scene against `resources/game_data/knives.json`
-3. **Boss** — Add a Colossal Spud minigame with an HP bar (extend `MinigameBase`)
+2. **Boss** — Add a Colossal Spud minigame with an HP bar (extend `MinigameBase`)
+3. **Town content** — New buildings/activities belong on the town map (the
+   boarded plaza lot in `TownBackground` is the placeholder)
 4. **Polish** — Particles, squash-and-stretch, juice
 5. **Expansion** — New potatoes/mechanics are one JSON entry + one `MinigameBase` subclass away
 

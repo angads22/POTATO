@@ -1,9 +1,13 @@
 extends Node
 
-# Headless farm-economy smoke test: drives the full loop — buy a seed,
-# plant, water, time-travel to maturity, harvest, sell, buy a knife, bank a
-# run payout — then checks persistence and the [E] interaction path.
-# NOTE: writes to the user:// save like a real session would.
+# Headless farm-economy smoke test: drives the grid-farming loop — buy a
+# seed, plow a tile, plant, water, time-travel to maturity, harvest, sell,
+# buy a knife, bank a run payout — then the grid features (plow durability
+# and escalating price, section purchase, placeable sprinklers, multi-charge
+# fertilizer, drone + seeder), the [E] interaction path at the well, and
+# finally the schema-1 -> schema-2 save migration.
+# NOTE: writes to the user:// save like a real session would, and never
+# triggers a scene change (that would free this test root).
 #
 #   godot --headless --path . res://tests/FarmSmokeTest.tscn --quit-after 600
 
@@ -13,10 +17,12 @@ var fails: Array[String] = []
 var expected_wallet := 0
 
 func _ready():
-	# deterministic starting economy (rich enough to afford every tool)
+	# deterministic starting economy (rich enough to afford everything)
 	SaveDataManager.farm = {
-		"wallet": 5000, "seeds": {}, "spuds": {}, "plots": [],
-		"water": 0, "owned_knives": ["butter"], "equipped_knife": "butter"
+		"schema": 2, "wallet": 20000, "seeds": {}, "spuds": {}, "water": 0,
+		"owned_knives": ["butter"], "equipped_knife": "butter",
+		"sections_owned": 1, "tiles": {}, "plow_uses": 10, "plows_bought": 0,
+		"sprinkler_stock": 0, "tools": [], "items": {}
 	}
 	farm = load("res://scenes/Farm/FarmScene.tscn").instantiate()
 	add_child(farm)
@@ -31,7 +37,7 @@ func _process(_delta):
 		10:
 			_run_economy()
 		20:
-			_run_expansion_and_tools()
+			_run_grid_features()
 		30:
 			# stand by the well with an empty can for the input probe
 			SaveDataManager.farm["water"] = 0
@@ -41,6 +47,11 @@ func _process(_delta):
 			_tap(KEY_E)
 		50:
 			_check(int(SaveDataManager.farm.get("water", 0)) == 4, "[E] at the well refills the can")
+			# drop the scene before the migration test so its _process can't
+			# write stale tiles over the migrated save
+			farm.queue_free()
+		56:
+			_run_migration()
 		60:
 			_finish()
 
@@ -53,25 +64,34 @@ func _run_economy():
 	_check(SaveDataManager.wallet() == expected_wallet, "seed purchase charges 10 coins")
 	_check(SaveDataManager.item_count("seeds", "russet") == 1, "seed lands in inventory")
 
+	# wild ground refuses the seed until it's plowed
+	var tile: FarmTile = farm.tiles[0]
+	_check(tile.state == FarmTile.TState.UNPLOWED, "tiles start unplowed")
+	_check(not farm.plant_on(tile, "russet"), "planting fails on unplowed ground")
+	_check(SaveDataManager.item_count("seeds", "russet") == 1, "failed planting keeps the seed")
+	_check(farm.plow_tile(tile), "plowing succeeds")
+	_check(tile.state == FarmTile.TState.PLOWED, "tile is plowed")
+	_check(farm.plow_uses() == 9, "plowing wears the plow")
+
 	# plant it
-	var plot: FarmPlot = farm.plots[0]
-	_check(farm.plant_on(plot, "russet"), "planting succeeds")
-	_check(plot.state == FarmPlot.PState.PLANTED, "plot is planted")
+	_check(farm.plant_on(tile, "russet"), "planting succeeds on plowed soil")
+	_check(tile.state == FarmTile.TState.PLANTED, "tile is planted")
 	_check(SaveDataManager.item_count("seeds", "russet") == 0, "planting consumes the seed")
 
 	# water it
 	farm.fill_water()
-	farm._water_plot(plot)
-	_check(plot.watered, "plot is watered")
+	farm._water_tile(tile)
+	_check(tile.watered, "tile is watered")
 	_check(int(SaveDataManager.farm.get("water", 0)) == 3, "watering uses a charge")
 
-	# time-travel to maturity and harvest
-	plot.planted_at -= 10000.0
-	_check(plot.progress() >= 1.0, "crop matures once grow_time passes")
-	farm._harvest_plot(plot)
+	# time-travel to maturity and harvest — the soil stays plowed
+	tile.planted_at -= 10000.0
+	_check(tile.progress() >= 1.0, "crop matures once grow_time passes")
+	farm._harvest_tile(tile)
 	var n = SaveDataManager.item_count("spuds", "russet")
 	_check(n >= 2 and n <= 4, "harvest yields 2-4 potatoes (got %d)" % n)
-	_check(plot.state == FarmPlot.PState.EMPTY, "harvest clears the plot")
+	_check(tile.state == FarmTile.TState.PLOWED, "harvested soil stays plowed")
+	_check(tile.last_potato_id == "russet", "soil remembers its last crop")
 
 	# sell the harvest
 	var earned = farm.sell_spuds("russet")
@@ -100,64 +120,132 @@ func _run_economy():
 	SaveDataManager.farm["wallet"] = -123
 	SaveDataManager.load_game()
 	_check(SaveDataManager.wallet() == expected_wallet, "wallet survives save/load")
-	var saved_plots: Array = SaveDataManager.farm.get("plots", [])
-	_check(saved_plots.size() == farm.plots.size(), "plot states persist")
+	var saved_tiles: Dictionary = SaveDataManager.farm.get("tiles", {})
+	_check(saved_tiles.get("0:0:0", {}).get("plowed", false) == true, "tile states persist")
 
-func _run_expansion_and_tools():
-	# ── farm expansion ──
-	_check(farm.plots[6].locked, "plot 7 starts locked")
-	_check(farm.expand_cost() == 50, "first expansion costs 50")
-	_check(farm.buy_plot(farm.plots[6]), "expansion purchase succeeds")
-	expected_wallet -= 50
-	_check(not farm.plots[6].locked, "bought plot unlocks")
-	_check(farm.plots_owned() == 7, "plots_owned advances")
-	_check(farm.expand_cost() == 90, "expansion price escalates")
+	# a saved tile dict rebuilds a growing crop
+	var ghost := FarmTile.new()
+	ghost.from_dict({"plowed": true, "potato_id": "russet", "planted_at": 123.0, "watered": true, "last": "russet"})
+	_check(ghost.state == FarmTile.TState.PLANTED and ghost.watered, "tile dict round-trips a crop")
+	ghost.free()
 
-	# ── tools ──
-	_check(farm.buy_tool("sprinkler"), "sprinkler purchase succeeds")
-	expected_wallet -= 350
+func _run_grid_features():
+	# ── section purchase ──
+	var far_tile: FarmTile = farm.tile_map["0:0:2"]
+	_check(far_tile.locked, "second section starts locked")
+	_check(farm.sections_owned() == 1, "one section owned at the start")
+	_check(farm.section_price(1) == 400, "second section costs 400")
+	_check(farm.buy_section(), "section purchase succeeds")
+	expected_wallet -= 400
+	_check(not far_tile.locked, "bought section unlocks its tiles")
+	_check(farm.sections_owned() == 2, "sections_owned advances")
+	_check(farm.section_price(farm.sections_owned()) == 1000, "next section costs more")
+
+	# ── plow durability and escalating price ──
+	SaveDataManager.farm["plow_uses"] = 1
+	_check(farm.plow_tile(farm.tile_map["0:0:1"]), "last plow use still works")
+	_check(farm.plow_uses() == 0, "plow breaks at zero uses")
+	_check(not farm.plow_tile(farm.tile_map["0:0:3"]), "broken plow can't till")
+	_check(farm.plow_cost() == 150, "first replacement plow costs 150")
+	_check(farm.buy_plow(), "plow purchase succeeds")
+	expected_wallet -= 150
+	_check(farm.plow_uses() == 10, "new plow arrives with 10 uses")
+	_check(not farm.buy_plow(), "can't stack plows while one still works")
+	_check(farm.plow_cost() == 250, "plow price escalates per purchase")
+
+	# ── placeable sprinkler waters its neighbours ──
+	_check(farm.buy_sprinkler(), "sprinkler purchase succeeds")
+	expected_wallet -= 250
+	_check(farm.sprinkler_stock() == 1, "sprinkler lands in the pack")
+	var spr_tile: FarmTile = farm.tile_map["0:1:1"]
+	farm.plow_tile(spr_tile)
+	_check(farm.place_sprinkler(spr_tile), "sprinkler placement succeeds")
+	_check(spr_tile.has_sprinkler and farm.sprinkler_stock() == 0, "placed sprinkler occupies the tile")
+	farm.buy_seed("russet")
+	expected_wallet -= 10
+	_check(not farm.plant_on(spr_tile, "russet"), "can't plant on the sprinkler tile")
+	_check(SaveDataManager.item_count("seeds", "russet") == 1, "blocked planting keeps the seed")
+	var crop: FarmTile = farm.tile_map["0:1:0"]
+	farm.plow_tile(crop)
+	farm.plant_on(crop, "russet")
+	_check(not crop.watered, "fresh crop starts dry")
+	farm._auto_farm()
+	_check(crop.watered, "sprinkler auto-waters the tile beside it")
+	_check(farm.pickup_sprinkler(spr_tile), "sprinkler pickup succeeds")
+	_check(not spr_tile.has_sprinkler and farm.sprinkler_stock() == 1, "picked-up sprinkler returns to the pack")
+	_check(spr_tile.state == FarmTile.TState.PLOWED, "soil under a sprinkler stays plowed")
+
+	# ── multi-charge fertilizer ──
+	_check(farm.buy_enhancer("compost"), "fertilizer purchase succeeds")
+	expected_wallet -= 90
+	_check(SaveDataManager.item_count("items", "compost") == 6, "compost comes with 6 charges")
+	_check(farm.apply_enhancer(crop, "compost"), "fertilizer applies to a planted tile")
+	_check(crop.boost == 0.7, "compost boosts growth")
+	_check(SaveDataManager.item_count("items", "compost") == 5, "applying uses one charge")
+	_check(not crop.enhance(0.5, 0), "only one application per crop")
+
+	# ── drone harvests, seeder replants plowed soil ──
 	_check(farm.buy_tool("harvest_drone"), "drone purchase succeeds")
 	expected_wallet -= 600
 	_check(farm.buy_tool("auto_seeder"), "seeder purchase succeeds")
 	expected_wallet -= 900
-	_check(not farm.buy_tool("sprinkler"), "tools can't be bought twice")
-
-	# ── growth enhancer on a fresh crop ──
-	_check(farm.buy_enhancer("miracle_mulch"), "enhancer purchase succeeds")
-	expected_wallet -= 90
-	farm.buy_seed("russet")
-	expected_wallet -= 10
-	var plot: FarmPlot = farm.plots[1]
-	farm.plant_on(plot, "russet")
-	_check(farm.apply_enhancer(plot, "miracle_mulch"), "enhancer applies to a planted plot")
-	_check(plot.boost == 0.45, "mulch boosts growth")
-	_check(plot.bonus_yield == 2, "mulch adds bonus yield")
-	_check(SaveDataManager.item_count("items", "miracle_mulch") == 0, "enhancer is consumed")
-	_check(not plot.enhance(0.5, 0), "only one enhancer per crop")
-
-	# ── auto-farming tick ──
-	_check(not plot.watered, "fresh crop starts dry")
-	farm._auto_farm()
-	_check(plot.watered, "sprinkler auto-waters")
-	plot.planted_at -= 10000.0
-	plot.state = FarmPlot.PState.READY
+	_check(not farm.buy_tool("harvest_drone"), "tools can't be bought twice")
+	crop.planted_at -= 10000.0
+	crop.state = FarmTile.TState.READY
 	var before = SaveDataManager.item_count("spuds", "russet")
 	farm._auto_farm()
 	var pulled = SaveDataManager.item_count("spuds", "russet") - before
-	_check(pulled >= 4 and pulled <= 6, "drone harvest includes the +2 mulch bonus (got %d)" % pulled)
-	_check(plot.state == FarmPlot.PState.EMPTY, "drone clears the plot")
-	# the seeder replants the first empty plot that grew something (plot 0)
+	_check(pulled >= 2 and pulled <= 4, "drone harvests the ready tile (got %d)" % pulled)
+	_check(crop.state == FarmTile.TState.PLOWED, "drone leaves the soil plowed")
+	# the seeder replants the first plowed tile that remembers a crop (0:0:0)
 	farm.buy_seed("russet")
 	expected_wallet -= 10
 	farm._auto_farm()
-	_check(farm.plots[0].state == FarmPlot.PState.PLANTED and farm.plots[0].potato_id == "russet",
+	_check(farm.tiles[0].state == FarmTile.TState.PLANTED and farm.tiles[0].potato_id == "russet",
 			"auto-seeder replants the last crop")
 
-	_check(SaveDataManager.wallet() == expected_wallet, "wallet math holds through expansion & tools")
+	_check(SaveDataManager.wallet() == expected_wallet, "wallet math holds through the grid features")
+
+func _run_migration():
+	# a realistic schema-1 save: 12 plots with a crop mid-growth on plot 7,
+	# a bare plot that remembers its crop, the old global sprinkler, and a
+	# pair of single-use composts
+	var old_plots: Array = []
+	old_plots.resize(12)
+	for i in range(12):
+		old_plots[i] = {}
+	old_plots[7] = {"potato_id": "red", "planted_at": 1700000000.0, "watered": true,
+			"boost": 0.7, "bonus_yield": 0, "last": "red"}
+	old_plots[2] = {"last": "yukon_gold"}
+	var old = {
+		"wallet": 777, "seeds": {"russet": 2}, "spuds": {"russet": 4},
+		"plots": old_plots, "water": 2, "owned_knives": ["butter", "paring"],
+		"equipped_knife": "paring", "plots_owned": 12,
+		"tools": ["sprinkler", "harvest_drone"], "items": {"compost": 2}
+	}
+	SaveDataManager._save_json(SaveDataManager.FARM_FILE, old)
+	SaveDataManager.load_game()
+
+	var f: Dictionary = SaveDataManager.farm
+	_check(not f.has("plots") and not f.has("plots_owned"), "migration drops the schema-1 keys")
+	_check(SaveDataManager.wallet() == 777, "migration keeps the wallet")
+	_check(int(f.get("sections_owned", 0)) == 2, "12 owned plots map to both Field 1 sections")
+	_check(int(f.get("sprinkler_stock", 0)) == 2, "old sprinkler network becomes 2 placeable ones")
+	_check(not "sprinkler" in f.get("tools", []) and "harvest_drone" in f.get("tools", []),
+			"tool list migrates")
+	_check(int(f.get("plow_uses", 0)) == 10, "migrated saves get a starting plow")
+	_check(SaveDataManager.item_count("items", "compost") == 2, "old enhancers become charges 1:1")
+	var tiles: Dictionary = f.get("tiles", {})
+	var planted: Dictionary = tiles.get("0:0:0", {})
+	_check(planted.get("potato_id", "") == "red" and float(planted.get("planted_at", 0)) == 1700000000.0
+			and bool(planted.get("watered", false)), "growing crop migrates intact")
+	var bare: Dictionary = tiles.get("0:0:1", {})
+	_check(bool(bare.get("plowed", false)) and str(bare.get("last", "")) == "yukon_gold"
+			and not bare.has("potato_id"), "bare plots migrate as plowed soil")
 
 func _finish():
 	if fails.is_empty():
-		print("FARM SMOKE OK — wallet=%d spuds sold, knife equipped, save round-trips" % SaveDataManager.wallet())
+		print("FARM SMOKE OK — plow, sections, sprinklers, fertilizer and migration all hold")
 		get_tree().quit(0)
 	else:
 		print("FARM SMOKE FAIL:")

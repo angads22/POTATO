@@ -1,49 +1,57 @@
 extends Node2D
 class_name FarmBackground
 
-# The open-world farm backdrop: striped pasture, dirt paths, farmhouse,
-# championship kitchen, market/seed/knife stands, a well, a pond and a
-# tree line — all procedural, like the rest of the game. Geometry constants
-# here are the single source of truth; FarmController reads them for
-# collision and interaction points.
+# The farm backdrop: striped pasture, dirt paths, the farmhouse, a well, a
+# pond, fenced crop fields and a tree line — all procedural, like the rest
+# of the game. The market stalls and the championship kitchen live in town
+# now (TownBackground); a gate in the east hedge leads there. Geometry
+# constants here are the single source of truth; FarmController reads them
+# for collision and interaction points.
 
 const WORLD = Vector2(2560, 1440)
 
 const HOUSE_WALL = Rect2(310, 270, 260, 150)
-const KITCHEN_WALL = Rect2(1970, 250, 300, 170)
-const SEED_STAND = Rect2(1290, 700, 140, 115)
-const KNIFE_STAND = Rect2(1800, 560, 140, 115)
-const MARKET = Rect2(1730, 1000, 200, 135)
-const TOOL_STAND = Rect2(700, 1120, 150, 115)
 const WELL_POS = Vector2(1560, 460)
 const POND_C = Vector2(2230, 1230)
 const POND_R = Vector2(250, 135)
-const FENCE = Rect2(495, 560, 700, 460)
+const TOWN_GATE_POS = Vector2(2470, 870)  # hedge gap on the east edge
 
 const PATHS = [
 	[Vector2(440, 430), Vector2(560, 540), Vector2(1240, 540), Vector2(1560, 500)],
-	[Vector2(1240, 540), Vector2(1250, 800), Vector2(1330, 820)],
-	[Vector2(1560, 500), Vector2(1900, 450), Vector2(2120, 440)],
-	[Vector2(1560, 500), Vector2(1680, 780), Vector2(1810, 1010)],
+	[Vector2(1240, 540), Vector2(1180, 660), Vector2(1140, 745)],
+	[Vector2(1560, 500), Vector2(1648, 455)],
+	[Vector2(1240, 540), Vector2(1220, 800), Vector2(1200, 1010)],
+	[Vector2(1560, 500), Vector2(2000, 660), Vector2(2330, 820), Vector2(2480, 870)],
 ]
 
 const TREE_POSITIONS = [
 	Vector2(170, 560), Vector2(150, 900), Vector2(220, 1240),
-	Vector2(700, 1300), Vector2(1150, 1180), Vector2(1500, 1320),
-	Vector2(820, 320), Vector2(1240, 240), Vector2(1650, 180),
-	Vector2(2420, 560), Vector2(2380, 880), Vector2(1980, 800),
+	Vector2(380, 1340), Vector2(1920, 760), Vector2(2440, 990),
+	Vector2(820, 320), Vector2(1240, 240), Vector2(1450, 140),
+	Vector2(2480, 330), Vector2(2380, 1060), Vector2(1980, 800),
 	Vector2(2160, 970), Vector2(650, 170)
 ]
 
 var t := 0.0
-var night01 := 0.0  # 0 = noon, 1 = midnight; set each frame by FarmController
+var night01 := 0.0  # 0 = noon, 1 = midnight; set each frame by the controller
 
 var _tufts: Array = []    # {pos, ph}
 var _flowers: Array = []  # {pos, col}
 var _rocks: Array = []
+var _fences: Array = []   # {rect, gate} derived from fields.json
+
+# Fence rect around a field grid: tile art is 130×90 on 140×110 cells,
+# plus a 20 px margin
+static func field_rect(fd: Dictionary) -> Rect2:
+	var cell = GameData.field_cell()
+	var origin = Vector2(float(fd["origin"][0]), float(fd["origin"][1]))
+	return Rect2(origin.x - 85, origin.y - 65,
+			(int(fd["cols"]) - 1) * cell.x + 170, (int(fd["rows"]) - 1) * cell.y + 130)
 
 func _ready():
 	z_index = -1
+	for fd in GameData.fields():
+		_fences.append({"rect": field_rect(fd), "gate": str(fd.get("gate", ""))})
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 0xFA12  # stable decoration layout across sessions
 	var flower_cols = [Color(0.95, 0.85, 0.3), Color(0.9, 0.5, 0.6), Color(0.85, 0.85, 0.95)]
@@ -60,11 +68,12 @@ func _ready():
 		if _on_clear_ground(p):
 			_rocks.append(p)
 
-# Keeps grass decorations off buildings, the plot field and the pond
+# Keeps grass decorations off the house, the crop fields and the pond
 func _on_clear_ground(p: Vector2) -> bool:
-	for r in [HOUSE_WALL.grow(50), KITCHEN_WALL.grow(50), SEED_STAND.grow(25),
-			KNIFE_STAND.grow(25), MARKET.grow(25), TOOL_STAND.grow(25), FENCE]:
-		if r.has_point(p):
+	if HOUSE_WALL.grow(50).has_point(p):
+		return false
+	for f in _fences:
+		if f.rect.grow(10).has_point(p):
 			return false
 	var d = (p - POND_C) / (POND_R * 1.3)
 	return d.length() > 1.0
@@ -77,16 +86,13 @@ func _draw():
 	_draw_grass()
 	_draw_paths()
 	_draw_pond()
-	_draw_fence()
+	for f in _fences:
+		_draw_field_fence(f.rect, f.gate)
 	_draw_house()
-	_draw_kitchen()
-	_draw_stall(SEED_STAND, Color(0.3, 0.65, 0.35), "SEEDS")
-	_draw_stall(KNIFE_STAND, Color(0.55, 0.6, 0.7), "KNIVES")
-	_draw_stall(MARKET, Color(0.85, 0.4, 0.3), "MARKET")
-	_draw_stall(TOOL_STAND, Color(0.4, 0.55, 0.8), "TOOLS")
 	_draw_well()
 	for i in range(TREE_POSITIONS.size()):
 		_draw_tree(TREE_POSITIONS[i], 1.0 + 0.25 * sin(i * 2.4), float(i))
+	_draw_town_gate()
 	_draw_hedge_border()
 
 func _draw_grass():
@@ -145,31 +151,46 @@ func _draw_pond():
 		draw_line(rp, rp + Vector2(sway, -42), Color(0.32, 0.5, 0.24), 3.0)
 		draw_rect(Rect2(rp.x + sway - 3, rp.y - 54, 6, 14), Color(0.45, 0.3, 0.16))
 
-func _draw_fence():
+# Rail-and-post fence around a crop field, with a gate gap on one side.
+# Purely decorative — the player walks through it like the original field
+# fence did.
+func _draw_field_fence(r: Rect2, gate: String):
 	var rail = Color(0.55, 0.4, 0.24)
 	var post = Color(0.45, 0.32, 0.18)
-	# rails: top, bottom, left, right (gate gap on the right edge)
-	draw_rect(Rect2(FENCE.position.x, FENCE.position.y, FENCE.size.x, 5), rail)
-	draw_rect(Rect2(FENCE.position.x, FENCE.position.y + 14, FENCE.size.x, 5), rail)
-	draw_rect(Rect2(FENCE.position.x, FENCE.end.y - 14, FENCE.size.x, 5), rail)
-	draw_rect(Rect2(FENCE.position.x, FENCE.end.y, FENCE.size.x, 5), rail)
-	for x in [FENCE.position.x, FENCE.end.x]:
-		var is_gate_side = x == FENCE.end.x
-		var y = FENCE.position.y
-		while y < FENCE.end.y:
-			if not (is_gate_side and y > 720 and y < 860):
+	var gap = 130.0
+	var gx0 = r.get_center().x - gap / 2.0
+	var gx1 = r.get_center().x + gap / 2.0
+	var gy0 = r.get_center().y - gap / 2.0
+	var gy1 = r.get_center().y + gap / 2.0
+	# horizontal rail pairs (top, bottom)
+	for side in ["top", "bottom"]:
+		for off in [0.0, 14.0]:
+			var y = r.position.y + off if side == "top" else r.end.y - off - 5
+			if gate == side:
+				draw_rect(Rect2(r.position.x, y, gx0 - r.position.x, 5), rail)
+				draw_rect(Rect2(gx1, y, r.end.x - gx1, 5), rail)
+			else:
+				draw_rect(Rect2(r.position.x, y, r.size.x, 5), rail)
+	# vertical picket pairs (left, right)
+	for side in ["left", "right"]:
+		var x = r.position.x if side == "left" else r.end.x
+		var y = r.position.y
+		while y < r.end.y:
+			if not (gate == side and y > gy0 and y < gy1):
 				draw_rect(Rect2(x - 2, y, 5, 18), rail)
 				draw_rect(Rect2(x - 2, y + 32, 5, 18), rail)
 			y += 50
 	# posts every 100 px along the perimeter
-	var step = 100
-	for x in range(int(FENCE.position.x), int(FENCE.end.x) + 1, step):
-		draw_rect(Rect2(x - 4, FENCE.position.y - 8, 8, 30), post)
-		draw_rect(Rect2(x - 4, FENCE.end.y - 8, 8, 30), post)
-	for y in range(int(FENCE.position.y), int(FENCE.end.y) + 1, step):
-		draw_rect(Rect2(FENCE.position.x - 4, y - 8, 8, 30), post)
-		if not (y > 720 and y < 860):
-			draw_rect(Rect2(FENCE.end.x - 4, y - 8, 8, 30), post)
+	for x in range(int(r.position.x), int(r.end.x) + 1, 100):
+		if not (gate == "top" and x > gx0 and x < gx1):
+			draw_rect(Rect2(x - 4, r.position.y - 8, 8, 30), post)
+		if not (gate == "bottom" and x > gx0 and x < gx1):
+			draw_rect(Rect2(x - 4, r.end.y - 8, 8, 30), post)
+	for y in range(int(r.position.y), int(r.end.y) + 1, 100):
+		if not (gate == "left" and y > gy0 and y < gy1):
+			draw_rect(Rect2(r.position.x - 4, y - 8, 8, 30), post)
+		if not (gate == "right" and y > gy0 and y < gy1):
+			draw_rect(Rect2(r.end.x - 4, y - 8, 8, 30), post)
 
 func _window_color() -> Color:
 	# panes go from daylight blue to a warm lit glow as night falls
@@ -200,81 +221,6 @@ func _draw_house():
 		draw_rect(Rect2(wx - 4, w.position.y + 36, 52, 48), Color(0.4, 0.25, 0.15))
 		draw_rect(Rect2(wx, w.position.y + 40, 44, 40), _window_color())
 		draw_rect(Rect2(wx + 20, w.position.y + 40, 3, 40), Color(0.4, 0.25, 0.15))
-
-func _draw_kitchen():
-	var w = KITCHEN_WALL
-	# plaster walls
-	draw_rect(w, Color(0.9, 0.84, 0.72))
-	draw_rect(Rect2(w.position.x, w.end.y - 14, w.size.x, 14), Color(0.75, 0.68, 0.56))
-	# flat roof + gold-striped awning with scalloped edge
-	draw_rect(Rect2(w.position.x - 14, w.position.y - 26, w.size.x + 28, 26), Color(0.45, 0.3, 0.16))
-	for i in range(8):
-		var ax = w.position.x - 14 + i * (w.size.x + 28) / 8.0
-		var stripe = Color(0.85, 0.68, 0.3) if i % 2 == 0 else Color(0.95, 0.92, 0.85)
-		draw_rect(Rect2(ax, w.position.y - 4, (w.size.x + 28) / 8.0, 16), stripe)
-		draw_circle(Vector2(ax + (w.size.x + 28) / 16.0, w.position.y + 12), (w.size.x + 28) / 16.0, stripe)
-	# sign
-	GameHUD.panel_style(Color(0.25, 0.16, 0.09, 0.95)).draw(get_canvas_item(), Rect2(w.get_center().x - 120, w.position.y + 32, 240, 38))
-	var font = ThemeDB.fallback_font
-	var label = "SLICE IT! KITCHEN"
-	var ls = font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 19)
-	draw_string(font, Vector2(w.get_center().x - ls.x / 2, w.position.y + 58), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 19, Color.GOLD)
-	# double door + windows
-	draw_rect(Rect2(w.get_center().x - 40, w.end.y - 90, 80, 90), Color(0.42, 0.27, 0.14))
-	draw_rect(Rect2(w.get_center().x - 2, w.end.y - 90, 4, 90), Color(0.3, 0.19, 0.1))
-	for wx in [w.position.x + 30, w.end.x - 80]:
-		draw_rect(Rect2(wx - 4, w.end.y - 86, 58, 50), Color(0.55, 0.45, 0.3))
-		draw_rect(Rect2(wx, w.end.y - 82, 50, 42), _window_color())
-
-func _draw_stall(r: Rect2, stripe: Color, label: String):
-	# back board + counter
-	draw_rect(Rect2(r.position.x, r.position.y, r.size.x, r.size.y - 36), Color(0.5, 0.36, 0.2))
-	draw_rect(Rect2(r.position.x - 8, r.end.y - 40, r.size.x + 16, 40), Color(0.42, 0.29, 0.16))
-	draw_rect(Rect2(r.position.x - 8, r.end.y - 40, r.size.x + 16, 6), Color(0.58, 0.42, 0.25))
-	# awning
-	for i in range(5):
-		var ax = r.position.x - 12 + i * (r.size.x + 24) / 5.0
-		var c = stripe if i % 2 == 0 else Color(0.95, 0.92, 0.85)
-		draw_rect(Rect2(ax, r.position.y - 22, (r.size.x + 24) / 5.0, 18), c)
-		draw_circle(Vector2(ax + (r.size.x + 24) / 10.0, r.position.y - 4), (r.size.x + 24) / 10.0, c)
-	# wares on the back board
-	match label:
-		"SEEDS":
-			for i in range(3):
-				var px = r.position.x + 22 + i * 36
-				draw_rect(Rect2(px, r.position.y + 16, 24, 32), Color(0.92, 0.88, 0.78))
-				draw_circle(Vector2(px + 12, r.position.y + 30), 7.0, Color(0.72, 0.45, 0.2).lightened(i * 0.2))
-		"KNIVES":
-			for i in range(3):
-				var px = r.position.x + 26 + i * 36
-				draw_colored_polygon(PackedVector2Array([
-					Vector2(px, r.position.y + 14), Vector2(px + 14, r.position.y + 14),
-					Vector2(px + 7, r.position.y + 44)
-				]), Color(0.85, 0.87, 0.92))
-				draw_rect(Rect2(px + 3, r.position.y + 6, 8, 9), Color(0.35, 0.22, 0.12))
-		"MARKET":
-			for i in range(2):
-				var px = r.position.x + 24 + i * 78
-				draw_rect(Rect2(px, r.position.y + 14, 56, 36), Color(0.62, 0.46, 0.26))
-				for k in range(3):
-					draw_circle(Vector2(px + 13 + k * 15, r.position.y + 18), 8.0, Color(0.78, 0.55, 0.3))
-		"TOOLS":
-			# a watering can, a gear and a fertilizer sack on the board
-			var cx = r.position.x + 30
-			draw_rect(Rect2(cx, r.position.y + 22, 22, 16), Color(0.55, 0.62, 0.68))
-			draw_line(Vector2(cx + 22, r.position.y + 26), Vector2(cx + 32, r.position.y + 18), Color(0.55, 0.62, 0.68), 4.0)
-			var gc = Vector2(r.position.x + 84, r.position.y + 30)
-			draw_circle(gc, 12.0, Color(0.7, 0.72, 0.78))
-			for k in range(6):
-				var a = k * TAU / 6.0
-				draw_circle(gc + Vector2(cos(a), sin(a)) * 12.0, 3.5, Color(0.7, 0.72, 0.78))
-			draw_circle(gc, 5.0, Color(0.45, 0.47, 0.52))
-			draw_rect(Rect2(r.position.x + 110, r.position.y + 16, 24, 32), Color(0.78, 0.7, 0.5))
-			draw_circle(Vector2(r.position.x + 122, r.position.y + 30), 7.0, Color(0.45, 0.62, 0.3))
-	# name plate
-	var font = ThemeDB.fallback_font
-	var ls = font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 15)
-	draw_string(font, Vector2(r.get_center().x - ls.x / 2, r.end.y - 14), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.95, 0.9, 0.8))
 
 func _draw_well():
 	var c = WELL_POS
@@ -307,15 +253,31 @@ func _draw_tree(pos: Vector2, s: float, ph: float):
 	draw_circle(pos + Vector2(sway, -100 * s), 36 * s, Color(0.3, 0.52, 0.24))
 	draw_circle(pos + Vector2(sway - 12 * s, -108 * s), 16 * s, Color(0.38, 0.6, 0.3))
 
+# Road stub and signpost where the east hedge opens toward town
+func _draw_town_gate():
+	draw_rect(Rect2(WORLD.x - 120, 830, 120, 80), Color(0.55, 0.42, 0.26))
+	draw_rect(Rect2(WORLD.x - 120, 838, 120, 64), Color(0.66, 0.52, 0.33))
+	var sp = Vector2(2392, 800)
+	draw_rect(Rect2(sp.x - 4, sp.y - 52, 8, 56), Color(0.45, 0.32, 0.18))
+	draw_rect(Rect2(sp.x - 42, sp.y - 78, 84, 30), Color(0.55, 0.4, 0.24))
+	draw_rect(Rect2(sp.x - 42, sp.y - 78, 84, 4), Color(0.65, 0.5, 0.3))
+	var font = ThemeDB.fallback_font
+	var label = "TOWN >"
+	var ls = font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 15)
+	draw_string(font, Vector2(sp.x - ls.x / 2, sp.y - 56), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.95, 0.9, 0.8))
+
 func _draw_hedge_border():
 	var hedge = Color(0.16, 0.3, 0.14)
 	draw_rect(Rect2(0, 0, WORLD.x, 36), hedge)
 	draw_rect(Rect2(0, WORLD.y - 36, WORLD.x, 36), hedge)
 	draw_rect(Rect2(0, 0, 36, WORLD.y), hedge)
-	draw_rect(Rect2(WORLD.x - 36, 0, 36, WORLD.y), hedge)
+	# east hedge leaves a gap for the town gate
+	draw_rect(Rect2(WORLD.x - 36, 0, 36, 800), hedge)
+	draw_rect(Rect2(WORLD.x - 36, 940, 36, WORLD.y - 940), hedge)
 	for x in range(45, int(WORLD.x), 90):
 		draw_circle(Vector2(x, 36), 16.0, hedge)
 		draw_circle(Vector2(x, WORLD.y - 36), 16.0, hedge)
 	for y in range(45, int(WORLD.y), 90):
 		draw_circle(Vector2(36, y), 16.0, hedge)
-		draw_circle(Vector2(WORLD.x - 36, y), 16.0, hedge)
+		if y < 790 or y > 950:
+			draw_circle(Vector2(WORLD.x - 36, y), 16.0, hedge)
