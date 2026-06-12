@@ -67,15 +67,27 @@ func _draw_wallet_panel(font: Font):
 		]), col)
 
 func _draw_inventory_panel(font: Font):
-	GameHUD.panel_style().draw(get_canvas_item(), Rect2(920, 8, 350, 78))
+	GameHUD.panel_style().draw(get_canvas_item(), Rect2(920, 8, 350, 112))
 	draw_string(font, Vector2(936, 32), "SEEDS", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.85, 0.68, 0.3))
 	draw_string(font, Vector2(936, 68), "SPUDS", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.85, 0.68, 0.3))
-	for row in range(2):
-		var inv_name = "seeds" if row == 0 else "spuds"
+	draw_string(font, Vector2(936, 104), "ITEMS", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.85, 0.68, 0.3))
+	for row in range(3):
+		var things: Array
+		var inv_name: String
+		match row:
+			0:
+				inv_name = "seeds"
+				things = GameData.farmable_potatoes()
+			1:
+				inv_name = "spuds"
+				things = GameData.farmable_potatoes()
+			_:
+				inv_name = "items"
+				things = GameData.enhancers()
 		var y = 26.0 + row * 36.0
 		var x = 1000.0
 		var any = false
-		for p in GameData.farmable_potatoes():
+		for p in things:
 			var n = SaveDataManager.item_count(inv_name, p["id"])
 			if n <= 0:
 				continue
@@ -121,6 +133,8 @@ func _draw_shop(font: Font):
 		"market": title = "MARKET — SELL YOUR SPUDS"
 		"knives": title = "KNIFE STAND"
 		"plant": title = "PLANT A SEED"
+		"tools": title = "TOOL SHED"
+		"enhance": title = "ENHANCE THIS CROP"
 	var ts = font.get_string_size(title, HORIZONTAL_ALIGNMENT_CENTER, -1, 30)
 	draw_string(font, Vector2(640 - ts.x / 2, 160), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, Color.GOLD)
 
@@ -142,6 +156,12 @@ func _draw_shop(font: Font):
 		"knives":
 			_draw_knife_rows(font, panel)
 			_draw_footer(font, panel, "[1-%d] Buy / Equip   ·   [ESC] Close" % GameData.knives().size())
+		"tools":
+			_draw_tool_rows(font, panel)
+			_draw_footer(font, panel, "[1-%d] Buy   ·   [ESC] Close" % (GameData.tools().size() + GameData.enhancers().size()))
+		"enhance":
+			_draw_enhance_rows(font, panel)
+			_draw_footer(font, panel, "[1-%d] Apply   ·   [ESC] Cancel" % maxi(ctrl.owned_enhancers().size(), 1))
 
 func _draw_seed_rows(font: Font, panel: Rect2, shop_mode: bool):
 	var y = 210.0
@@ -219,6 +239,58 @@ func _draw_knife_rows(font: Font, panel: Rect2):
 			scol = col
 		var ss = font.get_string_size(status, HORIZONTAL_ALIGNMENT_CENTER, -1, 17)
 		draw_string(font, Vector2(panel.end.x - ss.x - 30, y), status, HORIZONTAL_ALIGNMENT_LEFT, -1, 17, scol)
+		y += 54.0
+
+func _draw_tool_rows(font: Font, panel: Rect2):
+	var y = 196.0
+	var i = 0
+	for tl in GameData.tools():
+		i += 1
+		var owned = ctrl.owns_tool(tl["id"])
+		var cost = int(tl["cost"])
+		var col = Color(0.95, 0.92, 0.85)
+		if not owned and SaveDataManager.wallet() < cost:
+			col = Color(0.55, 0.5, 0.45)
+		draw_circle(Vector2(panel.position.x + 48, y - 7), 10.0, Color(tl.get("color", "#888")))
+		draw_string(font, Vector2(panel.position.x + 70, y), "[%d] %s" % [i, tl["name"]], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, col)
+		draw_string(font, Vector2(panel.position.x + 70, y + 18), tl.get("desc", ""), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.7, 0.65, 0.55))
+		var status = "INSTALLED" if owned else "%d c" % cost
+		var scol = Color.LIGHT_GREEN if owned else col
+		var ss = font.get_string_size(status, HORIZONTAL_ALIGNMENT_CENTER, -1, 17)
+		draw_string(font, Vector2(panel.end.x - ss.x - 30, y), status, HORIZONTAL_ALIGNMENT_LEFT, -1, 17, scol)
+		y += 52.0
+	# divider, then the consumables
+	draw_rect(Rect2(panel.position.x + 30, y - 26, panel.size.x - 60, 2), Color(0.85, 0.68, 0.3, 0.4))
+	for e in GameData.enhancers():
+		i += 1
+		var cost2 = int(e["cost"])
+		var have = SaveDataManager.item_count("items", e["id"])
+		var col2 = Color(0.95, 0.92, 0.85) if SaveDataManager.wallet() >= cost2 else Color(0.55, 0.5, 0.45)
+		draw_circle(Vector2(panel.position.x + 48, y - 7), 10.0, Color(e.get("color", "#888")))
+		draw_string(font, Vector2(panel.position.x + 70, y), "[%d] %s" % [i, e["name"]], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, col2)
+		var desc = e.get("desc", "")
+		if have > 0:
+			desc += "  ·  owned: %d" % have
+		draw_string(font, Vector2(panel.position.x + 70, y + 18), desc, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.7, 0.65, 0.55))
+		var ss2 = font.get_string_size("%d c" % cost2, HORIZONTAL_ALIGNMENT_CENTER, -1, 17)
+		draw_string(font, Vector2(panel.end.x - ss2.x - 30, y), "%d c" % cost2, HORIZONTAL_ALIGNMENT_LEFT, -1, 17, col2)
+		y += 52.0
+
+func _draw_enhance_rows(font: Font, panel: Rect2):
+	var owned = ctrl.owned_enhancers()
+	if owned.is_empty():
+		var msg = "No enhancers in your pockets — buy some at the tool shed"
+		var ms = font.get_string_size(msg, HORIZONTAL_ALIGNMENT_CENTER, -1, 17)
+		draw_string(font, Vector2(640 - ms.x / 2, 300), msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color(0.7, 0.65, 0.55))
+		return
+	var y = 220.0
+	var i = 0
+	for e in owned:
+		i += 1
+		var n = SaveDataManager.item_count("items", e["id"])
+		draw_circle(Vector2(panel.position.x + 48, y - 7), 10.0, Color(e.get("color", "#888")))
+		draw_string(font, Vector2(panel.position.x + 70, y), "[%d] %s × %d" % [i, e["name"], n], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(0.95, 0.92, 0.85))
+		draw_string(font, Vector2(panel.position.x + 70, y + 18), e.get("desc", ""), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.7, 0.65, 0.55))
 		y += 54.0
 
 func _draw_footer(font: Font, panel: Rect2, text: String):

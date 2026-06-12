@@ -7,9 +7,12 @@ class_name GameData
 
 const KNIVES_PATH = "res://resources/game_data/knives.json"
 const POTATOES_PATH = "res://resources/game_data/potatoes.json"
+const ITEMS_PATH = "res://resources/game_data/items.json"
 
 static var _knives: Array = []
 static var _potatoes: Array = []
+static var _tools: Array = []
+static var _enhancers: Array = []
 
 static func knives() -> Array:
 	if _knives.is_empty():
@@ -40,6 +43,30 @@ static func standard_potatoes() -> Array:
 # Varieties that can be planted on the farm (anything with a seed price).
 static func farmable_potatoes() -> Array:
 	return potatoes().filter(func(p): return p.has("seed_cost"))
+
+# Farm tools (permanent, enable auto-farming) and growth enhancers
+# (consumables applied to a planted plot)
+static func tools() -> Array:
+	if _tools.is_empty():
+		_tools = _load_array(ITEMS_PATH, "tools")
+	return _tools
+
+static func enhancers() -> Array:
+	if _enhancers.is_empty():
+		_enhancers = _load_array(ITEMS_PATH, "enhancers")
+	return _enhancers
+
+static func tool_by_id(id: String) -> Dictionary:
+	for tl in tools():
+		if tl.get("id", "") == id:
+			return tl
+	return {}
+
+static func enhancer_by_id(id: String) -> Dictionary:
+	for e in enhancers():
+		if e.get("id", "") == id:
+			return e
+	return {}
 
 static func _load_array(path: String, key: String) -> Array:
 	if not FileAccess.file_exists(path):

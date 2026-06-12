@@ -20,6 +20,15 @@ knives, chain combos, and chase FEVER mode.
 - **One economy:** slicing runs bank coins to the farm wallet
   (golden-potato coins + score/20), the farm grows and sells potatoes, and
   the knife stand feeds power back into the kitchen
+- **Farm expansion:** the field starts half-tilled — clear and till new plots
+  one at a time, with prices that climb as your farm grows
+- **Tools & auto-farming:** the tool shed sells permanent gear — a Sprinkler
+  Network that auto-waters, a Spud-Bot that harvests ready crops, and an
+  Auto-Seeder that replants from your seed pouch — chain all three for a
+  self-running farm while you tend the field
+- **Growth enhancers:** consumable Compost, Super Grow, and Miracle Mulch —
+  stand by a growing crop and press `F` to work one into the soil for faster
+  growth (and bonus yield from the good stuff)
 - **LAN multiplayer:** host a game on your local network and a friend joins
   by entering your IP — both players cut the same potato sequence in parallel,
   with live score and lives shown for your opponent in the HUD
@@ -141,7 +150,7 @@ Every iteration is downloadable from the [releases page](https://github.com/anga
 
 | Version | What changed |
 |---------|--------------|
-| [v2.2.0](https://github.com/angads22/POTATO/releases/tag/v2.2.0) **(newest)** | macOS build, LAN multiplayer, global leaderboard, 3 graphics styles, streamlined modes |
+| [v2.2.0](https://github.com/angads22/POTATO/releases/tag/v2.2.0) **(newest)** | macOS build, LAN multiplayer, global leaderboard, 3 graphics styles, streamlined modes, farm expansion + auto-farming tools + growth enhancers |
 | [v2.1.0](https://github.com/angads22/POTATO/releases/tag/v2.1.0) | Visual edition ships as a standalone app (kitchen, open-world farm, day-night cycle) |
 | [v1.1.0](https://github.com/angads22/POTATO/releases/tag/v1.1.0) | Standalone single-file binaries, auto-update on launch, in-game update checker |
 | [v1.0.2](https://github.com/angads22/POTATO/releases/tag/v1.0.2) | Overhaul: five cut mechanics, four modes, boss fight, shop, power-ups, stage orders |
@@ -163,6 +172,7 @@ Every iteration is downloadable from the [releases page](https://github.com/anga
 - In the shop: `1`–`7` knives, `Q`/`W`/`E`/`R` power-ups, `SPACE` to continue
 - `ESC` — quit to menu
 - On the farm (visual edition): `WASD`/arrows to walk, `E` to interact,
+  `F` to apply a growth enhancer to the nearest crop,
   `1`–`7` in shops, `A` to sell everything at the market
 - In the multiplayer lobby: `1` Host, `2` Join (type IP then `ENTER`), `ESC` Back
 
