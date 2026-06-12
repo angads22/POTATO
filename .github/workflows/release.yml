@@ -2,14 +2,25 @@ name: Release
 
 # Builds self-contained single-file binaries and attaches them to a
 # GitHub Release. Trigger by pushing a tag like v1.1.0 (the tag must
-# match the VERSION constant in Program.cs so the in-game update
-# checker agrees with the release). Manual runs upload the binaries
-# as workflow artifacts instead of creating a release.
+# match the VERSION constant in Core/Updater.cs so the in-game update
+# checker agrees with the release). Manual runs can backfill a release
+# for an existing tag via the `tag` input; without it they just upload
+# the binaries as workflow artifacts.
 
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and publish a release for (e.g. v1.0.0)'
+        required: false
+        type: string
+      make_latest:
+        description: 'Mark the backfilled release as latest'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -19,6 +30,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
@@ -41,15 +55,18 @@ jobs:
           mv out/linux/PotatoSlicer out/PotatoSlicer-linux-x64
 
       - name: Create release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          make_latest: ${{ github.event_name == 'push' || inputs.make_latest }}
+          generate_release_notes: true
           files: |
             out/PotatoSlicer-win-x64.exe
             out/PotatoSlicer-linux-x64
 
       - name: Upload artifacts (manual run)
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        if: ${{ !startsWith(github.ref, 'refs/tags/') && inputs.tag == '' }}
         uses: actions/upload-artifact@v4
         with:
           name: PotatoSlicer

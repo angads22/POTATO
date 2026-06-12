@@ -1,5 +1,8 @@
 # SLICE IT! · The Potato Cutting Championship
 
+[![Latest release](https://img.shields.io/github/v/release/angads22/POTATO?label=latest%20release&color=gold)](https://github.com/angads22/POTATO/releases/latest)
+[![All releases](https://img.shields.io/badge/releases-all%20versions-8B5A2B)](https://github.com/angads22/POTATO/releases)
+
 A visual rhythm-action game about knives, starch, and questionable life choices.
 Press SPACE when the bar hits the centre to slice, dice, and julienne your way through
 six stages, from the Training Kitchen to the World Championship. Earn coins, buy better
@@ -56,13 +59,14 @@ Binaries coming soon. See [`godot/README.md`](godot/README.md) for development a
 
 ### Classic Console Edition
 
-Download the standalone build for your platform from the
-[latest release](https://github.com/angads22/POTATO/releases/latest):
+**Newest release: [v1.1.0](https://github.com/angads22/POTATO/releases/latest)** — download the standalone build for your platform:
 
-- `PotatoSlicer-win-x64.exe` — Windows: download and double-click
-- `PotatoSlicer-linux-x64` — Linux: `chmod +x` then run
+- [`PotatoSlicer-win-x64.exe`](https://github.com/angads22/POTATO/releases/latest/download/PotatoSlicer-win-x64.exe) — Windows: download and double-click
+- [`PotatoSlicer-linux-x64`](https://github.com/angads22/POTATO/releases/latest/download/PotatoSlicer-linux-x64) — Linux: `chmod +x` then run
 
-Updating later is built in: choose **Check for Updates** in the main menu.
+Every past version is archived on the [releases page](https://github.com/angads22/POTATO/releases).
+The game checks the latest release on launch and **updates itself automatically**
+(skip with `--no-update`); there's also a manual **Check for Updates** in the menu.
 
 Or run from source:
 ```sh
@@ -84,6 +88,17 @@ dotnet run
 - Modular architecture for expandability
 - Framework ready for sprites, animations, and features
 - See [`godot/README.md`](godot/README.md) for development guide
+
+## Release History (Console Edition)
+
+Every iteration is downloadable from the [releases page](https://github.com/angads22/POTATO/releases):
+
+| Version | What changed |
+|---------|--------------|
+| [v1.1.0](https://github.com/angads22/POTATO/releases/tag/v1.1.0) **(newest)** | Standalone single-file binaries, auto-update on launch, in-game update checker |
+| [v1.0.2](https://github.com/angads22/POTATO/releases/tag/v1.0.2) | Overhaul: five cut mechanics, four modes, boss fight, shop, power-ups, stage orders |
+| [v1.0.1](https://github.com/angads22/POTATO/releases/tag/v1.0.1) | Lives system, golden potato, high score, quick-cut bonus, sound effects |
+| [v1.0.0](https://github.com/angads22/POTATO/releases/tag/v1.0.0) | Initial release |
 
 ## Cutting a Release (Console Edition)
 
