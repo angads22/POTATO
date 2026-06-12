@@ -18,7 +18,7 @@ namespace PotatoSlicer
 {
     static class Updater
     {
-        public const string VERSION = "1.1.0";          // must match the release tag (v1.1.0)
+        public const string VERSION = "2.1.0";          // must match the release tag (v2.1.0)
         public const string REPO    = "angads22/POTATO";
 
         const string LatestUrl = "https://api.github.com/repos/" + REPO + "/releases/latest";

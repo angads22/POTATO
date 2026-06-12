@@ -46,20 +46,20 @@ knives, chain combos, and chase FEVER mode.
 
 ## Play Now
 
-### Visual Edition (Godot) — in development
+### Visual Edition (Godot) — the full game
 
-A fully featured visual remake in Godot Engine with graphics, animations, and a framework built for expansion.
+The visual remake with the kitchen, the open-world potato farm, and the day-night cycle.
+Download from the [latest release](https://github.com/angads22/POTATO/releases/latest), unzip, and play:
 
-```sh
-# Install Godot 4.2+
-# Open godot/ as a project and press F5 to run
-```
+- [`SliceIt-Visual-win-x64.zip`](https://github.com/angads22/POTATO/releases/latest/download/SliceIt-Visual-win-x64.zip) — Windows: unzip and double-click `SliceIt.exe`
+- [`SliceIt-Visual-linux-x64.zip`](https://github.com/angads22/POTATO/releases/latest/download/SliceIt-Visual-linux-x64.zip) — Linux: unzip, `chmod +x SliceIt.x86_64`, run
 
-Binaries coming soon. See [`godot/README.md`](godot/README.md) for development and expansion guide.
+Or run from source: install Godot 4.2+, open `godot/` as a project, press F5.
+See [`godot/README.md`](godot/README.md) for the development and expansion guide.
 
 ### Classic Console Edition
 
-**Newest release: [v1.1.0](https://github.com/angads22/POTATO/releases/latest)** — download the standalone build for your platform:
+**Newest release: [v2.1.0](https://github.com/angads22/POTATO/releases/latest)** — download the standalone build for your platform:
 
 - [`PotatoSlicer-win-x64.exe`](https://github.com/angads22/POTATO/releases/latest/download/PotatoSlicer-win-x64.exe) — Windows: download and double-click
 - [`PotatoSlicer-linux-x64`](https://github.com/angads22/POTATO/releases/latest/download/PotatoSlicer-linux-x64) — Linux: `chmod +x` then run
@@ -89,13 +89,14 @@ dotnet run
 - Framework ready for sprites, animations, and features
 - See [`godot/README.md`](godot/README.md) for development guide
 
-## Release History (Console Edition)
+## Release History
 
 Every iteration is downloadable from the [releases page](https://github.com/angads22/POTATO/releases):
 
 | Version | What changed |
 |---------|--------------|
-| [v1.1.0](https://github.com/angads22/POTATO/releases/tag/v1.1.0) **(newest)** | Standalone single-file binaries, auto-update on launch, in-game update checker |
+| [v2.1.0](https://github.com/angads22/POTATO/releases/tag/v2.1.0) **(newest)** | Visual edition ships as a standalone app (kitchen, open-world farm, day-night cycle); console edition included |
+| [v1.1.0](https://github.com/angads22/POTATO/releases/tag/v1.1.0) | Standalone single-file binaries, auto-update on launch, in-game update checker |
 | [v1.0.2](https://github.com/angads22/POTATO/releases/tag/v1.0.2) | Overhaul: five cut mechanics, four modes, boss fight, shop, power-ups, stage orders |
 | [v1.0.1](https://github.com/angads22/POTATO/releases/tag/v1.0.1) | Lives system, golden potato, high score, quick-cut bonus, sound effects |
 | [v1.0.0](https://github.com/angads22/POTATO/releases/tag/v1.0.0) | Initial release |
