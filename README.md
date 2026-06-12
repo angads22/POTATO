@@ -25,9 +25,13 @@ knives, chain combos, and chase FEVER mode.
   with live score and lives shown for your opponent in the HUD
 - **Global leaderboard:** every run submits your score to a shared online
   leaderboard (requires a free Supabase project — see `OnlineLeaderboard.gd`)
-- **Four game modes:** Championship (6-stage campaign), Endless (infinite, ever-faster,
-  a boss every 5 stages), Time Attack (60 seconds), and a date-seeded Daily Challenge
-  that plays the same for everyone on a given day
+- **Two polished game modes:** Championship (6-stage campaign with stage-clear
+  bonuses and a life back every other stage) and Endless (infinite waves with
+  rising wave bonuses and golden-potato odds that climb as you survive)
+- **Three graphics styles (visual edition):** switch the whole game's look in
+  Settings with `[G]` — *Classic* (the hand-drawn original), *Pixel Art*
+  (chunky retro mosaic with scanlines), or *Hyperreal* (cinematic colour
+  grade with bloom, vignette, and film grain)
 - **Five cut mechanics** — not every spud is a simple slice:
   - *Slice/Dice* — the classic sweeping bar, press SPACE at centre
   - *Peel* (Purple) — tap to start a rising fill, tap again to lock it
@@ -107,7 +111,7 @@ The game works fully without this — scores stay local when the constants are l
 
 ## LAN Multiplayer
 
-From the main menu choose **[6] Multiplayer**:
+From the main menu choose **[4] Multiplayer**:
 
 1. One player picks **Host** — their LAN IP is shown on screen.
 2. The other picks **Join** and types that IP.
@@ -137,7 +141,7 @@ Every iteration is downloadable from the [releases page](https://github.com/anga
 
 | Version | What changed |
 |---------|--------------|
-| [v2.2.0](https://github.com/angads22/POTATO/releases/tag/v2.2.0) **(newest)** | macOS build, LAN multiplayer, global online leaderboard |
+| [v2.2.0](https://github.com/angads22/POTATO/releases/tag/v2.2.0) **(newest)** | macOS build, LAN multiplayer, global leaderboard, 3 graphics styles, streamlined modes |
 | [v2.1.0](https://github.com/angads22/POTATO/releases/tag/v2.1.0) | Visual edition ships as a standalone app (kitchen, open-world farm, day-night cycle) |
 | [v1.1.0](https://github.com/angads22/POTATO/releases/tag/v1.1.0) | Standalone single-file binaries, auto-update on launch, in-game update checker |
 | [v1.0.2](https://github.com/angads22/POTATO/releases/tag/v1.0.2) | Overhaul: five cut mechanics, four modes, boss fight, shop, power-ups, stage orders |

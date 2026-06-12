@@ -72,14 +72,6 @@ func _draw():
 		draw_string(font, Vector2(642 - cbs.x / 2, 52), combo_text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0.2, 0.12, 0.05))
 		draw_string(font, Vector2(640 - cbs.x / 2, 50), combo_text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(1.0, 0.8, 0.2))
 
-	# ── time-attack clock ──
-	if s.mode == "time_attack":
-		var t = "%0.1f" % ctrl.time_left
-		var ts = font.get_string_size(t, HORIZONTAL_ALIGNMENT_CENTER, -1, 34)
-		var t_col = Color.ORANGE_RED if ctrl.time_left < 10.0 else Color.WHITE
-		panel_style().draw(get_canvas_item(), Rect2(640 - ts.x / 2 - 16, 64, ts.x + 32, 46))
-		draw_string(font, Vector2(640 - ts.x / 2, 98), t, HORIZONTAL_ALIGNMENT_LEFT, -1, 34, t_col)
-
 	# ── rising quality popups above the potato ──
 	for p in ctrl.popups:
 		var frac = p.age / ctrl.POPUP_LIFE

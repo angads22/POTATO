@@ -7,13 +7,11 @@ var selected_menu_item: int = 0
 var menu_items: Array[String] = [
 	"[1] Championship",
 	"[2] Endless",
-	"[3] Time Attack",
-	"[4] Daily Challenge",
-	"[5] Potato Farm",
-	"[6] Multiplayer",
-	"[7] Leaderboard",
-	"[8] Settings",
-	"[9] About",
+	"[3] Potato Farm",
+	"[4] Multiplayer",
+	"[5] Leaderboard",
+	"[6] Settings",
+	"[7] About",
 	"[ESC] Quit"
 ]
 
@@ -63,6 +61,10 @@ func _input(event: InputEvent):
 				if current_submenu == "settings":
 					SaveDataManager.update_setting("particle_effects", not SaveDataManager.settings["particle_effects"])
 					queue_redraw()
+			KEY_G:
+				if current_submenu == "settings":
+					StyleManager.cycle()
+					queue_redraw()
 			KEY_TAB:
 				if current_submenu == "leaderboard":
 					show_online_tab = not show_online_tab
@@ -72,13 +74,11 @@ func _input(event: InputEvent):
 	match event.keycode:
 		KEY_1: _start_game("championship")
 		KEY_2: _start_game("endless")
-		KEY_3: _start_game("time_attack")
-		KEY_4: _start_game("daily_challenge")
-		KEY_5: _enter_farm()
-		KEY_6: _enter_lobby()
-		KEY_7: _show_leaderboard()
-		KEY_8: _show_settings()
-		KEY_9: _show_about()
+		KEY_3: _enter_farm()
+		KEY_4: _enter_lobby()
+		KEY_5: _show_leaderboard()
+		KEY_6: _show_settings()
+		KEY_7: _show_about()
 		KEY_ESCAPE: get_tree().quit()
 
 func _start_game(mode: String):
@@ -249,6 +249,11 @@ func _draw_settings_screen(centre_x: float):
 	draw_string(font, Vector2(centre_x - 150, 248), "[P] Particles: %s" % particles_status,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color.WHITE)
 
+	draw_string(font, Vector2(centre_x - 150, 296), "[G] Graphics: %s" % StyleManager.current_name(),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color.WHITE)
+	draw_string(font, Vector2(centre_x - 150, 322), "Classic → Pixel Art → Hyperreal",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.55, 0.5, 0.45))
+
 	draw_string(font, Vector2(centre_x - 150, 500), "[SPACE] Back",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.GRAY)
 
@@ -261,8 +266,10 @@ func _draw_about_screen(centre_x: float):
 		"A fully visual rhythm-action game.\n\n" +
 		"Press SPACE to cut, dodge rotten potatoes,\n" +
 		"and climb both the local and global leaderboard.\n\n" +
-		"Play solo across 6 championship stages or team up\n" +
-		"for LAN multiplayer via [6] Multiplayer.\n\n" +
+		"Play solo across 6 championship stages, brave the\n" +
+		"endless waves, or face a friend over LAN multiplayer.\n\n" +
+		"Pick your look in Settings: Classic, Pixel Art,\n" +
+		"or Hyperreal.\n\n" +
 		"Crafted with Godot Engine 4.2")
 	draw_multiline_string(font, Vector2(centre_x - 260, 200), about_text,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, -1, Color.WHITE)

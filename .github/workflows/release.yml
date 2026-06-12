@@ -68,7 +68,8 @@ jobs:
           path: |
             ~/godot-bin
             ~/.local/share/godot/export_templates
-          key: godot-export-4.2.2
+          # "-mac" suffix: the original cache predates the macOS template
+          key: godot-export-4.2.2-mac
 
       - name: Install Godot + export templates
         if: hashFiles('godot/export_presets.cfg') != '' && steps.cache-godot.outputs.cache-hit != 'true'

@@ -19,7 +19,8 @@ var settings: Dictionary = {
 	"music_volume": 1.0,
 	"sound_enabled": true,
 	"particle_effects": true,
-	"screen_shake": true
+	"screen_shake": true,
+	"graphics_style": "classic"  # classic | pixel | hyperreal (see StyleManager)
 }
 
 # Farm + economy state. New games start with a few russet seeds and pocket

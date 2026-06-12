@@ -13,7 +13,7 @@ signal fever_activated
 signal fever_deactivated
 
 class GameState:
-	var mode: String  # "championship", "endless", "time_attack", "daily_challenge"
+	var mode: String  # "championship" or "endless"
 	var stage: int = 1
 	var lives: int = 3
 	var score: int = 0
@@ -40,23 +40,13 @@ func _init_game_modes():
 			"name": "Championship",
 			"stages": 6,
 			"has_boss": true,
-			"description": "6-stage campaign to become champion"
+			"description": "6-stage campaign: stage-clear bonuses, a life back every other stage"
 		},
 		"endless": {
 			"name": "Endless",
 			"stages": -1,  # infinite
 			"boss_every": 5,
-			"description": "Infinite potatoes, ever faster"
-		},
-		"time_attack": {
-			"name": "Time Attack",
-			"duration": 60,
-			"description": "Score as much as you can in 60 seconds"
-		},
-		"daily_challenge": {
-			"name": "Daily Challenge",
-			"seed_based": true,
-			"description": "Same challenge for everyone today"
+			"description": "Infinite waves with rising stakes and golden odds"
 		}
 	}
 

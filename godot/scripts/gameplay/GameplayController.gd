@@ -21,7 +21,6 @@ var popups: Array = []           # {text, color, age}
 var banner_text: String = ""
 var banner_age: float = 99.0
 var shake: float = 0.0
-var time_left: float = 0.0       # time-attack countdown
 
 func _ready():
 	GameManager.game_ended.connect(_on_game_ended)
@@ -33,14 +32,8 @@ func _ready():
 	# sides generate the same potato sequence independently.
 	if MultiplayerManager.is_in_multiplayer:
 		rng.seed = MultiplayerManager.session_seed
-	elif GameManager.current_state.mode == "daily_challenge":
-		var d = Time.get_date_dict_from_system()
-		rng.seed = hash("%04d-%02d-%02d" % [d.year, d.month, d.day])
 	else:
 		rng.randomize()
-
-	if GameManager.current_state.mode == "time_attack":
-		time_left = GameManager.game_modes["time_attack"]["duration"]
 
 	potato_visual = PotatoVisual.new()
 	potato_visual.position = POTATO_POS
@@ -81,12 +74,6 @@ func _process(delta):
 		p.age += delta
 	popups = popups.filter(func(p): return p.age < POPUP_LIFE)
 
-	if GameManager.current_state.mode == "time_attack" and GameManager.current_state.is_running:
-		time_left -= delta
-		if time_left <= 0.0:
-			time_left = 0.0
-			GameManager.end_game(true)
-
 	hud.queue_redraw()
 
 # ────────────────────────────────────────────────────────
@@ -102,10 +89,15 @@ func _load_stage_potatoes():
 	var golden = GameData.potato_by_id("golden")
 	var count = 6 + GameManager.current_state.stage * 2
 
+	# Endless sweetens the pot: golden odds climb with every wave survived
+	var golden_chance: float = golden.get("chance", 0.07)
+	if GameManager.current_state.mode == "endless":
+		golden_chance = minf(0.25, golden_chance + 0.01 * GameManager.current_state.stage)
+
 	for i in range(count):
 		if i > 0 and i % 4 == 0 and not rotten.is_empty():
 			stage_potatoes.append(rotten.duplicate())
-		elif not golden.is_empty() and rng.randf() < golden.get("chance", 0.07):
+		elif not golden.is_empty() and rng.randf() < golden_chance:
 			stage_potatoes.append(golden.duplicate())
 		else:
 			stage_potatoes.append(pool[rng.randi() % pool.size()].duplicate())
@@ -213,18 +205,31 @@ func _complete_stage():
 			if s.stage >= 6:
 				GameManager.end_game(true)
 			else:
+				# Stage-clear bonus scales with the stage; every other
+				# stage also restores a lost life, so a stumble in stage 2
+				# doesn't doom the stage-6 finale.
+				var bonus = s.stage * 100
+				s.score += bonus
+				GameManager.score_changed.emit(s.score)
+				var clear_text = "STAGE CLEAR  +%d" % bonus
+				if s.stage % 2 == 0 and s.lives < 3:
+					s.lives += 1
+					GameManager.lives_changed.emit(s.lives)
+					clear_text += "  +1 LIFE"
+				_popup(clear_text, Color.GOLD)
 				GameManager.progress_stage()
 				AudioManager.play_sfx("level_complete")
 				_show_banner("STAGE %d" % s.stage)
 				_load_stage_potatoes()
 				_spawn_next_potato()
 		"endless":
+			# Wave bonus grows the deeper you go — survival pays
+			var bonus = s.stage * 50
+			s.score += bonus
+			GameManager.score_changed.emit(s.score)
+			_popup("WAVE CLEAR  +%d" % bonus, Color.GOLD)
 			GameManager.progress_stage()
 			_show_banner("WAVE %d" % s.stage)
-			_load_stage_potatoes()
-			_spawn_next_potato()
-		"time_attack":
-			# keep the potatoes coming until the clock runs out
 			_load_stage_potatoes()
 			_spawn_next_potato()
 		_:
