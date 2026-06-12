@@ -12,6 +12,8 @@ var current_minigame: MinigameBase
 var stage_potatoes: Array[Dictionary] = []
 var current_potato_index: int = 0
 var potato_visual: PotatoVisual
+var knife: KnifeVisual
+var hud: GameHUD
 var rng := RandomNumberGenerator.new()
 
 # feedback state
@@ -23,9 +25,9 @@ var time_left: float = 0.0       # time-attack countdown
 
 func _ready():
 	GameManager.game_ended.connect(_on_game_ended)
-	GameManager.score_changed.connect(func(_s): queue_redraw())
-	GameManager.lives_changed.connect(func(_l): queue_redraw())
-	GameManager.combo_changed.connect(func(_c): queue_redraw())
+
+	# kitchen backdrop behind everything (z_index = -1)
+	add_child(KitchenBackground.new())
 
 	# Daily challenge plays the same sequence for everyone on a given day
 	if GameManager.current_state.mode == "daily_challenge":
@@ -40,6 +42,18 @@ func _ready():
 	potato_visual = PotatoVisual.new()
 	potato_visual.position = POTATO_POS
 	add_child(potato_visual)
+
+	knife = KnifeVisual.new()
+	knife.position = POTATO_POS
+	add_child(knife)
+
+	# HUD on its own CanvasLayer: above everything, immune to screen shake
+	var hud_layer := CanvasLayer.new()
+	hud_layer.layer = 10
+	hud = GameHUD.new()
+	hud.ctrl = self
+	hud_layer.add_child(hud)
+	add_child(hud_layer)
 
 	_show_banner("STAGE %d" % GameManager.current_state.stage)
 	_load_stage_potatoes()
@@ -70,7 +84,7 @@ func _process(delta):
 			time_left = 0.0
 			GameManager.end_game(true)
 
-	queue_redraw()
+	hud.queue_redraw()
 
 # ────────────────────────────────────────────────────────
 #  Stage construction and potato flow
@@ -130,6 +144,8 @@ func _on_minigame_completed(result: Dictionary):
 	var quality: String = result["quality"]
 	var potato = stage_potatoes[current_potato_index - 1]
 
+	var fx_on: bool = SaveDataManager.settings.get("particle_effects", true)
+
 	if potato.get("rotten", false):
 		if quality == "PERFECT":
 			potato_visual.bin()
@@ -137,7 +153,10 @@ func _on_minigame_completed(result: Dictionary):
 			_popup("BINNED!", Color.LIGHT_GREEN)
 			AudioManager.play_sfx("cut_great")
 		else:
+			knife.chop()
 			potato_visual.split()
+			if fx_on:
+				Fx.splat(self, POTATO_POS)
 			GameManager.lose_life()
 			GameManager.reset_combo()
 			_popup("ROTTEN!  -1 LIFE", Color.ORANGE_RED)
@@ -150,7 +169,10 @@ func _on_minigame_completed(result: Dictionary):
 		shake = 10.0
 		AudioManager.play_sfx("cut_miss")
 	else:
+		knife.chop()
 		potato_visual.split()
+		if fx_on:
+			Fx.burst(self, POTATO_POS, potato_visual.body_color)
 		var base = int(potato.get("base_points", 100) * result["multiplier"])
 		var points = GameManager.add_score(base, quality)
 		GameManager.add_combo()
@@ -159,6 +181,8 @@ func _on_minigame_completed(result: Dictionary):
 		if potato.get("rare", false):
 			var coins = int(potato.get("coin_bonus", 15))
 			GameManager.current_state.coins_earned += coins
+			if fx_on:
+				Fx.sparkle(self, POTATO_POS)
 			_popup("GOLDEN!  +%d coins" % coins, Color.GOLD)
 
 	if GameManager.current_state.combo >= 20 and not GameManager.current_state.fever_active:
@@ -223,70 +247,3 @@ func _quality_color(quality: String) -> Color:
 		_:
 			return Color.ORANGE_RED
 
-# ────────────────────────────────────────────────────────
-#  HUD
-# ────────────────────────────────────────────────────────
-
-func _draw():
-	var font = ThemeDB.fallback_font
-	var s = GameManager.current_state
-
-	# fever overlay
-	if s.fever_active:
-		draw_rect(Rect2(0, 0, 1280, 720), Color(1.0, 0.2, 1.0, 0.06))
-		var fever = "FEVER x%.0f" % s.fever_multiplier
-		var fs = font.get_string_size(fever, HORIZONTAL_ALIGNMENT_CENTER, -1, 26)
-		draw_string(font, Vector2(640 - fs.x / 2, 690), fever, HORIZONTAL_ALIGNMENT_LEFT, -1, 26, Color.MAGENTA)
-
-	# lives as hearts
-	for i in range(3):
-		var cx = 36.0 + i * 40.0
-		var col = Color.CRIMSON if i < s.lives else Color(0.3, 0.3, 0.3)
-		draw_circle(Vector2(cx - 6, 28), 8.0, col)
-		draw_circle(Vector2(cx + 6, 28), 8.0, col)
-		draw_colored_polygon(PackedVector2Array([
-			Vector2(cx - 13, 31), Vector2(cx + 13, 31), Vector2(cx, 48)
-		]), col)
-
-	# stage / mode
-	draw_string(font, Vector2(20, 80), "%s · Stage %d" % [s.mode.capitalize().replace("_", " "), s.stage], HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.GRAY)
-
-	# score / coins, top right
-	var score_text = "Score: %d" % s.score
-	var ss = font.get_string_size(score_text, HORIZONTAL_ALIGNMENT_CENTER, -1, 26)
-	draw_string(font, Vector2(1260 - ss.x, 36), score_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 26, Color.WHITE)
-	var coin_text = "Coins: %d" % s.coins_earned
-	var cs = font.get_string_size(coin_text, HORIZONTAL_ALIGNMENT_CENTER, -1, 18)
-	draw_string(font, Vector2(1260 - cs.x, 64), coin_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.GOLD)
-
-	# combo, centred — grows with the streak
-	if s.combo > 1:
-		var combo_text = "COMBO x%d" % s.combo
-		var size = 20 + mini(s.combo, 20)
-		var cbs = font.get_string_size(combo_text, HORIZONTAL_ALIGNMENT_CENTER, -1, size)
-		draw_string(font, Vector2(640 - cbs.x / 2, 50), combo_text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(1.0, 0.8, 0.2))
-
-	# time-attack clock
-	if s.mode == "time_attack":
-		var t = "%0.1f" % time_left
-		var ts = font.get_string_size(t, HORIZONTAL_ALIGNMENT_CENTER, -1, 34)
-		var t_col = Color.ORANGE_RED if time_left < 10.0 else Color.WHITE
-		draw_string(font, Vector2(640 - ts.x / 2, 100), t, HORIZONTAL_ALIGNMENT_LEFT, -1, 34, t_col)
-
-	# rising quality popups above the potato
-	for p in popups:
-		var frac = p.age / POPUP_LIFE
-		var col = p.color
-		col.a = 1.0 - frac
-		var ps = font.get_string_size(p.text, HORIZONTAL_ALIGNMENT_CENTER, -1, 30)
-		draw_string(font, Vector2(640 - ps.x / 2, 210 - frac * 60.0), p.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, col)
-
-	# stage banner
-	if banner_age < 1.5:
-		var alpha = 1.0 if banner_age < 1.0 else (1.5 - banner_age) * 2.0
-		var bs = font.get_string_size(banner_text, HORIZONTAL_ALIGNMENT_CENTER, -1, 56)
-		draw_rect(Rect2(0, 300, 1280, 110), Color(0, 0, 0, 0.55 * alpha))
-		draw_string(font, Vector2(640 - bs.x / 2, 372), banner_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 56, Color(1.0, 0.85, 0.3, alpha))
-
-	# ESC hint
-	draw_string(font, Vector2(20, 706), "[ESC] Quit to menu", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.5, 0.5, 0.5))

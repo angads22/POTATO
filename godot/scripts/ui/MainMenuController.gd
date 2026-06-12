@@ -19,13 +19,24 @@ var in_submenu: bool = false
 var current_submenu: String = ""
 var mascot: PotatoVisual
 
+var mascot_knife: KnifeVisual
+
 func _ready():
 	AudioManager.play_music("menu")
-	# bobbing mascot beside the menu
+
+	# kitchen backdrop, board under the mascot
+	var bg = KitchenBackground.new()
+	bg.board_rect = Rect2(810, 330, 400, 200)
+	add_child(bg)
+
+	# bobbing mascot with a hovering cleaver beside the menu
 	mascot = PotatoVisual.new()
 	mascot.setup({"color": "#e3c16f"})
-	mascot.position = Vector2(1010, 400)
+	mascot.position = Vector2(1010, 410)
 	add_child(mascot)
+	mascot_knife = KnifeVisual.new()
+	mascot_knife.position = mascot.position
+	add_child(mascot_knife)
 	queue_redraw()
 
 func _input(event: InputEvent):
@@ -83,6 +94,8 @@ func _open_submenu(name: String):
 	current_submenu = name
 	if mascot:
 		mascot.visible = false
+	if mascot_knife:
+		mascot_knife.visible = false
 	queue_redraw()
 
 func _close_submenu():
@@ -90,6 +103,8 @@ func _close_submenu():
 	current_submenu = ""
 	if mascot:
 		mascot.visible = true
+	if mascot_knife:
+		mascot_knife.visible = true
 	queue_redraw()
 
 func _draw():
@@ -99,27 +114,31 @@ func _draw():
 		_draw_main_menu()
 
 func _draw_main_menu():
-	var viewport_size = get_viewport_rect().size
-	var centre_x = viewport_size.x / 2
+	var font = ThemeDB.fallback_font
+	var title_x = 360.0  # title column centre; the mascot owns the right side
 
-	# Title
-	var title_font_size = 48
+	# Title with drop shadow
 	var title = "SLICE IT!"
-	var title_size = ThemeDB.fallback_font.get_string_size(title, HORIZONTAL_ALIGNMENT_CENTER, -1, title_font_size)
-	draw_string(ThemeDB.fallback_font, Vector2(centre_x - title_size.x / 2, 100), title, HORIZONTAL_ALIGNMENT_LEFT, -1, title_font_size, Color.GOLD)
+	var title_size = font.get_string_size(title, HORIZONTAL_ALIGNMENT_CENTER, -1, 64)
+	draw_string(font, Vector2(title_x - title_size.x / 2 + 4, 124), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 64, Color(0.25, 0.15, 0.05, 0.7))
+	draw_string(font, Vector2(title_x - title_size.x / 2, 120), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 64, Color.GOLD)
 
-	# Subtitle
-	draw_string(ThemeDB.fallback_font, Vector2(centre_x - 150, 160), "The Potato Cutting Championship", HORIZONTAL_ALIGNMENT_LEFT, -1, 24, Color.WHITE)
+	# Subtitle + version
+	var sub = "The Potato Cutting Championship"
+	var sub_size = font.get_string_size(sub, HORIZONTAL_ALIGNMENT_CENTER, -1, 22)
+	draw_string(font, Vector2(title_x - sub_size.x / 2, 162), sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(0.35, 0.22, 0.1))
+	var ver = "v2.0.0"
+	var ver_size = font.get_string_size(ver, HORIZONTAL_ALIGNMENT_CENTER, -1, 15)
+	draw_string(font, Vector2(title_x - ver_size.x / 2, 192), ver, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.45, 0.32, 0.2))
 
-	# Version
-	draw_string(ThemeDB.fallback_font, Vector2(centre_x - 40, 200), "v2.0.0", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.GRAY)
-
-	# Menu items
-	var y_pos = 300
+	# Menu in a walnut panel
+	var panel_rect = Rect2(title_x - 190, 240, 380, 60 + menu_items.size() * 48)
+	GameHUD.panel_style().draw(get_canvas_item(), panel_rect)
+	var y_pos = panel_rect.position.y + 56
 	for i in range(menu_items.size()):
-		var color = Color.GOLD if i == selected_menu_item else Color.WHITE
-		draw_string(ThemeDB.fallback_font, Vector2(centre_x - 100, y_pos), menu_items[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, color)
-		y_pos += 50
+		var color = Color.GOLD if i == selected_menu_item else Color(0.95, 0.9, 0.8)
+		draw_string(font, Vector2(panel_rect.position.x + 48, y_pos), menu_items[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, color)
+		y_pos += 48
 
 func _draw_submenu():
 	var viewport_size = get_viewport_rect().size

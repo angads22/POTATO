@@ -10,6 +10,9 @@ var earned_rank: int = -1
 
 func _ready():
 	AudioManager.play_sfx("game_over")
+	var bg = KitchenBackground.new()
+	bg.show_board = false
+	add_child(bg)
 	queue_redraw()
 
 func _input(event: InputEvent):
@@ -53,8 +56,9 @@ func _draw():
 	var viewport_size := get_viewport_rect().size
 	var centre_x := viewport_size.x / 2
 
-	# Backdrop
-	draw_rect(Rect2(Vector2.ZERO, viewport_size), Color(0.05, 0.03, 0.0, 1.0))
+	# Dim the kitchen and centre a results panel
+	draw_rect(Rect2(Vector2.ZERO, viewport_size), Color(0.05, 0.03, 0.0, 0.72))
+	GameHUD.panel_style(Color(0.16, 0.1, 0.06, 0.95)).draw(get_canvas_item(), Rect2(centre_x - 320, 80, 640, 420))
 
 	# Headline reflects victory vs. defeat
 	var headline := "VICTORY!" if GameManager.current_state.last_victory else "GAME OVER"
