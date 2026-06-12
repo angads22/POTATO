@@ -1,27 +1,32 @@
 extends Node
 
-# Captures screenshots of the menu and mid-gameplay for visual review.
+# Captures /tmp/shot_menu.png and /tmp/shot_gameplay.png for visual review.
+# Scenes are instantiated as children so this node survives the swap.
+# Run under a virtual display:
+#   xvfb-run godot --rendering-driver opengl3 --path . res://tests/Screenshot.tscn
 
 var frames := 0
 var phase := "menu"
-var gameplay
+var current
 
 func _ready():
-	get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
+	current = load("res://scenes/MainMenu.tscn").instantiate()
+	add_child(current)
 
 func _process(_delta):
 	frames += 1
 	if phase == "menu" and frames == 40:
 		_snap("/tmp/shot_menu.png")
-		phase = "to_game"
+		phase = "game"
+		current.queue_free()
 		GameManager.start_game("championship")
 		GameManager.current_state.lives = 2
-		GameManager.current_state.combo = 7
 		GameManager.current_state.score = 4280
-		get_tree().change_scene_to_file("res://scenes/Gameplay/GameplayScene.tscn")
-	elif phase == "to_game" and frames == 90:
+		GameManager.current_state.combo = 7
+		current = load("res://scenes/Gameplay/GameplayScene.tscn").instantiate()
+		add_child.call_deferred(current)
+	elif phase == "game" and frames == 130:
 		_snap("/tmp/shot_gameplay.png")
-		phase = "done"
 		get_tree().quit(0)
 
 func _snap(path: String):

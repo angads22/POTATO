@@ -40,8 +40,8 @@ func _draw():
 			Vector2(cx - 13, 31), Vector2(cx + 13, 31), Vector2(cx, 48)
 		]), col)
 
-	# mode · stage, under the hearts
-	draw_string(font, Vector2(14, 84), "%s · Stage %d" % [s.mode.capitalize().replace("_", " "), s.stage], HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color(0.95, 0.9, 0.8))
+	# mode · stage, under the hearts (dark so it reads on the cream wall)
+	draw_string(font, Vector2(14, 84), "%s · Stage %d" % [s.mode.capitalize().replace("_", " "), s.stage], HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color(0.35, 0.22, 0.1))
 
 	# ── score panel, top right ──
 	panel_style().draw(get_canvas_item(), Rect2(1040, 8, 230, 66))
