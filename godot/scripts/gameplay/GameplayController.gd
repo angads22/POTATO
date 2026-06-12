@@ -29,8 +29,11 @@ func _ready():
 	# kitchen backdrop behind everything (z_index = -1)
 	add_child(KitchenBackground.new())
 
-	# Daily challenge plays the same sequence for everyone on a given day
-	if GameManager.current_state.mode == "daily_challenge":
+	# Multiplayer: host chose a seed and pushed it to the client, so both
+	# sides generate the same potato sequence independently.
+	if MultiplayerManager.is_in_multiplayer:
+		rng.seed = MultiplayerManager.session_seed
+	elif GameManager.current_state.mode == "daily_challenge":
 		var d = Time.get_date_dict_from_system()
 		rng.seed = hash("%04d-%02d-%02d" % [d.year, d.month, d.day])
 	else:
@@ -191,6 +194,13 @@ func _on_minigame_completed(result: Dictionary):
 		GameManager.activate_fever()
 		_popup("FEVER!", Color.MAGENTA)
 		AudioManager.play_sfx("fever_start")
+
+	# Keep opponent in sync (no-op outside of multiplayer sessions)
+	if MultiplayerManager.is_in_multiplayer:
+		MultiplayerManager.broadcast_score(
+			GameManager.current_state.score,
+			GameManager.current_state.lives
+		)
 
 	await get_tree().create_timer(1.0).timeout
 	if GameManager.current_state.is_running:

@@ -18,6 +18,8 @@ config/features=PackedStringArray("4.2")
 SaveDataManager="*res://scripts/core/SaveDataManager.gd"
 AudioManager="*res://scripts/core/AudioManager.gd"
 GameManager="*res://scripts/core/GameManager.gd"
+MultiplayerManager="*res://scripts/multiplayer/MultiplayerManager.gd"
+OnlineLeaderboard="*res://scripts/online/OnlineLeaderboard.gd"
 
 [display]
 

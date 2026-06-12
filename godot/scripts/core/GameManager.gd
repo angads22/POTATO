@@ -76,11 +76,13 @@ func start_game(mode: String):
 
 func end_game(victory: bool):
 	current_state.is_running = false
-	# Bank the run into the farm wallet: golden-potato coins plus a cut of
-	# the score. Abandoning a run via ESC skips end_game and pays nothing.
 	current_state.last_payout = current_state.coins_earned + current_state.score / 20
 	if current_state.last_payout > 0:
 		SaveDataManager.add_coins(current_state.last_payout)
+	# Submit to global leaderboard (no-op when Supabase isn't configured)
+	var knife_id: String = SaveDataManager.farm.get("equipped_knife", "butter")
+	var player_name: String = SaveDataManager.settings.get("player_name", "Chef")
+	OnlineLeaderboard.submit_score(player_name, current_state.score, current_state.mode, knife_id)
 	game_ended.emit(current_state.score, victory)
 
 func add_score(amount: int, cut_quality: String = "NORMAL"):

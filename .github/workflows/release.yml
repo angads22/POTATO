@@ -1,7 +1,7 @@
 name: Release
 
 # Builds self-contained single-file binaries and attaches them to a
-# GitHub Release. Trigger by pushing a tag like v1.1.0 (the tag must
+# GitHub Release. Trigger by pushing a tag like v2.2.0 (the tag must
 # match the VERSION constant in Core/Updater.cs so the in-game update
 # checker agrees with the release). Manual runs can backfill a release
 # for an existing tag via the `tag` input; without it they just upload
@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to build and publish a release for (e.g. v1.0.0)'
+        description: 'Tag to build and publish a release for (e.g. v2.2.0)'
         required: false
         type: string
       target:
@@ -53,10 +53,53 @@ jobs:
           --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true
           -o out/linux
 
-      - name: Rename assets
+      - name: Rename console assets
         run: |
           mv out/win/PotatoSlicer.exe out/PotatoSlicer-win-x64.exe
           mv out/linux/PotatoSlicer out/PotatoSlicer-linux-x64
+
+      # ── Visual edition (Godot) — skipped on tags that predate it ──
+
+      - name: Cache Godot + export templates
+        if: hashFiles('godot/export_presets.cfg') != ''
+        id: cache-godot
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/godot-bin
+            ~/.local/share/godot/export_templates
+          key: godot-export-4.2.2
+
+      - name: Install Godot + export templates
+        if: hashFiles('godot/export_presets.cfg') != '' && steps.cache-godot.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/godot-bin ~/.local/share/godot/export_templates
+          curl -sL -o /tmp/godot.zip \
+            "https://github.com/godotengine/godot/releases/download/4.2.2-stable/Godot_v4.2.2-stable_linux.x86_64.zip"
+          unzip -q /tmp/godot.zip -d /tmp
+          mv /tmp/Godot_v4.2.2-stable_linux.x86_64 ~/godot-bin/godot
+          chmod +x ~/godot-bin/godot
+          curl -sL -o /tmp/templates.tpz \
+            "https://github.com/godotengine/godot/releases/download/4.2.2-stable/Godot_v4.2.2-stable_export_templates.tpz"
+          unzip -q /tmp/templates.tpz -d /tmp \
+            templates/windows_release_x86_64.exe \
+            templates/linux_release.x86_64 \
+            templates/macos.zip
+          mv /tmp/templates ~/.local/share/godot/export_templates/4.2.2.stable
+
+      - name: Export visual edition (Win + Linux + macOS)
+        if: hashFiles('godot/export_presets.cfg') != ''
+        run: |
+          mkdir -p dist/win dist/linux dist/mac
+          cd godot
+          ~/godot-bin/godot --headless --import . || true
+          ~/godot-bin/godot --headless --export-release "Windows Desktop"
+          ~/godot-bin/godot --headless --export-release "Linux/X11"
+          ~/godot-bin/godot --headless --export-release "macOS"
+          cd ..
+          (cd dist/win && zip -q ../../out/SliceIt-Visual-win-x64.zip SliceIt.exe)
+          (cd dist/linux && zip -q ../../out/SliceIt-Visual-linux-x64.zip SliceIt.x86_64)
+          cp dist/mac/SliceIt.zip out/SliceIt-Visual-mac.zip
 
       - name: Create release
         if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
@@ -69,10 +112,13 @@ jobs:
           files: |
             out/PotatoSlicer-win-x64.exe
             out/PotatoSlicer-linux-x64
+            out/SliceIt-Visual-win-x64.zip
+            out/SliceIt-Visual-linux-x64.zip
+            out/SliceIt-Visual-mac.zip
 
       - name: Upload artifacts (manual run)
         if: ${{ !startsWith(github.ref, 'refs/tags/') && inputs.tag == '' }}
         uses: actions/upload-artifact@v4
         with:
           name: PotatoSlicer
-          path: out/PotatoSlicer-*
+          path: out/*
