@@ -9,6 +9,14 @@ knives, chain combos, and chase FEVER mode.
 
 ## Features
 
+- **Open-world potato farm (visual edition):** walk your chef potato around a
+  scrolling homestead — plant seeds, draw water from the well, harvest crops
+  (they keep growing in real time even while the game is closed), sell at the
+  market, and buy knives that multiply your slicing score. Day-night cycle
+  with fireflies included.
+- **One economy:** slicing runs bank coins to the farm wallet
+  (golden-potato coins + score/20), the farm grows and sells potatoes, and
+  the knife stand feeds power back into the kitchen
 - **Four game modes:** Championship (6-stage campaign), Endless (infinite, ever-faster,
   a boss every 5 stages), Time Attack (60 seconds), and a date-seeded Daily Challenge
   that plays the same for everyone on a given day
@@ -91,6 +99,8 @@ dotnet run
 - `1`–`4` — activate a power-up at the pre-cut prompt
 - In the shop: `1`–`7` knives, `Q`/`W`/`E`/`R` power-ups, `SPACE` to continue
 - `ESC` — quit to menu
+- On the farm (visual edition): `WASD`/arrows to walk, `E` to interact,
+  `1`–`7` in shops, `A` to sell everything at the market
 
 ## Project Layout
 

@@ -24,6 +24,7 @@ class GameState:
 	var is_running: bool = false
 	var is_paused: bool = false
 	var last_victory: bool = false
+	var last_payout: int = 0  # coins banked to the farm wallet by the last run
 
 var current_state: GameState = GameState.new()
 var game_modes = {}  # Will be populated with mode configurations
@@ -65,12 +66,21 @@ func start_game(mode: String):
 	current_state.lives = 3
 	current_state.score = 0
 	current_state.combo = 0
+	current_state.coins_earned = 0
+	current_state.fever_active = false
+	current_state.fever_multiplier = 1.0
+	current_state.last_payout = 0
 	current_state.is_running = true
 
 	game_started.emit()
 
 func end_game(victory: bool):
 	current_state.is_running = false
+	# Bank the run into the farm wallet: golden-potato coins plus a cut of
+	# the score. Abandoning a run via ESC skips end_game and pays nothing.
+	current_state.last_payout = current_state.coins_earned + current_state.score / 20
+	if current_state.last_payout > 0:
+		SaveDataManager.add_coins(current_state.last_payout)
 	game_ended.emit(current_state.score, victory)
 
 func add_score(amount: int, cut_quality: String = "NORMAL"):
@@ -82,6 +92,9 @@ func add_score(amount: int, cut_quality: String = "NORMAL"):
 	# Fever multiplier
 	if current_state.fever_active:
 		multiplier *= current_state.fever_multiplier
+
+	# Equipped knife damage (bought with farm coins at the knife stand)
+	multiplier *= SaveDataManager.equipped_knife().get("damage", 1.0)
 
 	# Quick-cut bonus (25% for GOOD+ cuts under 1.5s)
 	if cut_quality in ["GOOD", "GREAT", "PERFECT"]:

@@ -76,6 +76,12 @@ func _draw():
 	var mode_size := font.get_string_size(mode_text, HORIZONTAL_ALIGNMENT_CENTER, -1, 18)
 	draw_string(font, Vector2(centre_x - mode_size.x / 2, 260), mode_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.GRAY)
 
+	# Coins banked to the farm wallet
+	if GameManager.current_state.last_payout > 0:
+		var pay_text := "+%d coins banked to your farm (wallet: %d)" % [GameManager.current_state.last_payout, SaveDataManager.wallet()]
+		var pay_size := font.get_string_size(pay_text, HORIZONTAL_ALIGNMENT_CENTER, -1, 19)
+		draw_string(font, Vector2(centre_x - pay_size.x / 2, 296), pay_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 19, Color.GOLD)
+
 	if submitted:
 		var rank_text := "Banked at #%d on the leaderboard!" % (earned_rank + 1) if earned_rank >= 0 else "Score saved!"
 		var rank_size := font.get_string_size(rank_text, HORIZONTAL_ALIGNMENT_CENTER, -1, 22)
