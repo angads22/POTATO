@@ -154,7 +154,9 @@ func item_count(inventory: String, id: String) -> int:
 	return int(farm.get(inventory, {}).get(id, 0))
 
 func equipped_knife() -> Dictionary:
-	return GameData.knife_by_id(farm.get("equipped_knife", "butter"))
+	# preload by path: autoloads compile before the global class_name cache
+	# exists on a clean import, so "GameData" isn't resolvable here by name
+	return preload("res://scripts/utils/GameData.gd").knife_by_id(farm.get("equipped_knife", "butter"))
 
 func _save_json(filename: String, data) -> void:
 	var file = FileAccess.open(SAVE_PATH + filename, FileAccess.WRITE)
