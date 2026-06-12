@@ -50,6 +50,14 @@ func _draw():
 	if state == State.GONE:
 		return
 
+	# soft ground shadow that the bob lifts off of
+	if state == State.IDLE:
+		var bob01 = (sin(bob_t * 2.2) + 1.0) * 0.5
+		var sh_scale = 1.0 - bob01 * 0.08
+		draw_set_transform(Vector2(0, BODY_H + 22), 0.0, Vector2(sh_scale, 0.3 * sh_scale))
+		draw_circle(Vector2.ZERO, BODY_W * 0.95, Color(0, 0, 0, 0.22))
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
 	if is_golden and state == State.IDLE:
 		var glow = 0.16 + 0.08 * sin(bob_t * 5.0)
 		draw_circle(Vector2.ZERO, BODY_W * 1.45, Color(1.0, 0.85, 0.2, glow))
@@ -90,6 +98,11 @@ func _draw_body(offset: Vector2, rot: float, side: int):
 		var lump = 1.0 + 0.07 * sin(a * 3.0) + 0.04 * sin(a * 5.0)
 		pts.append(Vector2(cos(a) * BODY_W * lump, sin(a) * BODY_H * lump))
 	draw_colored_polygon(pts, body_color)
+
+	# outline so the body reads against the board
+	var outline = pts.duplicate()
+	outline.append(pts[0])
+	draw_polyline(outline, body_color.darkened(0.45), 3.0, true)
 
 	if side != 0:
 		# pale flesh showing along the cut edge
