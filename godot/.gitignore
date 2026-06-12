@@ -1,0 +1,15 @@
+# Godot-specific ignores
+.godot/
+*.import
+
+# Exported builds
+build/
+*.exe
+*.x86_64
+*.dmg
+*.pck
+
+# Editor/user preferences
+.idea/
+*.sublime-workspace
+.vscode/

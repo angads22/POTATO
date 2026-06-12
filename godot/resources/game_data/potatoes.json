@@ -1,0 +1,12 @@
+{
+	"potatoes": [
+		{ "id": "russet",      "name": "Russet",       "mechanic": "slice",     "base_points": 100, "color": "#b87333", "rotten": false },
+		{ "id": "yukon_gold",  "name": "Yukon Gold",   "mechanic": "slice",     "base_points": 120, "color": "#e3c16f", "rotten": false },
+		{ "id": "red",         "name": "Red Potato",   "mechanic": "slice",     "base_points": 130, "color": "#a83232", "rotten": false },
+		{ "id": "purple",      "name": "Purple Majesty","mechanic": "peel",      "base_points": 150, "color": "#6a3b8f", "rotten": false },
+		{ "id": "fingerling",  "name": "Fingerling",   "mechanic": "speed_cut", "base_points": 180, "color": "#c9a14a", "rotten": false },
+		{ "id": "king_edward", "name": "King Edward",  "mechanic": "julienne",  "base_points": 200, "color": "#d8b878", "rotten": false },
+		{ "id": "golden",      "name": "Golden Potato","mechanic": "slice",     "base_points": 500, "color": "#ffd700", "rotten": false, "rare": true, "chance": 0.07, "coin_bonus": 15 },
+		{ "id": "rotten",      "name": "Rotten Spud",  "mechanic": "dodge",     "base_points": 0,   "color": "#3a4a2a", "rotten": true }
+	]
+}

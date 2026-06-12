@@ -1,9 +1,11 @@
 # SLICE IT! · The Potato Cutting Championship
 
-A C# console rhythm-action game about knives, starch, and questionable life choices.
-A bar sweeps across the screen — press SPACE when it hits the centre to slice, dice,
-and julienne your way through six stages, from the Training Kitchen to the World
-Championship. Earn coins, buy better knives, chain combos, and chase FEVER mode.
+A visual rhythm-action game about knives, starch, and questionable life choices.
+Press SPACE when the bar hits the centre to slice, dice, and julienne your way through
+six stages, from the Training Kitchen to the World Championship. Earn coins, buy better
+knives, chain combos, and chase FEVER mode.
+
+> **New:** We've completely rebuilt the game in [Godot](https://godotengine.org) with full graphics and animations! The classic console version is still available in `PotatoSlicer/`.
 
 ## Features
 
@@ -31,9 +33,22 @@ Championship. Earn coins, buy better knives, chain combos, and chase FEVER mode.
   launch and updates itself, then restarts (skip with `--no-update`);
   there's also a manual "Check for Updates" in the menu
 
-## Download (no .NET required)
+## Play Now
 
-Grab the standalone build for your platform from the
+### Visual Edition (Godot) — in development
+
+A fully featured visual remake in Godot Engine with graphics, animations, and a framework built for expansion.
+
+```sh
+# Install Godot 4.2+
+# Open godot/ as a project and press F5 to run
+```
+
+Binaries coming soon. See [`godot/README.md`](godot/README.md) for development and expansion guide.
+
+### Classic Console Edition
+
+Download the standalone build for your platform from the
 [latest release](https://github.com/angads22/POTATO/releases/latest):
 
 - `PotatoSlicer-win-x64.exe` — Windows: download and double-click
@@ -41,16 +56,28 @@ Grab the standalone build for your platform from the
 
 Updating later is built in: choose **Check for Updates** in the main menu.
 
-## Run from source
-
-Requires the [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0).
-
+Or run from source:
 ```sh
+# Requires .NET 8.0 SDK
 cd PotatoSlicer
 dotnet run
 ```
 
-## Cutting a release
+## Project Versions
+
+### Console Edition (`PotatoSlicer/`)
+- C# .NET 8.0
+- Console-based UI with ASCII art
+- Fully playable with auto-update capability
+- Version in `PotatoSlicer/Core/Updater.cs`
+
+### Visual Edition (`godot/`)
+- Godot 4.2+ with GDScript
+- Modular architecture for expandability
+- Framework ready for sprites, animations, and features
+- See [`godot/README.md`](godot/README.md) for development guide
+
+## Cutting a Release (Console Edition)
 
 1. Bump the `VERSION` constant in `PotatoSlicer/Core/Updater.cs` and `<Version>` in the csproj.
 2. Tag the commit to match and push: `git tag v1.2.0 && git push origin v1.2.0`.
@@ -65,15 +92,22 @@ dotnet run
 - In the shop: `1`–`7` knives, `Q`/`W`/`E`/`R` power-ups, `SPACE` to continue
 - `ESC` — quit to menu
 
-## Source layout
+## Project Layout
 
-The game is split by concern under `PotatoSlicer/`:
-
-- `Models/` — `Knife`, `Potato`, enums
-- `Data/` — `GameData` (knife / potato / stage tables)
-- `Core/` — `Scoring`, `SaveData`, `Leaderboard`
-- `UI/` — `Render` (drawing helpers), `Audio` (sound)
-- `Minigames/` — the five cut mechanics
-- `Modes/` — mode select and the per-mode run loops
-- `Progression/` — recipe orders, power-ups, meta-unlocks, boss fight
-- `Game.cs` — the orchestrator that ties it together
+```
+POTATO/
+├── PotatoSlicer/          # Console version (C# .NET 8.0)
+│   ├── Models/            # Knife, Potato, enums
+│   ├── Data/              # GameData tables
+│   ├── Core/              # Scoring, SaveData, Leaderboard, Updater
+│   ├── UI/                # Render helpers, Audio
+│   ├── Minigames/         # Cut mechanics
+│   ├── Modes/             # Game mode loops
+│   ├── Progression/       # Recipes, power-ups, boss
+│   └── Game.cs            # Orchestrator
+├── godot/                 # Visual version (Godot 4.2+ / GDScript)
+│   ├── scripts/           # Core managers, gameplay, minigames, UI
+│   ├── scenes/            # Godot scenes (menu, gameplay, shop)
+│   ├── assets/            # Sprites, animations, audio (to be added)
+│   └── resources/         # Game data, saves
+└── builds/                # Standalone binaries (console version)
