@@ -21,9 +21,16 @@ func _draw():
 	var font = ThemeDB.fallback_font
 	var s = GameManager.current_state
 
-	# ── fever wash + banner ──
+	# ── fever wash, pulsing edge vignette + banner ──
 	if s.fever_active:
-		draw_rect(Rect2(0, 0, 1280, 720), Color(1.0, 0.2, 1.0, 0.05))
+		var pulse = 0.5 + 0.5 * sin(Time.get_ticks_msec() / 1000.0 * 6.0)
+		draw_rect(Rect2(0, 0, 1280, 720), Color(1.0, 0.2, 1.0, 0.04 + 0.03 * pulse))
+		var edge = Color(1.0, 0.25, 0.9, 0.12 + 0.14 * pulse)
+		var thick = 16.0 + 10.0 * pulse
+		draw_rect(Rect2(0, 0, 1280, thick), edge)
+		draw_rect(Rect2(0, 720 - thick, 1280, thick), edge)
+		draw_rect(Rect2(0, 0, thick, 720), edge)
+		draw_rect(Rect2(1280 - thick, 0, thick, 720), edge)
 		var fever = "FEVER x%.0f" % s.fever_multiplier
 		var fs = font.get_string_size(fever, HORIZONTAL_ALIGNMENT_CENTER, -1, 26)
 		panel_style(Color(0.35, 0.05, 0.3, 0.85)).draw(get_canvas_item(), Rect2(640 - fs.x / 2 - 14, 662, fs.x + 28, 40))
@@ -40,8 +47,12 @@ func _draw():
 			Vector2(cx - 13, 31), Vector2(cx + 13, 31), Vector2(cx, 48)
 		]), col)
 
-	# mode · stage, under the hearts (dark so it reads on the cream wall)
+	# mode · stage and the equipped knife, under the hearts (dark so they
+	# read on the cream wall)
 	draw_string(font, Vector2(14, 84), "%s · Stage %d" % [s.mode.capitalize().replace("_", " "), s.stage], HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color(0.35, 0.22, 0.1))
+	var knife = SaveDataManager.equipped_knife()
+	if not knife.is_empty():
+		draw_string(font, Vector2(14, 106), "%s ×%.1f" % [knife.get("name", ""), knife.get("damage", 1.0)], HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.45, 0.3, 0.15))
 
 	# ── score panel, top right ──
 	panel_style().draw(get_canvas_item(), Rect2(1040, 8, 230, 66))

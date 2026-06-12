@@ -177,6 +177,8 @@ func _on_minigame_completed(result: Dictionary):
 		var points = GameManager.add_score(base, quality)
 		GameManager.add_combo()
 		_popup("%s  +%d" % [quality, points], _quality_color(quality))
+		if quality == "PERFECT" and fx_on:
+			Fx.ring(self, POTATO_POS)
 		AudioManager.play_sfx("cut_great" if quality == "PERFECT" else "cut_good")
 		if potato.get("rare", false):
 			var coins = int(potato.get("coin_bonus", 15))

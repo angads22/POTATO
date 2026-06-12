@@ -45,3 +45,10 @@ static func sparkle(parent: Node, pos: Vector2):
 # Sickly green puff for rotten outcomes
 static func splat(parent: Node, pos: Vector2):
 	burst(parent, pos, Color(0.45, 0.6, 0.25), 22, 200.0)
+
+# Expanding shock ring for PERFECT cuts
+static func ring(parent: Node, pos: Vector2, color: Color = Color.GOLD):
+	var r := RingFx.new()
+	r.position = pos
+	r.color = color
+	parent.add_child(r)

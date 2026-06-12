@@ -9,9 +9,10 @@ var menu_items: Array[String] = [
 	"[2] Endless",
 	"[3] Time Attack",
 	"[4] Daily Challenge",
-	"[5] Leaderboard",
-	"[6] Settings",
-	"[7] About",
+	"[5] Potato Farm",
+	"[6] Leaderboard",
+	"[7] Settings",
+	"[8] About",
 	"[ESC] Quit"
 ]
 
@@ -24,9 +25,11 @@ var mascot_knife: KnifeVisual
 func _ready():
 	AudioManager.play_music("menu")
 
-	# kitchen backdrop, board under the mascot
+	# kitchen backdrop, board under the mascot (no window — the title
+	# column needs the clear wall)
 	var bg = KitchenBackground.new()
 	bg.board_rect = Rect2(810, 330, 400, 200)
+	bg.show_window = false
 	add_child(bg)
 
 	# bobbing mascot with a hovering cleaver beside the menu
@@ -67,10 +70,12 @@ func _input(event: InputEvent):
 		KEY_4:
 			_start_game("daily_challenge")
 		KEY_5:
-			_show_leaderboard()
+			_enter_farm()
 		KEY_6:
-			_show_settings()
+			_show_leaderboard()
 		KEY_7:
+			_show_settings()
+		KEY_8:
 			_show_about()
 		KEY_ESCAPE:
 			get_tree().quit()
@@ -79,6 +84,9 @@ func _start_game(mode: String):
 	GameManager.start_game(mode)
 	AudioManager.stop_music(0.5)
 	get_tree().change_scene_to_file("res://scenes/Gameplay/GameplayScene.tscn")
+
+func _enter_farm():
+	get_tree().change_scene_to_file("res://scenes/Farm/FarmScene.tscn")
 
 func _show_leaderboard():
 	_open_submenu("leaderboard")
@@ -127,18 +135,23 @@ func _draw_main_menu():
 	var sub = "The Potato Cutting Championship"
 	var sub_size = font.get_string_size(sub, HORIZONTAL_ALIGNMENT_CENTER, -1, 22)
 	draw_string(font, Vector2(title_x - sub_size.x / 2, 162), sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(0.35, 0.22, 0.1))
-	var ver = "v2.0.0"
+	var ver = "v2.1.0"
 	var ver_size = font.get_string_size(ver, HORIZONTAL_ALIGNMENT_CENTER, -1, 15)
 	draw_string(font, Vector2(title_x - ver_size.x / 2, 192), ver, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.45, 0.32, 0.2))
 
+	# farm wallet, so progress is visible from the front door
+	var wallet = "Wallet: %d coins" % SaveDataManager.wallet()
+	var wallet_size = font.get_string_size(wallet, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
+	draw_string(font, Vector2(title_x - wallet_size.x / 2, 218), wallet, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.72, 0.52, 0.12))
+
 	# Menu in a walnut panel
-	var panel_rect = Rect2(title_x - 190, 240, 380, 60 + menu_items.size() * 48)
+	var panel_rect = Rect2(title_x - 190, 236, 380, 52 + menu_items.size() * 44)
 	GameHUD.panel_style().draw(get_canvas_item(), panel_rect)
-	var y_pos = panel_rect.position.y + 56
+	var y_pos = panel_rect.position.y + 50
 	for i in range(menu_items.size()):
 		var color = Color.GOLD if i == selected_menu_item else Color(0.95, 0.9, 0.8)
 		draw_string(font, Vector2(panel_rect.position.x + 48, y_pos), menu_items[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, color)
-		y_pos += 48
+		y_pos += 44
 
 func _draw_submenu():
 	var viewport_size = get_viewport_rect().size

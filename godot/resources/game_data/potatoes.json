@@ -1,12 +1,19 @@
 {
 	"potatoes": [
-		{ "id": "russet",      "name": "Russet",       "mechanic": "slice",     "base_points": 100, "color": "#b87333", "rotten": false },
-		{ "id": "yukon_gold",  "name": "Yukon Gold",   "mechanic": "slice",     "base_points": 120, "color": "#e3c16f", "rotten": false },
-		{ "id": "red",         "name": "Red Potato",   "mechanic": "slice",     "base_points": 130, "color": "#a83232", "rotten": false },
-		{ "id": "purple",      "name": "Purple Majesty","mechanic": "peel",      "base_points": 150, "color": "#6a3b8f", "rotten": false },
-		{ "id": "fingerling",  "name": "Fingerling",   "mechanic": "speed_cut", "base_points": 180, "color": "#c9a14a", "rotten": false },
-		{ "id": "king_edward", "name": "King Edward",  "mechanic": "julienne",  "base_points": 200, "color": "#d8b878", "rotten": false },
-		{ "id": "golden",      "name": "Golden Potato","mechanic": "slice",     "base_points": 500, "color": "#ffd700", "rotten": false, "rare": true, "chance": 0.07, "coin_bonus": 15 },
+		{ "id": "russet",      "name": "Russet",       "mechanic": "slice",     "base_points": 100, "color": "#b87333", "rotten": false,
+		  "seed_cost": 10,  "grow_time": 25,  "sell_value": 6,  "yield": [2, 4] },
+		{ "id": "yukon_gold",  "name": "Yukon Gold",   "mechanic": "slice",     "base_points": 120, "color": "#e3c16f", "rotten": false,
+		  "seed_cost": 16,  "grow_time": 35,  "sell_value": 9,  "yield": [2, 4] },
+		{ "id": "red",         "name": "Red Potato",   "mechanic": "slice",     "base_points": 130, "color": "#a83232", "rotten": false,
+		  "seed_cost": 24,  "grow_time": 45,  "sell_value": 13, "yield": [2, 4] },
+		{ "id": "purple",      "name": "Purple Majesty","mechanic": "peel",      "base_points": 150, "color": "#6a3b8f", "rotten": false,
+		  "seed_cost": 35,  "grow_time": 60,  "sell_value": 18, "yield": [2, 5] },
+		{ "id": "fingerling",  "name": "Fingerling",   "mechanic": "speed_cut", "base_points": 180, "color": "#c9a14a", "rotten": false,
+		  "seed_cost": 50,  "grow_time": 75,  "sell_value": 24, "yield": [2, 5] },
+		{ "id": "king_edward", "name": "King Edward",  "mechanic": "julienne",  "base_points": 200, "color": "#d8b878", "rotten": false,
+		  "seed_cost": 70,  "grow_time": 90,  "sell_value": 30, "yield": [3, 5] },
+		{ "id": "golden",      "name": "Golden Potato","mechanic": "slice",     "base_points": 500, "color": "#ffd700", "rotten": false, "rare": true, "chance": 0.07, "coin_bonus": 15,
+		  "seed_cost": 220, "grow_time": 150, "sell_value": 95, "yield": [2, 3] },
 		{ "id": "rotten",      "name": "Rotten Spud",  "mechanic": "dodge",     "base_points": 0,   "color": "#3a4a2a", "rotten": true }
 	]
 }

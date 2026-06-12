@@ -37,6 +37,10 @@ static func potato_by_id(id: String) -> Dictionary:
 static func standard_potatoes() -> Array:
 	return potatoes().filter(func(p): return not p.get("rotten", false) and not p.get("rare", false))
 
+# Varieties that can be planted on the farm (anything with a seed price).
+static func farmable_potatoes() -> Array:
+	return potatoes().filter(func(p): return p.has("seed_cost"))
+
 static func _load_array(path: String, key: String) -> Array:
 	if not FileAccess.file_exists(path):
 		push_warning("GameData: missing data file " + path)

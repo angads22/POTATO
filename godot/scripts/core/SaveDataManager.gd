@@ -8,6 +8,7 @@ const LEADERBOARD_FILE = "leaderboard.json"
 const ACHIEVEMENTS_FILE = "achievements.json"
 const SETTINGS_FILE = "settings.json"
 const UNLOCKS_FILE = "unlocks.json"
+const FARM_FILE = "farm.json"
 
 var leaderboard: Array[Dictionary] = []
 var achievements: Dictionary = {}
@@ -19,6 +20,20 @@ var settings: Dictionary = {
 	"sound_enabled": true,
 	"particle_effects": true,
 	"screen_shake": true
+}
+
+# Farm + economy state. New games start with a few russet seeds and pocket
+# change so the farming loop can begin immediately. Plot entries are
+# {potato_id, planted_at (unix), watered} — growth survives quitting because
+# it's measured against the wall clock.
+var farm: Dictionary = {
+	"wallet": 50,
+	"seeds": {"russet": 3},
+	"spuds": {},
+	"plots": [],
+	"water": 0,
+	"owned_knives": ["butter"],
+	"equipped_knife": "butter"
 }
 
 func _ready():
@@ -48,11 +63,17 @@ func load_game():
 	if unlocks_data.has("knives"):
 		unlocked_knives.assign(unlocks_data["knives"])
 
+	# Load farm — saved keys override the new-game defaults
+	var farm_data = _load_json(FARM_FILE)
+	if not farm_data.is_empty():
+		farm.merge(farm_data, true)
+
 func save_game():
 	_save_json(LEADERBOARD_FILE, {"scores": leaderboard})
 	_save_json(ACHIEVEMENTS_FILE, achievements)
 	_save_json(SETTINGS_FILE, settings)
 	_save_json(UNLOCKS_FILE, {"knives": unlocked_knives})
+	_save_json(FARM_FILE, farm)
 
 func add_to_leaderboard(name: String, score: int, mode: String):
 	var entry = {
@@ -103,6 +124,39 @@ func update_setting(key: String, value):
 	if key in settings:
 		settings[key] = value
 		save_game()
+
+# ── farm economy helpers ──
+
+func wallet() -> int:
+	return int(farm.get("wallet", 0))
+
+func add_coins(amount: int):
+	farm["wallet"] = wallet() + amount
+	save_game()
+
+func spend_coins(amount: int) -> bool:
+	if wallet() < amount:
+		return false
+	farm["wallet"] = wallet() - amount
+	save_game()
+	return true
+
+# Generic counter bump for the "seeds"/"spuds" inventories
+func add_item(inventory: String, id: String, count: int = 1):
+	var inv: Dictionary = farm.get(inventory, {})
+	inv[id] = int(inv.get(id, 0)) + count
+	if inv[id] <= 0:
+		inv.erase(id)
+	farm[inventory] = inv
+	save_game()
+
+func item_count(inventory: String, id: String) -> int:
+	return int(farm.get(inventory, {}).get(id, 0))
+
+func equipped_knife() -> Dictionary:
+	# preload by path: autoloads compile before the global class_name cache
+	# exists on a clean import, so "GameData" isn't resolvable here by name
+	return preload("res://scripts/utils/GameData.gd").knife_by_id(farm.get("equipped_knife", "butter"))
 
 func _save_json(filename: String, data) -> void:
 	var file = FileAccess.open(SAVE_PATH + filename, FileAccess.WRITE)

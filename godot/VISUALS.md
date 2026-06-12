@@ -58,15 +58,46 @@ without touching game logic.
   with cleaver, menu in a panel.
 - Potato gets a ground shadow and outline so it sits *on* the board.
 
-## Phase 2 — next
+## Phase 2 — implemented
 
-- Squash-and-stretch on the potato when the knife lands.
-- Knife trail / slash flash on PERFECT.
-- Animated FEVER background (pulsing hue on the wall).
-- Shop scene: knife rack on the wall, knives drawn from `knives.json` data.
+- **Squash-and-stretch** — potatoes drop in from above, land with a squash
+  spring, and the ground shadow grows to meet them.
+- **PERFECT ring flash** — `RingFx` expanding shock ring on perfect cuts.
+- **FEVER pulse** — the wash now breathes, with a pulsing magenta edge
+  vignette around the whole screen.
+- **Living kitchen** — a garden window with drifting clouds and rolling
+  hills, a swaying utensil rail (spatula, ladle, whisk), and a pot
+  simmering steam on the counter.
+
+## Phase 2.5 — the farm (implemented)
+
+A second biome: the **open-world potato farm** (`scripts/world/`). Same
+procedural-first rules, sunnier palette:
+
+- **FarmBackground** — 2560×1440 pasture with mown stripes, swaying grass
+  tufts, flowers, dirt paths, a fenced plot field, farmhouse with chimney
+  smoke, the championship kitchen building, market/seed/knife stands with
+  scalloped awnings, a stone well, and a shimmering pond with lily pads.
+  Geometry constants double as the collision/interaction source of truth.
+- **Day-night cycle** — `FarmController.day_t` drives a tint overlay
+  (CanvasLayer between world and HUD), building windows that warm up at
+  dusk, and fireflies by the pond at night. The HUD has a sun/moon dial.
+- **FarmerVisual** — chef-potato player: walk hop, direction flip, idle
+  breathing, watering can in hand when it's filled.
+- **FarmPlot** — soil bed (darker when watered), sprout→bush growth stages,
+  pulsing harvest ring, variety-coloured potatoes peeking out; golden crops
+  glint.
+- **FarmHUD** — wallet + water panel, seed/spud inventory, interaction
+  prompt, shop overlays (seeds, market, knives, plant picker).
+
+## Phase 3 — next
+
+- Shop scene in the kitchen: knife rack on the wall from `knives.json`.
 - Boss fight: oversized potato with HP bar and cracked-skin states.
+- Weather on the farm (rain that waters every plot).
+- Decorate-your-farm unlocks (scarecrow, gnome, fancy fences).
 
-## Phase 3 — asset swap (optional)
+## Phase 4 — asset swap (optional)
 
 Every visual is one node class. To move to drawn sprites later, replace the
 `_draw()` body of that class with a `Sprite2D`/`AnimatedSprite2D` — call

@@ -16,6 +16,8 @@ godot/
 │   ├── core/                  # Managers (GameManager, SaveDataManager, AudioManager)
 │   ├── gameplay/              # Gameplay orchestration and flow
 │   ├── minigames/             # Cut mechanics (Slice, Peel, Speed, Julienne, Dodge)
+│   ├── world/                 # Open-world farm (controller, plots, player, HUD)
+│   ├── visuals/               # Procedural backdrops and effects
 │   ├── ui/                    # Menu controllers, HUD elements
 │   └── utils/                 # Helper functions, data structures
 ├── assets/                    # Game assets (to be populated)
