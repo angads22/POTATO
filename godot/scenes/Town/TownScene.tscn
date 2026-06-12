@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://b0town0potato01"]
+
+[ext_resource type="Script" path="res://scripts/world/TownController.gd" id="1_town"]
+
+[node name="TownScene" type="Node2D"]
+script = ExtResource("1_town")

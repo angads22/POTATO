@@ -69,33 +69,43 @@ without touching game logic.
   hills, a swaying utensil rail (spatula, ladle, whisk), and a pot
   simmering steam on the counter.
 
-## Phase 2.5 — the farm (implemented)
+## Phase 2.5 — the farm and the town (implemented)
 
-A second biome: the **open-world potato farm** (`scripts/world/`). Same
+Two more biomes: the **open-world potato farm** and the **town**
+(`scripts/world/`, shared `WorldController`/`WorldHUD` base). Same
 procedural-first rules, sunnier palette:
 
 - **FarmBackground** — 2560×1440 pasture with mown stripes, swaying grass
-  tufts, flowers, dirt paths, a fenced plot field, farmhouse with chimney
-  smoke, the championship kitchen building, market/seed/knife stands with
-  scalloped awnings, a stone well, and a shimmering pond with lily pads.
+  tufts, flowers, dirt paths, three fenced grid fields (geometry from
+  `fields.json`), a farmhouse with chimney smoke, a stone well, a shimmering
+  pond with lily pads, and a gate in the east hedge signposted to town.
   Geometry constants double as the collision/interaction source of truth.
-- **Day-night cycle** — `FarmController.day_t` drives a tint overlay
-  (CanvasLayer between world and HUD), building windows that warm up at
-  dusk, and fireflies by the pond at night. The HUD has a sun/moon dial.
+- **TownBackground** — 1920×1080 plaza: cobbled circle with an animated
+  fountain, the championship kitchen at the head of the square, the four
+  market stalls (seeds, knives, market, tools) with scalloped awnings,
+  lamp posts that glow at night, two cottages, a boarded "coming soon" lot
+  for future content, and the farm gate in the west hedge.
+- **Day-night cycle** — `WorldController.day_t` drives a tint overlay
+  (CanvasLayer between world and HUD), building windows and lamps that warm
+  up at dusk, and fireflies by the farm pond at night. The HUD has a
+  sun/moon dial, and the hour carries across the travel gates.
 - **FarmerVisual** — chef-potato player: walk hop, direction flip, idle
   breathing, watering can in hand when it's filled.
-- **FarmPlot** — soil bed (darker when watered), sprout→bush growth stages,
-  pulsing harvest ring, variety-coloured potatoes peeking out; golden crops
-  glint.
-- **FarmHUD** — wallet + water panel, seed/spud inventory, interaction
-  prompt, shop overlays (seeds, market, knives, plant picker).
+- **FarmTile** — wild stubbled ground, then a furrowed soil bed once plowed
+  (darker when watered), sprout→bush growth stages, pulsing harvest ring,
+  variety-coloured potatoes peeking out; golden crops glint. A placed
+  sprinkler is a tripod with sweeping spray arcs; locked sections are
+  weed-choked with rope markers.
+- **WorldHUD** — wallet + water + plow + sprinkler panel, seed/spud/
+  fertilizer inventory, interaction prompt, shop overlays (seeds, market,
+  knives, tools, plant picker, fertilize picker).
 
 ## Phase 3 — next
 
-- Shop scene in the kitchen: knife rack on the wall from `knives.json`.
 - Boss fight: oversized potato with HP bar and cracked-skin states.
-- Weather on the farm (rain that waters every plot).
+- Weather on the farm (rain that waters every tile).
 - Decorate-your-farm unlocks (scarecrow, gnome, fancy fences).
+- Build out the town's boarded lot (the hook for whatever comes next).
 
 ## Phase 4 — asset swap (optional)
 

@@ -14,7 +14,7 @@ exists in **two independent implementations** of the same game design:
 
 The two share gameplay concepts (five cut mechanics, four game modes, knives, combos, FEVER,
 lives, leaderboard) but **share no code** and version independently (console `1.1.0` in the
-csproj / `Core/Updater.cs`; Godot `2.1.0` in `project.godot`). Treat them as two codebases —
+csproj / `Core/Updater.cs`; Godot `2.4.0` in `project.godot`). Treat them as two codebases —
 a change in one does not propagate to the other.
 
 ## Common commands
@@ -38,16 +38,19 @@ cd godot
 godot --headless --import .                                          # compile check (fails on SCRIPT ERROR)
 godot --headless --path . res://tests/SmokeTest.tscn --quit-after 900      # gameplay smoke test → prints "SMOKE OK"
 godot --headless --path . res://tests/FarmSmokeTest.tscn --quit-after 600  # farm smoke test → prints "FARM SMOKE OK"
+godot --headless --path . res://tests/TownSmokeTest.tscn --quit-after 600  # town smoke test → prints "TOWN SMOKE OK"
 ```
 The smoke tests are auto-players, not assertions: `SmokeTest.gd` drives a full championship run
-(cuts at centre, locks the peel band, bins rotten potatoes) and `FarmSmokeTest.gd` drives the farm.
-CI greps stdout for the `SMOKE OK` / `FARM SMOKE OK` sentinel strings, so any test you add must print
-its own sentinel and exit. `tests/Screenshot.tscn` exists for capturing frames.
+(cuts at centre, locks the peel band, bins rotten potatoes), `FarmSmokeTest.gd` drives the farm
+(plow/plant/harvest, sections, sprinklers, fertilizer, save migration) and `TownSmokeTest.gd`
+shops the town stalls. CI greps stdout for the `SMOKE OK` / `FARM SMOKE OK` / `TOWN SMOKE OK`
+sentinel strings, so any test you add must print its own sentinel and exit.
+`tests/Screenshot.tscn` exists for capturing frames.
 
 ## CI (`.github/workflows/`)
 
 - **build.yml** — `dotnet build` of the console project on every push to `main` and every PR.
-- **godot.yml** — runs only when `godot/**` changes: import/compile check + both smoke tests.
+- **godot.yml** — runs only when `godot/**` changes: import/compile check + the three smoke tests.
 - **release.yml** — triggered by pushing a `v*` tag (or manual `workflow_dispatch`). Publishes
   self-contained single-file win-x64 and linux-x64 binaries and attaches them to a GitHub Release.
 
@@ -97,10 +100,20 @@ Main scene is `scenes/MainMenu.tscn`. Gameplay flow: `MainMenuController` → `G
 (PERFECT/GREAT/GOOD/MISS/FAIL) and `cut_result.score_multiplier` (0.0–1.5), call `end_minigame()`,
 then register it in `_create_minigame()`.
 
-**Balance is data-driven:** knives and potatoes live in `resources/game_data/knives.json` and
-`potatoes.json` — new content is typically one JSON entry plus (for new mechanics) one `MinigameBase`
-subclass. Potatoes are drawn procedurally (no sprite assets required to run); `scripts/world/` holds
-the open-world farm (controller, plots, player, HUD) and `scripts/visuals/` the procedural backdrops/FX.
+**Balance is data-driven:** knives, potatoes, farm items and field/section geometry live in
+`resources/game_data/*.json` (`knives.json`, `potatoes.json`, `items.json`, `fields.json`) — new
+content is typically one JSON entry plus (for new mechanics) one `MinigameBase` subclass. Potatoes
+are drawn procedurally (no sprite assets required to run).
+
+**The overworld** is two walkable maps in `scripts/world/` sharing a `WorldController` base
+(movement, blockers, camera, day-night, prompts, shop overlays, economy actions) and `WorldHUD`:
+the **farm** (`FarmController` — three fenced fields of `FarmTile` grid tiles bought section by
+section; plow → plant → water/sprinkler → fertilize → harvest, soil stays plowed) and the **town**
+(`TownController` — seed/knife/market/tool stalls plus the championship kitchen; the designated
+home for future non-farming content). Gates on the map edges travel between them. Farm state is
+`SaveDataManager.farm` schema 2 (sparse `tiles` dict keyed `"field:row:col"`); schema-1 saves with
+a fixed `plots` array migrate automatically in `SaveDataManager._migrate_farm()` — migration runs
+on the raw dict *before* the defaults merge. `scripts/visuals/` holds the procedural backdrops/FX.
 
 See `godot/README.md` and `godot/VISUALS.md` for the detailed expansion guide and current status checklist.
 

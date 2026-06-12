@@ -1,8 +1,9 @@
 extends Node
 
-# Captures /tmp/shot_menu.png, /tmp/shot_gameplay.png, /tmp/shot_farm.png
-# and /tmp/shot_farm_night.png for visual review. Scenes are instantiated
-# as children so this node survives the swap.
+# Captures /tmp/shot_menu.png, /tmp/shot_gameplay.png, /tmp/shot_farm.png,
+# /tmp/shot_farm_night.png, the style variants and /tmp/shot_town.png for
+# visual review. Scenes are instantiated as children so this node survives
+# the swap.
 # Run under a virtual display:
 #   xvfb-run godot --rendering-driver opengl3 --path . res://tests/Screenshot.tscn
 
@@ -35,28 +36,34 @@ func _process(_delta):
 		SaveDataManager.farm["water"] = 3
 		SaveDataManager.farm["seeds"] = {"russet": 2, "purple": 1}
 		SaveDataManager.farm["spuds"] = {"russet": 5, "golden": 1}
-		SaveDataManager.farm["plots"] = []
+		SaveDataManager.farm["tiles"] = {}
+		SaveDataManager.farm["sections_owned"] = 1
+		SaveDataManager.farm["plow_uses"] = 7
+		SaveDataManager.farm["sprinkler_stock"] = 1
 		current = load("res://scenes/Farm/FarmScene.tscn").instantiate()
 		add_child.call_deferred(current)
 	elif phase == "farm" and frames == 150:
-		# stage a lived-in farm: crops at several growth stages
+		# stage a lived-in farm: crops at several growth stages + a sprinkler
 		current.day_t = 0.22
 		current.player.position = Vector2(900, 830)
-		current.plots[0].plant("russet")
-		current.plots[0].planted_at -= 12.0
-		current.plots[1].plant("golden")
-		current.plots[1].planted_at -= 9999.0
-		current.plots[2].plant("purple")
-		current.plots[2].planted_at -= 40.0
-		current.plots[5].plant("yukon_gold")
-		current.plots[5].watered = true
-		current.plots[5].planted_at -= 10.0
+		for k in ["0:0:0", "0:0:1", "0:1:0", "0:2:1"]:
+			current.tile_map[k].plow()
+		current.tile_map["0:0:0"].plant("russet")
+		current.tile_map["0:0:0"].planted_at -= 12.0
+		current.tile_map["0:0:1"].plant("golden")
+		current.tile_map["0:0:1"].planted_at -= 9999.0
+		current.tile_map["0:1:0"].plant("purple")
+		current.tile_map["0:1:0"].planted_at -= 40.0
+		current.tile_map["0:2:1"].plant("yukon_gold")
+		current.tile_map["0:2:1"].watered = true
+		current.tile_map["0:2:1"].planted_at -= 10.0
+		current.place_sprinkler(current.tile_map["0:1:1"])
 	elif phase == "farm" and frames == 250:
 		_snap("/tmp/shot_farm.png")
 		phase = "night"
 		current.day_t = 0.72
-		# frame the kitchen + well so the lit windows show
-		current.player.position = Vector2(2030, 560)
+		# frame the farmhouse + well so the lit windows show
+		current.player.position = Vector2(900, 480)
 	elif phase == "night" and frames == 280:
 		_snap("/tmp/shot_farm_night.png")
 		phase = "pixel"
@@ -67,6 +74,16 @@ func _process(_delta):
 		StyleManager.apply("hyperreal")
 	elif phase == "hyperreal" and frames == 320:
 		_snap("/tmp/shot_farm_hyperreal.png")
+		phase = "town"
+		StyleManager.apply("classic")
+		current.queue_free()
+		current = load("res://scenes/Town/TownScene.tscn").instantiate()
+		add_child.call_deferred(current)
+	elif phase == "town" and frames == 360:
+		current.day_t = 0.3
+		current.player.position = Vector2(820, 660)
+	elif phase == "town" and frames == 420:
+		_snap("/tmp/shot_town.png")
 		get_tree().quit(0)
 
 func _snap(path: String):

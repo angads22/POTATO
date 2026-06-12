@@ -23,21 +23,26 @@ var settings: Dictionary = {
 	"graphics_style": "classic"  # classic | pixel | hyperreal (see StyleManager)
 }
 
-# Farm + economy state. New games start with a few russet seeds and pocket
-# change so the farming loop can begin immediately. Plot entries are
-# {potato_id, planted_at (unix), watered} — growth survives quitting because
-# it's measured against the wall clock.
+# Farm + economy state (schema 2, grid-based fields). New games start with a
+# few russet seeds, pocket change and a fresh plow so the farming loop can
+# begin immediately. Tiles are keyed "field:row:col" and hold
+# {plowed, potato_id, planted_at (unix), watered, ...} — growth survives
+# quitting because it's measured against the wall clock.
 var farm: Dictionary = {
+	"schema": 2,
 	"wallet": 50,
 	"seeds": {"russet": 3},
 	"spuds": {},
-	"plots": [],
 	"water": 0,
 	"owned_knives": ["butter"],
 	"equipped_knife": "butter",
-	"plots_owned": 6,    # field starts half-tilled; buy the rest plot by plot
-	"tools": [],         # permanent auto-farming gear (sprinkler, drone, seeder)
-	"items": {}          # growth-enhancer consumables, counted like seeds
+	"sections_owned": 1,    # field sections unlock in order; 1 = Field 1's first
+	"tiles": {},            # sparse "field:row:col" -> tile dict
+	"plow_uses": 10,        # durability left on the current plow; 0 = broken
+	"plows_bought": 0,      # replacement purchases — each one costs more
+	"sprinkler_stock": 0,   # sprinklers bought but not yet placed on a tile
+	"tools": [],            # global auto-farming gear (harvest_drone, auto_seeder)
+	"items": {}             # fertilizer charges remaining, per enhancer id
 }
 
 func _ready():
@@ -67,9 +72,12 @@ func load_game():
 	if unlocks_data.has("knives"):
 		unlocked_knives.assign(unlocks_data["knives"])
 
-	# Load farm — saved keys override the new-game defaults
+	# Load farm — saved keys override the new-game defaults. Migration must
+	# happen on the raw dict: after the merge the defaults' "schema" key
+	# would mask an old save.
 	var farm_data = _load_json(FARM_FILE)
 	if not farm_data.is_empty():
+		farm_data = _migrate_farm(farm_data)
 		farm.merge(farm_data, true)
 
 func save_game():
@@ -78,6 +86,75 @@ func save_game():
 	_save_json(SETTINGS_FILE, settings)
 	_save_json(UNLOCKS_FILE, {"knives": unlocked_knives})
 	_save_json(FARM_FILE, farm)
+
+# Upgrade a schema-1 farm save (fixed "plots" array, "plots_owned" counter,
+# global "sprinkler" tool) to the schema-2 grid. Crops are re-homed onto
+# Field 1's tiles, the old sprinkler becomes two placeable ones, and the
+# player is handed a fresh plow.
+func _migrate_farm(raw: Dictionary) -> Dictionary:
+	if int(raw.get("schema", 1)) >= 2 and not raw.has("plots") and not raw.has("plots_owned"):
+		return raw
+	var out := raw.duplicate(true)
+	out.erase("plots")
+	out.erase("plots_owned")
+	out["schema"] = 2
+
+	# old 12-plot field maps onto Field 1's 12 tiles: anything past the
+	# 6-plot default footprint means the second section was (part-)bought
+	var plots: Array = raw.get("plots", [])
+	var owned_plots := int(raw.get("plots_owned", 6))
+	for i in range(plots.size()):
+		if plots[i] is Dictionary and plots[i].has("potato_id"):
+			owned_plots = maxi(owned_plots, i + 1)
+	out["sections_owned"] = 2 if owned_plots > 6 else 1
+
+	# the old global Sprinkler Network becomes two placeable sprinklers
+	var tools: Array = raw.get("tools", []).duplicate()
+	if "sprinkler" in tools:
+		tools.erase("sprinkler")
+		out["sprinkler_stock"] = 2
+	out["tools"] = tools
+
+	# everyone starts the grid era with a working plow
+	out["plow_uses"] = 10
+	out["plows_bought"] = 0
+
+	# re-home old plots sequentially: planted crops first, then bare plots
+	# that only remember their last crop. Slot order is frozen here (Field 1,
+	# section by section, row-major) so old saves land the same way even if
+	# fields.json changes later.
+	var entries: Array = []
+	for p in plots:
+		if p is Dictionary and p.has("potato_id"):
+			entries.append(p)
+	for p in plots:
+		if p is Dictionary and not p.has("potato_id") and str(p.get("last", "")) != "":
+			entries.append(p)
+	var planted := 0
+	for p in entries:
+		if p.has("potato_id"):
+			planted += 1
+	if planted > int(out["sections_owned"]) * 6:
+		out["sections_owned"] = 2  # never strand a growing crop on locked land
+	var slots: Array = []
+	for cols in [[0, 1], [2, 3]]:
+		for row in range(3):
+			for col in cols:
+				slots.append("0:%d:%d" % [row, col])
+	var tiles := {}
+	var limit = mini(entries.size(), int(out["sections_owned"]) * 6)
+	for i in range(limit):
+		var src: Dictionary = entries[i]
+		var td := {"plowed": true, "last": str(src.get("last", src.get("potato_id", "")))}
+		if src.has("potato_id"):
+			td["potato_id"] = src["potato_id"]
+			td["planted_at"] = float(src.get("planted_at", 0.0))
+			td["watered"] = bool(src.get("watered", false))
+			td["boost"] = float(src.get("boost", 1.0))
+			td["bonus_yield"] = int(src.get("bonus_yield", 0))
+		tiles[slots[i]] = td
+	out["tiles"] = tiles
+	return out
 
 func add_to_leaderboard(name: String, score: int, mode: String):
 	var entry = {

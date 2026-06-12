@@ -8,11 +8,13 @@ class_name GameData
 const KNIVES_PATH = "res://resources/game_data/knives.json"
 const POTATOES_PATH = "res://resources/game_data/potatoes.json"
 const ITEMS_PATH = "res://resources/game_data/items.json"
+const FIELDS_PATH = "res://resources/game_data/fields.json"
 
 static var _knives: Array = []
 static var _potatoes: Array = []
 static var _tools: Array = []
 static var _enhancers: Array = []
+static var _fields: Dictionary = {}
 
 static func knives() -> Array:
 	if _knives.is_empty():
@@ -67,6 +69,27 @@ static func enhancer_by_id(id: String) -> Dictionary:
 		if e.get("id", "") == id:
 			return e
 	return {}
+
+# Farm field geometry: tile cell size and the fenced fields with their
+# purchasable sections (resources/game_data/fields.json)
+static func field_cell() -> Vector2:
+	var c: Array = _fields_data().get("cell", [140, 110])
+	return Vector2(float(c[0]), float(c[1]))
+
+static func fields() -> Array:
+	return _fields_data().get("fields", [])
+
+static func _fields_data() -> Dictionary:
+	if _fields.is_empty():
+		if FileAccess.file_exists(FIELDS_PATH):
+			var file = FileAccess.open(FIELDS_PATH, FileAccess.READ)
+			var parsed = JSON.parse_string(file.get_as_text())
+			file.close()
+			if parsed is Dictionary:
+				_fields = parsed
+		else:
+			push_warning("GameData: missing data file " + FIELDS_PATH)
+	return _fields
 
 static func _load_array(path: String, key: String) -> Array:
 	if not FileAccess.file_exists(path):

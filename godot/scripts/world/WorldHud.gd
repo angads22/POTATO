@@ -1,11 +1,11 @@
 extends Node2D
-class_name FarmHUD
+class_name WorldHUD
 
-# Farm overlay UI, hosted on a CanvasLayer so it ignores the scrolling
-# camera and the night tint. Reads everything from the owning
-# FarmController (ctrl) and SaveDataManager.
+# Overworld overlay UI shared by the farm and the town, hosted on a
+# CanvasLayer so it ignores the scrolling camera and the night tint. Reads
+# everything from the owning WorldController (ctrl) and SaveDataManager.
 
-var ctrl  # FarmController
+var ctrl  # WorldController
 
 func _draw():
 	if ctrl == null:
@@ -50,7 +50,7 @@ func _draw():
 		_draw_shop(font)
 
 func _draw_wallet_panel(font: Font):
-	GameHUD.panel_style().draw(get_canvas_item(), Rect2(10, 8, 240, 52))
+	GameHUD.panel_style().draw(get_canvas_item(), Rect2(10, 8, 350, 52))
 	# coin icon
 	draw_circle(Vector2(38, 34), 14.0, Color(0.95, 0.78, 0.25))
 	draw_arc(Vector2(38, 34), 14.0, 0, TAU, 20, Color(0.7, 0.52, 0.1), 2.5)
@@ -59,18 +59,35 @@ func _draw_wallet_panel(font: Font):
 	# watering can charges as droplets
 	var water: int = int(SaveDataManager.farm.get("water", 0))
 	for i in range(4):
-		var cx = 168.0 + i * 20.0
+		var cx = 152.0 + i * 18.0
 		var col = Color(0.4, 0.7, 0.95) if i < water else Color(0.35, 0.32, 0.3)
-		draw_circle(Vector2(cx, 38), 6.0, col)
+		draw_circle(Vector2(cx, 38), 5.5, col)
 		draw_colored_polygon(PackedVector2Array([
-			Vector2(cx - 5, 35), Vector2(cx + 5, 35), Vector2(cx, 24)
+			Vector2(cx - 4.5, 35), Vector2(cx + 4.5, 35), Vector2(cx, 25)
 		]), col)
+	# plow durability
+	var uses: int = int(SaveDataManager.farm.get("plow_uses", 0))
+	var pcol = Color(0.85, 0.66, 0.4) if uses > 0 else Color(0.45, 0.4, 0.36)
+	draw_line(Vector2(238, 24), Vector2(250, 36), pcol, 3.5)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(247, 33), Vector2(257, 33), Vector2(250, 45)
+	]), pcol.lightened(0.15))
+	draw_string(font, Vector2(262, 43), "%d" % uses, HORIZONTAL_ALIGNMENT_LEFT, -1, 17,
+			Color(0.95, 0.92, 0.85) if uses > 0 else Color(0.6, 0.55, 0.5))
+	# sprinklers waiting in the pack
+	var stock: int = int(SaveDataManager.farm.get("sprinkler_stock", 0))
+	var scol = Color(0.45, 0.75, 0.95) if stock > 0 else Color(0.42, 0.4, 0.38)
+	draw_line(Vector2(308, 44), Vector2(308, 32), scol, 3.0)
+	draw_circle(Vector2(308, 30), 4.5, scol)
+	draw_arc(Vector2(308, 30), 9.0, -2.4, -0.7, 8, scol, 2.0)
+	draw_string(font, Vector2(320, 43), "%d" % stock, HORIZONTAL_ALIGNMENT_LEFT, -1, 17,
+			Color(0.95, 0.92, 0.85) if stock > 0 else Color(0.6, 0.55, 0.5))
 
 func _draw_inventory_panel(font: Font):
 	GameHUD.panel_style().draw(get_canvas_item(), Rect2(920, 8, 350, 112))
 	draw_string(font, Vector2(936, 32), "SEEDS", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.85, 0.68, 0.3))
 	draw_string(font, Vector2(936, 68), "SPUDS", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.85, 0.68, 0.3))
-	draw_string(font, Vector2(936, 104), "ITEMS", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.85, 0.68, 0.3))
+	draw_string(font, Vector2(936, 104), "FERT", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.85, 0.68, 0.3))
 	for row in range(3):
 		var things: Array
 		var inv_name: String
@@ -82,6 +99,7 @@ func _draw_inventory_panel(font: Font):
 				inv_name = "spuds"
 				things = GameData.farmable_potatoes()
 			_:
+				# fertilizer counts are charges remaining
 				inv_name = "items"
 				things = GameData.enhancers()
 		var y = 26.0 + row * 36.0
@@ -134,7 +152,7 @@ func _draw_shop(font: Font):
 		"knives": title = "KNIFE STAND"
 		"plant": title = "PLANT A SEED"
 		"tools": title = "TOOL SHED"
-		"enhance": title = "ENHANCE THIS CROP"
+		"enhance": title = "FERTILIZE THIS CROP"
 	var ts = font.get_string_size(title, HORIZONTAL_ALIGNMENT_CENTER, -1, 30)
 	draw_string(font, Vector2(640 - ts.x / 2, 160), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, Color.GOLD)
 
@@ -246,21 +264,34 @@ func _draw_tool_rows(font: Font, panel: Rect2):
 	var i = 0
 	for tl in GameData.tools():
 		i += 1
-		var owned = ctrl.owns_tool(tl["id"])
-		var cost = int(tl["cost"])
-		var col = Color(0.95, 0.92, 0.85)
-		if not owned and SaveDataManager.wallet() < cost:
-			col = Color(0.55, 0.5, 0.45)
+		var id: String = tl["id"]
+		var cost = ctrl.plow_cost() if id == "plow" else int(tl.get("cost", 0))
+		var desc: String = tl.get("desc", "")
+		var status = "%d c" % cost
+		var scol = Color(0.95, 0.92, 0.85) if SaveDataManager.wallet() >= cost else Color(0.55, 0.5, 0.45)
+		var col = scol
+		match id:
+			"plow":
+				if ctrl.plow_uses() > 0:
+					status = "uses left: %d" % ctrl.plow_uses()
+					scol = Color.LIGHT_GREEN
+					col = Color(0.95, 0.92, 0.85)
+			"sprinkler":
+				desc += "  ·  placed: %d · stock: %d" % [ctrl.sprinklers_placed(), ctrl.sprinkler_stock()]
+				col = Color(0.95, 0.92, 0.85)
+			_:
+				if ctrl.owns_tool(id):
+					status = "INSTALLED"
+					scol = Color.LIGHT_GREEN
+					col = Color(0.95, 0.92, 0.85)
 		draw_circle(Vector2(panel.position.x + 48, y - 7), 10.0, Color(tl.get("color", "#888")))
 		draw_string(font, Vector2(panel.position.x + 70, y), "[%d] %s" % [i, tl["name"]], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, col)
-		draw_string(font, Vector2(panel.position.x + 70, y + 18), tl.get("desc", ""), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.7, 0.65, 0.55))
-		var status = "INSTALLED" if owned else "%d c" % cost
-		var scol = Color.LIGHT_GREEN if owned else col
+		draw_string(font, Vector2(panel.position.x + 70, y + 18), desc, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.7, 0.65, 0.55))
 		var ss = font.get_string_size(status, HORIZONTAL_ALIGNMENT_CENTER, -1, 17)
 		draw_string(font, Vector2(panel.end.x - ss.x - 30, y), status, HORIZONTAL_ALIGNMENT_LEFT, -1, 17, scol)
-		y += 52.0
-	# divider, then the consumables
-	draw_rect(Rect2(panel.position.x + 30, y - 26, panel.size.x - 60, 2), Color(0.85, 0.68, 0.3, 0.4))
+		y += 48.0
+	# divider, then the fertilizers (multi-charge consumables)
+	draw_rect(Rect2(panel.position.x + 30, y - 24, panel.size.x - 60, 2), Color(0.85, 0.68, 0.3, 0.4))
 	for e in GameData.enhancers():
 		i += 1
 		var cost2 = int(e["cost"])
@@ -268,18 +299,18 @@ func _draw_tool_rows(font: Font, panel: Rect2):
 		var col2 = Color(0.95, 0.92, 0.85) if SaveDataManager.wallet() >= cost2 else Color(0.55, 0.5, 0.45)
 		draw_circle(Vector2(panel.position.x + 48, y - 7), 10.0, Color(e.get("color", "#888")))
 		draw_string(font, Vector2(panel.position.x + 70, y), "[%d] %s" % [i, e["name"]], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, col2)
-		var desc = e.get("desc", "")
+		var desc2 = e.get("desc", "")
 		if have > 0:
-			desc += "  ·  owned: %d" % have
-		draw_string(font, Vector2(panel.position.x + 70, y + 18), desc, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.7, 0.65, 0.55))
+			desc2 += "  ·  charges left: %d" % have
+		draw_string(font, Vector2(panel.position.x + 70, y + 18), desc2, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.7, 0.65, 0.55))
 		var ss2 = font.get_string_size("%d c" % cost2, HORIZONTAL_ALIGNMENT_CENTER, -1, 17)
 		draw_string(font, Vector2(panel.end.x - ss2.x - 30, y), "%d c" % cost2, HORIZONTAL_ALIGNMENT_LEFT, -1, 17, col2)
-		y += 52.0
+		y += 48.0
 
 func _draw_enhance_rows(font: Font, panel: Rect2):
 	var owned = ctrl.owned_enhancers()
 	if owned.is_empty():
-		var msg = "No enhancers in your pockets — buy some at the tool shed"
+		var msg = "No fertilizer in your pockets — buy some at the tool shed"
 		var ms = font.get_string_size(msg, HORIZONTAL_ALIGNMENT_CENTER, -1, 17)
 		draw_string(font, Vector2(640 - ms.x / 2, 300), msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color(0.7, 0.65, 0.55))
 		return
@@ -289,7 +320,7 @@ func _draw_enhance_rows(font: Font, panel: Rect2):
 		i += 1
 		var n = SaveDataManager.item_count("items", e["id"])
 		draw_circle(Vector2(panel.position.x + 48, y - 7), 10.0, Color(e.get("color", "#888")))
-		draw_string(font, Vector2(panel.position.x + 70, y), "[%d] %s × %d" % [i, e["name"], n], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(0.95, 0.92, 0.85))
+		draw_string(font, Vector2(panel.position.x + 70, y), "[%d] %s — %d charges" % [i, e["name"], n], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(0.95, 0.92, 0.85))
 		draw_string(font, Vector2(panel.position.x + 70, y + 18), e.get("desc", ""), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.7, 0.65, 0.55))
 		y += 54.0
 
