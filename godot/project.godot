@@ -9,7 +9,7 @@ config_version=5
 
 config/name="SLICE IT! - The Potato Cutting Championship"
 config/description="A fully visual rhythm-action potato cutting game. Press SPACE to cut, dodge rotten potatoes, and climb the leaderboard."
-config/version="2.1.0"
+config/version="2.2.0"
 run/main_scene="res://scenes/MainMenu.tscn"
 config/features=PackedStringArray("4.2")
 
@@ -18,6 +18,9 @@ config/features=PackedStringArray("4.2")
 SaveDataManager="*res://scripts/core/SaveDataManager.gd"
 AudioManager="*res://scripts/core/AudioManager.gd"
 GameManager="*res://scripts/core/GameManager.gd"
+MultiplayerManager="*res://scripts/multiplayer/MultiplayerManager.gd"
+OnlineLeaderboard="*res://scripts/online/OnlineLeaderboard.gd"
+StyleManager="*res://scripts/visuals/StyleManager.gd"
 
 [display]
 

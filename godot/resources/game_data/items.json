@@ -1,0 +1,54 @@
+{
+	"tools": [
+		{
+			"id": "sprinkler",
+			"name": "Sprinkler Network",
+			"cost": 350,
+			"color": "#4ac0e0",
+			"desc": "Auto-waters every planted plot while you work the farm"
+		},
+		{
+			"id": "harvest_drone",
+			"name": "Spud-Bot Harvester",
+			"cost": 600,
+			"color": "#c0c4cc",
+			"desc": "Hovers over the field and collects ready crops for you"
+		},
+		{
+			"id": "auto_seeder",
+			"name": "Auto-Seeder",
+			"cost": 900,
+			"color": "#d9a13b",
+			"desc": "Replants each harvested plot from your seed pouch"
+		}
+	],
+	"enhancers": [
+		{
+			"id": "compost",
+			"name": "Compost",
+			"cost": 15,
+			"color": "#6a8f3c",
+			"boost": 0.7,
+			"bonus_yield": 0,
+			"desc": "30% faster growth on one plot"
+		},
+		{
+			"id": "super_grow",
+			"name": "Super Grow",
+			"cost": 40,
+			"color": "#4ac0e0",
+			"boost": 0.45,
+			"bonus_yield": 0,
+			"desc": "More than twice as fast"
+		},
+		{
+			"id": "miracle_mulch",
+			"name": "Miracle Mulch",
+			"cost": 90,
+			"color": "#e8c84a",
+			"boost": 0.45,
+			"bonus_yield": 2,
+			"desc": "Fast growth and +2 potatoes at harvest"
+		}
+	]
+}

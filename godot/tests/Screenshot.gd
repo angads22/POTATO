@@ -59,6 +59,14 @@ func _process(_delta):
 		current.player.position = Vector2(2030, 560)
 	elif phase == "night" and frames == 280:
 		_snap("/tmp/shot_farm_night.png")
+		phase = "pixel"
+		StyleManager.apply("pixel")
+	elif phase == "pixel" and frames == 300:
+		_snap("/tmp/shot_farm_pixel.png")
+		phase = "hyperreal"
+		StyleManager.apply("hyperreal")
+	elif phase == "hyperreal" and frames == 320:
+		_snap("/tmp/shot_farm_hyperreal.png")
 		get_tree().quit(0)
 
 func _snap(path: String):

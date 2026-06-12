@@ -63,10 +63,10 @@ These are global managers available everywhere:
 
 ### Game Modes
 
-- **Championship** — 6-stage campaign with final boss
-- **Endless** — Infinite potatoes, boss every 5 stages
-- **Time Attack** — Score as much as possible in 60 seconds
-- **Daily Challenge** — Seeded, same for everyone on the same day
+- **Championship** — 6-stage campaign with final boss; stage-clear bonuses
+  and a life restored every other stage
+- **Endless** — Infinite waves with escalating wave bonuses and golden-potato
+  odds that climb the deeper you survive
 
 ## Adding New Features
 
@@ -180,8 +180,10 @@ CI runs this on every PR touching `godot/` (see `.github/workflows/godot.yml`).
   animations, golden glow, rotten stink lines (no image assets required)
 - ✅ Visual feedback: quality popups, stage banners, screen shake, fever
   overlay, heart lives, combo counter that grows with the streak
-- ✅ Four game modes wired: Championship (6 stages), Endless (waves),
-  Time Attack (60s clock), Daily Challenge (date-seeded sequence)
+- ✅ Two polished game modes: Championship (6 stages, clear bonuses,
+  life regen) and Endless (waves, rising bonuses and golden odds)
+- ✅ Graphics styles: Classic, Pixel Art, Hyperreal — one post-processing
+  pass in `StyleManager` restyles the whole game, cycle with [G] in Settings
 - ✅ Game-over screen with name entry and leaderboard submission
 - ✅ Save/load persistence (JSON: leaderboard, achievements, settings, unlocks)
 - ✅ Data-driven balance: knives and potatoes in `resources/game_data/*.json`

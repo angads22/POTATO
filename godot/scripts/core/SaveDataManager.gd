@@ -19,7 +19,8 @@ var settings: Dictionary = {
 	"music_volume": 1.0,
 	"sound_enabled": true,
 	"particle_effects": true,
-	"screen_shake": true
+	"screen_shake": true,
+	"graphics_style": "classic"  # classic | pixel | hyperreal (see StyleManager)
 }
 
 # Farm + economy state. New games start with a few russet seeds and pocket
@@ -33,7 +34,10 @@ var farm: Dictionary = {
 	"plots": [],
 	"water": 0,
 	"owned_knives": ["butter"],
-	"equipped_knife": "butter"
+	"equipped_knife": "butter",
+	"plots_owned": 6,    # field starts half-tilled; buy the rest plot by plot
+	"tools": [],         # permanent auto-farming gear (sprinkler, drone, seeder)
+	"items": {}          # growth-enhancer consumables, counted like seeds
 }
 
 func _ready():

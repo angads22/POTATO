@@ -13,9 +13,9 @@ var fails: Array[String] = []
 var expected_wallet := 0
 
 func _ready():
-	# deterministic starting economy
+	# deterministic starting economy (rich enough to afford every tool)
 	SaveDataManager.farm = {
-		"wallet": 500, "seeds": {}, "spuds": {}, "plots": [],
+		"wallet": 5000, "seeds": {}, "spuds": {}, "plots": [],
 		"water": 0, "owned_knives": ["butter"], "equipped_knife": "butter"
 	}
 	farm = load("res://scenes/Farm/FarmScene.tscn").instantiate()
@@ -30,6 +30,8 @@ func _process(_delta):
 	match frames:
 		10:
 			_run_economy()
+		20:
+			_run_expansion_and_tools()
 		30:
 			# stand by the well with an empty can for the input probe
 			SaveDataManager.farm["water"] = 0
@@ -100,6 +102,58 @@ func _run_economy():
 	_check(SaveDataManager.wallet() == expected_wallet, "wallet survives save/load")
 	var saved_plots: Array = SaveDataManager.farm.get("plots", [])
 	_check(saved_plots.size() == farm.plots.size(), "plot states persist")
+
+func _run_expansion_and_tools():
+	# ── farm expansion ──
+	_check(farm.plots[6].locked, "plot 7 starts locked")
+	_check(farm.expand_cost() == 50, "first expansion costs 50")
+	_check(farm.buy_plot(farm.plots[6]), "expansion purchase succeeds")
+	expected_wallet -= 50
+	_check(not farm.plots[6].locked, "bought plot unlocks")
+	_check(farm.plots_owned() == 7, "plots_owned advances")
+	_check(farm.expand_cost() == 90, "expansion price escalates")
+
+	# ── tools ──
+	_check(farm.buy_tool("sprinkler"), "sprinkler purchase succeeds")
+	expected_wallet -= 350
+	_check(farm.buy_tool("harvest_drone"), "drone purchase succeeds")
+	expected_wallet -= 600
+	_check(farm.buy_tool("auto_seeder"), "seeder purchase succeeds")
+	expected_wallet -= 900
+	_check(not farm.buy_tool("sprinkler"), "tools can't be bought twice")
+
+	# ── growth enhancer on a fresh crop ──
+	_check(farm.buy_enhancer("miracle_mulch"), "enhancer purchase succeeds")
+	expected_wallet -= 90
+	farm.buy_seed("russet")
+	expected_wallet -= 10
+	var plot: FarmPlot = farm.plots[1]
+	farm.plant_on(plot, "russet")
+	_check(farm.apply_enhancer(plot, "miracle_mulch"), "enhancer applies to a planted plot")
+	_check(plot.boost == 0.45, "mulch boosts growth")
+	_check(plot.bonus_yield == 2, "mulch adds bonus yield")
+	_check(SaveDataManager.item_count("items", "miracle_mulch") == 0, "enhancer is consumed")
+	_check(not plot.enhance(0.5, 0), "only one enhancer per crop")
+
+	# ── auto-farming tick ──
+	_check(not plot.watered, "fresh crop starts dry")
+	farm._auto_farm()
+	_check(plot.watered, "sprinkler auto-waters")
+	plot.planted_at -= 10000.0
+	plot.state = FarmPlot.PState.READY
+	var before = SaveDataManager.item_count("spuds", "russet")
+	farm._auto_farm()
+	var pulled = SaveDataManager.item_count("spuds", "russet") - before
+	_check(pulled >= 4 and pulled <= 6, "drone harvest includes the +2 mulch bonus (got %d)" % pulled)
+	_check(plot.state == FarmPlot.PState.EMPTY, "drone clears the plot")
+	# the seeder replants the first empty plot that grew something (plot 0)
+	farm.buy_seed("russet")
+	expected_wallet -= 10
+	farm._auto_farm()
+	_check(farm.plots[0].state == FarmPlot.PState.PLANTED and farm.plots[0].potato_id == "russet",
+			"auto-seeder replants the last crop")
+
+	_check(SaveDataManager.wallet() == expected_wallet, "wallet math holds through expansion & tools")
 
 func _finish():
 	if fails.is_empty():

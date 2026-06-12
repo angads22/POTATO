@@ -14,6 +14,7 @@ const KITCHEN_WALL = Rect2(1970, 250, 300, 170)
 const SEED_STAND = Rect2(1290, 700, 140, 115)
 const KNIFE_STAND = Rect2(1800, 560, 140, 115)
 const MARKET = Rect2(1730, 1000, 200, 135)
+const TOOL_STAND = Rect2(700, 1120, 150, 115)
 const WELL_POS = Vector2(1560, 460)
 const POND_C = Vector2(2230, 1230)
 const POND_R = Vector2(250, 135)
@@ -62,7 +63,7 @@ func _ready():
 # Keeps grass decorations off buildings, the plot field and the pond
 func _on_clear_ground(p: Vector2) -> bool:
 	for r in [HOUSE_WALL.grow(50), KITCHEN_WALL.grow(50), SEED_STAND.grow(25),
-			KNIFE_STAND.grow(25), MARKET.grow(25), FENCE]:
+			KNIFE_STAND.grow(25), MARKET.grow(25), TOOL_STAND.grow(25), FENCE]:
 		if r.has_point(p):
 			return false
 	var d = (p - POND_C) / (POND_R * 1.3)
@@ -82,6 +83,7 @@ func _draw():
 	_draw_stall(SEED_STAND, Color(0.3, 0.65, 0.35), "SEEDS")
 	_draw_stall(KNIFE_STAND, Color(0.55, 0.6, 0.7), "KNIVES")
 	_draw_stall(MARKET, Color(0.85, 0.4, 0.3), "MARKET")
+	_draw_stall(TOOL_STAND, Color(0.4, 0.55, 0.8), "TOOLS")
 	_draw_well()
 	for i in range(TREE_POSITIONS.size()):
 		_draw_tree(TREE_POSITIONS[i], 1.0 + 0.25 * sin(i * 2.4), float(i))
@@ -256,6 +258,19 @@ func _draw_stall(r: Rect2, stripe: Color, label: String):
 				draw_rect(Rect2(px, r.position.y + 14, 56, 36), Color(0.62, 0.46, 0.26))
 				for k in range(3):
 					draw_circle(Vector2(px + 13 + k * 15, r.position.y + 18), 8.0, Color(0.78, 0.55, 0.3))
+		"TOOLS":
+			# a watering can, a gear and a fertilizer sack on the board
+			var cx = r.position.x + 30
+			draw_rect(Rect2(cx, r.position.y + 22, 22, 16), Color(0.55, 0.62, 0.68))
+			draw_line(Vector2(cx + 22, r.position.y + 26), Vector2(cx + 32, r.position.y + 18), Color(0.55, 0.62, 0.68), 4.0)
+			var gc = Vector2(r.position.x + 84, r.position.y + 30)
+			draw_circle(gc, 12.0, Color(0.7, 0.72, 0.78))
+			for k in range(6):
+				var a = k * TAU / 6.0
+				draw_circle(gc + Vector2(cos(a), sin(a)) * 12.0, 3.5, Color(0.7, 0.72, 0.78))
+			draw_circle(gc, 5.0, Color(0.45, 0.47, 0.52))
+			draw_rect(Rect2(r.position.x + 110, r.position.y + 16, 24, 32), Color(0.78, 0.7, 0.5))
+			draw_circle(Vector2(r.position.x + 122, r.position.y + 30), 7.0, Color(0.45, 0.62, 0.3))
 	# name plate
 	var font = ThemeDB.fallback_font
 	var ls = font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 15)

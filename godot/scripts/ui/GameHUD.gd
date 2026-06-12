@@ -72,14 +72,6 @@ func _draw():
 		draw_string(font, Vector2(642 - cbs.x / 2, 52), combo_text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0.2, 0.12, 0.05))
 		draw_string(font, Vector2(640 - cbs.x / 2, 50), combo_text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(1.0, 0.8, 0.2))
 
-	# ── time-attack clock ──
-	if s.mode == "time_attack":
-		var t = "%0.1f" % ctrl.time_left
-		var ts = font.get_string_size(t, HORIZONTAL_ALIGNMENT_CENTER, -1, 34)
-		var t_col = Color.ORANGE_RED if ctrl.time_left < 10.0 else Color.WHITE
-		panel_style().draw(get_canvas_item(), Rect2(640 - ts.x / 2 - 16, 64, ts.x + 32, 46))
-		draw_string(font, Vector2(640 - ts.x / 2, 98), t, HORIZONTAL_ALIGNMENT_LEFT, -1, 34, t_col)
-
 	# ── rising quality popups above the potato ──
 	for p in ctrl.popups:
 		var frac = p.age / ctrl.POPUP_LIFE
@@ -100,6 +92,21 @@ func _draw():
 		draw_rect(Rect2(0, 406, 1280, 4), Color(0.85, 0.68, 0.3, alpha))
 		draw_string(font, Vector2(643 - bs.x / 2, 375), ctrl.banner_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 56, Color(0, 0, 0, 0.5 * alpha))
 		draw_string(font, Vector2(640 - bs.x / 2, 372), ctrl.banner_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 56, Color(1.0, 0.85, 0.3, alpha))
+
+	# ── opponent panel (LAN multiplayer only) ──
+	if MultiplayerManager.is_in_multiplayer:
+		panel_style(Color(0.12, 0.08, 0.18, 0.88)).draw(get_canvas_item(), Rect2(10, 124, 200, 68))
+		draw_string(font, Vector2(22, 146), "OPPONENT", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.75, 0.58, 0.9))
+		var opp_txt := "%d pts" % MultiplayerManager.opponent_score
+		draw_string(font, Vector2(22, 174), opp_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color.WHITE)
+		for i in range(3):
+			var hx := 128.0 + i * 22.0
+			var hcol := Color.CRIMSON if i < MultiplayerManager.opponent_lives else Color(0.35, 0.3, 0.28)
+			draw_circle(Vector2(hx - 4, 148), 5.0, hcol)
+			draw_circle(Vector2(hx + 4, 148), 5.0, hcol)
+			draw_colored_polygon(PackedVector2Array([
+				Vector2(hx - 8, 151), Vector2(hx + 8, 151), Vector2(hx, 163)
+			]), hcol)
 
 	# ── ESC hint ──
 	draw_string(font, Vector2(20, 706), "[ESC] Quit to menu", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.9, 0.85, 0.75, 0.5))

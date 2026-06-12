@@ -29,11 +29,14 @@ var day_t := 0.18          # start mid-morning (0.25 = noon, 0.75 = midnight)
 var night01 := 0.0
 var prompt := ""
 var prompt_action := Callable()
-var open_shop := ""        # "", "seeds", "market", "knives", "plant"
+var open_shop := ""        # "", "seeds", "market", "knives", "plant", "tools", "enhance"
 var plant_target: FarmPlot = null
+var enhance_target: FarmPlot = null
+var prompt_plot: FarmPlot = null   # plot the current prompt refers to
 var popups: Array = []
 var banner_text := ""
 var banner_age := 99.0
+var auto_t := 0.0          # auto-farming tick accumulator
 
 # Rects the player can't walk through (buildings, stands, the well)
 var blockers: Array = []
@@ -51,16 +54,25 @@ func _ready():
 		FarmBackground.SEED_STAND.grow(4),
 		FarmBackground.KNIFE_STAND.grow(4),
 		FarmBackground.MARKET.grow(4),
+		FarmBackground.TOOL_STAND.grow(4),
 		Rect2(FarmBackground.WELL_POS - Vector2(55, 45), Vector2(110, 90)),
 	]
 
 	# plots, restored from the save so crops kept growing while away
 	var saved: Array = SaveDataManager.farm.get("plots", [])
+	var owned := plots_owned()
+	# migration: saves from before farm expansion may have crops on plots
+	# past the default boundary — those plots stay unlocked
+	for i in range(saved.size()):
+		if saved[i] is Dictionary and saved[i].has("potato_id"):
+			owned = maxi(owned, i + 1)
+	SaveDataManager.farm["plots_owned"] = owned
 	for row in range(PLOT_ROWS):
 		for col in range(PLOT_COLS):
 			var plot := FarmPlot.new()
 			plot.index = row * PLOT_COLS + col
 			plot.position = PLOT_ORIGIN + Vector2(col * PLOT_STEP.x, row * PLOT_STEP.y)
+			plot.locked = plot.index >= owned
 			if plot.index < saved.size() and saved[plot.index] is Dictionary:
 				plot.from_dict(saved[plot.index])
 			add_child(plot)
@@ -131,6 +143,12 @@ func _process(delta):
 		player.moving = false
 	player.carrying_water = int(SaveDataManager.farm.get("water", 0)) > 0
 
+	# auto-farming gear works the field every couple of seconds
+	auto_t += delta
+	if auto_t >= 2.0:
+		auto_t = 0.0
+		_auto_farm()
+
 	_scan_interactions()
 
 	banner_age += delta
@@ -180,6 +198,7 @@ func _walkable(p: Vector2) -> bool:
 func _scan_interactions():
 	prompt = ""
 	prompt_action = Callable()
+	prompt_plot = null
 	if open_shop != "":
 		return
 
@@ -204,6 +223,8 @@ func _scan_interactions():
 			"text": "[E] Browse the knife stand", "act": func(): open_shop = "knives"},
 		{"pos": FarmBackground.MARKET.get_center() + Vector2(0, 80), "r": 130.0,
 			"text": "[E] Sell at the market", "act": func(): open_shop = "market"},
+		{"pos": FarmBackground.TOOL_STAND.get_center() + Vector2(0, 70), "r": 120.0,
+			"text": "[E] Browse the tool shed", "act": func(): open_shop = "tools"},
 		{"pos": Vector2(FarmBackground.KITCHEN_WALL.get_center().x, FarmBackground.KITCHEN_WALL.end.y + 30), "r": 120.0,
 			"text": "[E] Enter the championship kitchen", "act": _enter_kitchen},
 		{"pos": Vector2(FarmBackground.HOUSE_WALL.get_center().x, FarmBackground.HOUSE_WALL.end.y + 25), "r": 100.0,
@@ -216,6 +237,14 @@ func _scan_interactions():
 			return
 
 func _set_plot_prompt(plot: FarmPlot):
+	prompt_plot = plot
+	if plot.locked:
+		if plot.index == plots_owned():
+			prompt = "[E] Clear and till this plot — %d coins" % expand_cost()
+			prompt_action = func(): buy_plot(plot)
+		else:
+			prompt = "Overgrown ground — the farm expands plot by plot"
+		return
 	match plot.state:
 		FarmPlot.PState.EMPTY:
 			if _total_seeds() > 0:
@@ -233,6 +262,8 @@ func _set_plot_prompt(plot: FarmPlot):
 				prompt = "%s growing fast — %d%%" % [nm, pct]
 			else:
 				prompt = "%s growing — %d%% (fetch water to speed up)" % [nm, pct]
+			if plot.boost >= 1.0 and _total_enhancers() > 0:
+				prompt += "  ·  [F] Enhance"
 		FarmPlot.PState.READY:
 			var nm2 = GameData.potato_by_id(plot.potato_id).get("name", "?")
 			prompt = "[E] Harvest the %s!" % nm2
@@ -246,6 +277,7 @@ func _input(event: InputEvent):
 		if open_shop != "":
 			open_shop = ""
 			plant_target = null
+			enhance_target = null
 		else:
 			get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
 		return
@@ -257,6 +289,11 @@ func _input(event: InputEvent):
 	if event.keycode == KEY_E or event.keycode == KEY_SPACE:
 		if prompt_action.is_valid():
 			prompt_action.call()
+	elif event.keycode == KEY_F:
+		if prompt_plot and prompt_plot.state == FarmPlot.PState.PLANTED \
+				and prompt_plot.boost >= 1.0 and _total_enhancers() > 0:
+			enhance_target = prompt_plot
+			open_shop = "enhance"
 
 func _shop_input(key: Key):
 	var idx = key - KEY_1  # 0-based row number
@@ -282,6 +319,20 @@ func _shop_input(key: Key):
 			var knives = GameData.knives()
 			if idx >= 0 and idx < knives.size():
 				buy_or_equip_knife(knives[idx]["id"])
+		"tools":
+			# tools first, then enhancers, numbered straight through
+			var tools = GameData.tools()
+			var enhancers = GameData.enhancers()
+			if idx >= 0 and idx < tools.size():
+				buy_tool(tools[idx]["id"])
+			elif idx >= tools.size() and idx < tools.size() + enhancers.size():
+				buy_enhancer(enhancers[idx - tools.size()]["id"])
+		"enhance":
+			var owned_enh = owned_enhancers()
+			if idx >= 0 and idx < owned_enh.size() and enhance_target:
+				if apply_enhancer(enhance_target, owned_enh[idx]["id"]):
+					open_shop = ""
+					enhance_target = null
 
 # ────────────────────────────────────────────────────────
 #  Economy actions (public so the smoke test can drive them)
@@ -377,6 +428,111 @@ func buy_or_equip_knife(id: String) -> bool:
 	_popup("%s bought and equipped!" % k.get("name", id), Color.GOLD)
 	AudioManager.play_sfx("level_complete")
 	return true
+
+# ── farm expansion ──
+
+func plots_owned() -> int:
+	return int(SaveDataManager.farm.get("plots_owned", 6))
+
+func expand_cost() -> int:
+	return 50 + 40 * (plots_owned() - 6)
+
+func buy_plot(plot: FarmPlot) -> bool:
+	if not plot.locked or plot.index != plots_owned():
+		return false
+	if not SaveDataManager.spend_coins(expand_cost()):
+		_popup("Not enough coins!", Color.ORANGE_RED)
+		return false
+	plot.locked = false
+	SaveDataManager.farm["plots_owned"] = plots_owned() + 1
+	SaveDataManager.save_game()
+	_popup("New plot tilled!", Color.GOLD)
+	if SaveDataManager.settings.get("particle_effects", true):
+		Fx.burst(self, plot.position, Color(0.46, 0.32, 0.18), 14, 200.0)
+	AudioManager.play_sfx("level_complete")
+	return true
+
+# ── tools and growth enhancers ──
+
+func owns_tool(id: String) -> bool:
+	return id in SaveDataManager.farm.get("tools", [])
+
+func buy_tool(id: String) -> bool:
+	if owns_tool(id):
+		_popup("Already installed!", Color(0.7, 0.65, 0.55))
+		return false
+	var tool_data = GameData.tool_by_id(id)
+	if not SaveDataManager.spend_coins(int(tool_data.get("cost", 99999))):
+		_popup("Not enough coins!", Color.ORANGE_RED)
+		return false
+	var owned: Array = SaveDataManager.farm.get("tools", [])
+	owned.append(id)
+	SaveDataManager.farm["tools"] = owned
+	SaveDataManager.save_game()
+	_popup("%s installed!" % tool_data.get("name", id), Color.GOLD)
+	AudioManager.play_sfx("level_complete")
+	return true
+
+func buy_enhancer(id: String) -> bool:
+	var e = GameData.enhancer_by_id(id)
+	if not SaveDataManager.spend_coins(int(e.get("cost", 9999))):
+		_popup("Not enough coins!", Color.ORANGE_RED)
+		return false
+	SaveDataManager.add_item("items", id, 1)
+	_popup("Bought %s" % e.get("name", id), Color.LIGHT_GREEN)
+	AudioManager.play_sfx("coin_collect")
+	return true
+
+func apply_enhancer(plot: FarmPlot, id: String) -> bool:
+	if SaveDataManager.item_count("items", id) <= 0:
+		return false
+	var e = GameData.enhancer_by_id(id)
+	if not plot.enhance(float(e.get("boost", 1.0)), int(e.get("bonus_yield", 0))):
+		_popup("Already enhanced!", Color.ORANGE_RED)
+		return false
+	SaveDataManager.add_item("items", id, -1)
+	_sync_plots()
+	_popup("%s worked into the soil!" % e.get("name", id), Color(0.55, 0.95, 0.4))
+	if SaveDataManager.settings.get("particle_effects", true):
+		Fx.sparkle(self, plot.position)
+	return true
+
+func owned_enhancers() -> Array:
+	return GameData.enhancers().filter(
+		func(e): return SaveDataManager.item_count("items", e["id"]) > 0)
+
+func _total_enhancers() -> int:
+	var total = 0
+	for n in SaveDataManager.farm.get("items", {}).values():
+		total += int(n)
+	return total
+
+# ── auto-farming: owned tools work the field on a slow tick ──
+
+func _auto_farm():
+	var changed := false
+	if owns_tool("sprinkler"):
+		for plot in plots:
+			if not plot.locked and plot.state == FarmPlot.PState.PLANTED and not plot.watered:
+				plot.water()
+				changed = true
+	if owns_tool("harvest_drone"):
+		for plot in plots:
+			if not plot.locked and plot.state == FarmPlot.PState.READY:
+				_harvest_plot(plot)  # syncs the save itself
+				break  # one per tick, so popups stay readable
+	if owns_tool("auto_seeder"):
+		for plot in plots:
+			if plot.locked or plot.state != FarmPlot.PState.EMPTY:
+				continue
+			if plot.last_potato_id == "" or SaveDataManager.item_count("seeds", plot.last_potato_id) <= 0:
+				continue
+			SaveDataManager.add_item("seeds", plot.last_potato_id, -1)
+			plot.plant(plot.last_potato_id)
+			changed = true
+			break  # one per tick
+	if changed:
+		_sync_plots()
 
 func _open_plant_menu(plot: FarmPlot):
 	plant_target = plot
