@@ -2,7 +2,13 @@
 
 Pre-built standalone binaries for SLICE IT! · The Potato Cutting Championship.
 
-**No .NET installation required** — download the binary for your platform and run it directly.
+**No .NET installation required** — each binary is a self-contained single
+file (~35 MB, the .NET runtime is bundled inside). Download the one for your
+platform and run it directly.
+
+> Note: only the single file is needed. If an exe ever fails silently on
+> double-click, it was built without `dotnet publish -p:PublishSingleFile=true`
+> and is missing its runtime DLLs — grab a fresh copy from a release instead.
 
 ## Platforms
 
