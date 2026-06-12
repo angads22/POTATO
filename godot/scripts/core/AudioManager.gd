@@ -34,7 +34,7 @@ func stop_music(fade_out: float = 1.0):
 func set_volume(bus: String, volume: float):
 	SaveDataManager.update_setting(bus + "_volume", volume)
 	if AudioServer.get_bus_index(bus) != -1:
-		var db = linear2db(volume) if volume > 0 else -80.0
+		var db = linear_to_db(volume) if volume > 0 else -80.0
 		AudioServer.set_bus_volume_db(AudioServer.get_bus_index(bus), db)
 
 func toggle_sound():

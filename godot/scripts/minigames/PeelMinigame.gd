@@ -1,67 +1,80 @@
 extends MinigameBase
+class_name PeelMinigame
 
-# Peel mechanic - tap to start rising fill, tap again to lock it
-# Player must lock the fill at the correct height within the target zone
+# Peel — tap to start the rising peel gauge, tap again to lock it inside
+# the green band. Overfilling ruins the potato.
 
-const FILL_SPEED = 50  # pixels per second
-const TARGET_HEIGHT = 100
-const TARGET_START = 150
-const TARGET_END = 250
+const GAUGE_X = 920.0
+const GAUGE_Y = 160.0
+const GAUGE_W = 90.0
+const GAUGE_H = 360.0
+const FILL_TIME = 1.6     # seconds for the gauge to rise bottom→top
+const TIMEOUT = 6.0
 
-var current_fill: float = 0.0
-var fill_started: bool = false
-var fill_locked: bool = false
-var target_zone_start: float = TARGET_START
-var target_zone_end: float = TARGET_END
+var fill: float = 0.0     # 0..1, rises from the bottom
+var started: bool = false
+var locked: bool = false
+var band_centre: float = 0.7
+var band_half: float = 0.09
 
 func start_minigame(potato: Dictionary):
 	super.start_minigame(potato)
-	current_fill = 0.0
-	fill_started = false
-	fill_locked = false
+	fill = 0.0
+	started = false
+	locked = false
+	band_centre = randf_range(0.55, 0.85)
 
 func _process(delta):
-	if not is_active or not fill_started or fill_locked:
+	if not is_active or locked:
 		return
 
-	# Rising fill
-	current_fill += FILL_SPEED * delta
-
-	# Auto-fail if exceeds max height
-	if current_fill >= 300:
-		cut_result.quality = "FAIL"
-		cut_result.score_multiplier = 0.0
+	if started:
+		fill += delta / FILL_TIME
+		if fill >= 1.0:
+			locked = true
+			cut_result.quality = "FAIL"
+			cut_result.animation_trigger = "peel_fail"
+			end_minigame()
+	elif elapsed() > TIMEOUT:
+		cut_result.quality = "MISS"
 		end_minigame()
+	queue_redraw()
 
 func _on_primary_input():
-	if fill_locked:
+	if locked:
 		return
-
-	if not fill_started:
-		# Start the fill
-		fill_started = true
+	if not started:
+		started = true
 	else:
-		# Lock the fill
-		fill_locked = true
-
-		# Calculate accuracy
-		if current_fill >= target_zone_start and current_fill <= target_zone_end:
-			if current_fill >= (target_zone_start + target_zone_end) / 2:
-				cut_result.quality = "PERFECT"
-				cut_result.score_multiplier = 1.5
-			else:
-				cut_result.quality = "GREAT"
-				cut_result.score_multiplier = 1.25
-		elif abs(current_fill - target_zone_start) < 20 or abs(current_fill - target_zone_end) < 20:
-			cut_result.quality = "GOOD"
-			cut_result.score_multiplier = 1.0
-		else:
-			cut_result.quality = "MISS"
-			cut_result.score_multiplier = 0.0
-
-		cut_result.animation_trigger = "peel_" + cut_result.quality.to_lower()
+		locked = true
+		var q = judge(abs(fill - band_centre), band_half * 0.33, band_half * 0.66, band_half)
+		cut_result.quality = q
+		cut_result.score_multiplier = multiplier_for(q)
+		cut_result.animation_trigger = "peel_" + q.to_lower()
 		end_minigame()
 
-func _on_secondary_input():
-	# Not used in peel mechanic
-	pass
+func _draw():
+	if not is_active:
+		return
+
+	# frame + background
+	draw_rect(Rect2(GAUGE_X - 4, GAUGE_Y - 4, GAUGE_W + 8, GAUGE_H + 8), Color(0.35, 0.28, 0.18), false, 2.0)
+	draw_rect(Rect2(GAUGE_X, GAUGE_Y, GAUGE_W, GAUGE_H), Color(0.09, 0.08, 0.1))
+
+	# target band (gauge coordinates run top-down, fill runs bottom-up)
+	var band_top = GAUGE_Y + GAUGE_H * (1.0 - (band_centre + band_half))
+	draw_rect(Rect2(GAUGE_X, band_top, GAUGE_W, GAUGE_H * band_half * 2.0), Color(0.25, 0.75, 0.3, 0.55))
+
+	# rising peel fill
+	var fh = GAUGE_H * clampf(fill, 0.0, 1.0)
+	draw_rect(Rect2(GAUGE_X, GAUGE_Y + GAUGE_H - fh, GAUGE_W, fh), Color(0.62, 0.42, 0.24, 0.9))
+
+	# lock line
+	if started:
+		var line_y = GAUGE_Y + GAUGE_H * (1.0 - clampf(fill, 0.0, 1.0))
+		draw_rect(Rect2(GAUGE_X - 8, line_y - 2, GAUGE_W + 16, 4), Color.CYAN if locked else Color.WHITE)
+
+	if not started:
+		draw_hint("[SPACE] Tap to start peeling...")
+	else:
+		draw_hint("[SPACE] Tap again to lock it in the green band!")

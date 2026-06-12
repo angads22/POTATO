@@ -3,6 +3,8 @@
 ; since the parameters that go here are loss-less conversion
 ; of the nodes and resources to text format by the engine.
 
+config_version=5
+
 [application]
 
 config/name="SLICE IT! - The Potato Cutting Championship"
@@ -11,20 +13,18 @@ config/version="2.0.0"
 run/main_scene="res://scenes/MainMenu.tscn"
 config/features=PackedStringArray("4.2")
 
+[autoload]
+
+SaveDataManager="*res://scripts/core/SaveDataManager.gd"
+AudioManager="*res://scripts/core/AudioManager.gd"
+GameManager="*res://scripts/core/GameManager.gd"
+
 [display]
 
 window/size/viewport_width=1280
 window/size/viewport_height=720
-window/size/window_width_override=1280
-window/size/window_height_override=720
 
 [rendering]
 
 renderer/rendering_method="mobile"
 anti_aliasing/msaa_2d=2
-
-[autoload]
-
-GameManager="res://scripts/core/GameManager.gd"
-AudioManager="res://scripts/core/AudioManager.gd"
-SaveDataManager="res://scripts/core/SaveDataManager.gd"

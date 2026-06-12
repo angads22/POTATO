@@ -149,6 +149,18 @@ GameManager.combo_changed.connect(func(combo):
 # Press F5 to run
 ```
 
+### Headless Smoke Test
+
+An auto-player drives a championship run — it watches the active minigame,
+cuts at the centre, locks the peel in the band and bins rotten potatoes:
+
+```bash
+godot --headless --path godot res://tests/SmokeTest.tscn --quit-after 900
+# prints "SMOKE OK — score=... lives=..." and exits 0 on success
+```
+
+CI runs this on every PR touching `godot/` (see `.github/workflows/godot.yml`).
+
 ### Standalone Build
 
 ```bash
@@ -157,28 +169,33 @@ GameManager.combo_changed.connect(func(combo):
 # Result: `PotatoSlicer-v2.0.0.exe` (or equivalent)
 ```
 
-## Framework Features Ready to Implement
+## Current Status
 
-- ✅ Game state management with signals
-- ✅ Modular minigame system
-- ✅ Save/load persistence
-- ✅ Audio framework
-- ✅ Menu navigation
-- ⏳ Sprite and animation system (assets needed)
-- ⏳ Visual feedback (particles, screen shake, popups)
-- ⏳ Leaderboard UI display
+- ✅ Game state management with signals (score, combo, FEVER, lives)
+- ✅ All five minigames playable with real cursors and visuals
+  (slice, peel gauge, shrinking speed-cut, two-tap julienne, rotten dodge)
+- ✅ Procedurally drawn potatoes — idle bob, split-in-two and binned-drop
+  animations, golden glow, rotten stink lines (no image assets required)
+- ✅ Visual feedback: quality popups, stage banners, screen shake, fever
+  overlay, heart lives, combo counter that grows with the streak
+- ✅ Four game modes wired: Championship (6 stages), Endless (waves),
+  Time Attack (60s clock), Daily Challenge (date-seeded sequence)
+- ✅ Game-over screen with name entry and leaderboard submission
+- ✅ Save/load persistence (JSON: leaderboard, achievements, settings, unlocks)
+- ✅ Data-driven balance: knives and potatoes in `resources/game_data/*.json`
+- ✅ Headless smoke test + CI workflow
+- ⏳ Audio files (framework wired, OGG assets needed)
 - ⏳ Shop UI and knife/power-up selection
 - ⏳ Boss fight minigame
-- ⏳ Combo/fever visual effects
+- ⏳ Particles and richer juice (squash/stretch, trails)
 
 ## Next Steps
 
-1. **Assets** — Create or source sprites for potatoes, knives, UI
-2. **Scenes** — Build out the visual scenes (menu, gameplay, shop) with the sprite assets
-3. **Animations** — Add cut animations and transitions
-4. **Audio** — Add music and sound effects
-5. **Polish** — Screen shake, particles, camera effects
-6. **Expansion** — New modes, potatoes, knives, mechanics
+1. **Audio** — Drop OGG files into `assets/audio/` and implement playback in AudioManager
+2. **Shop** — Build the knife shop scene against `resources/game_data/knives.json`
+3. **Boss** — Add a Colossal Spud minigame with an HP bar (extend `MinigameBase`)
+4. **Polish** — Particles, squash-and-stretch, juice
+5. **Expansion** — New potatoes/mechanics are one JSON entry + one `MinigameBase` subclass away
 
 ## Building for Distribution
 

@@ -5,8 +5,9 @@ extends Node
 
 const SAVE_PATH = "user://potato_game/"
 const LEADERBOARD_FILE = "leaderboard.json"
-const SAVES_FILE = "savegame.json"
+const ACHIEVEMENTS_FILE = "achievements.json"
 const SETTINGS_FILE = "settings.json"
+const UNLOCKS_FILE = "unlocks.json"
 
 var leaderboard: Array[Dictionary] = []
 var achievements: Dictionary = {}
@@ -23,31 +24,35 @@ var settings: Dictionary = {
 func _ready():
 	# Ensure save directory exists
 	if not DirAccess.dir_exists_absolute(SAVE_PATH):
-		DirAccess.make_abs_absolute(SAVE_PATH)
+		DirAccess.make_dir_recursive_absolute(SAVE_PATH)
 	load_game()
 
 func load_game():
 	# Load leaderboard
-	var leaderboard_file = SAVE_PATH + LEADERBOARD_FILE
-	if ResourceLoader.exists(leaderboard_file):
-		var data = load(leaderboard_file)
-		if data:
-			leaderboard = data.get("scores", [])
+	var leaderboard_data = _load_json(LEADERBOARD_FILE)
+	if leaderboard_data.has("scores"):
+		leaderboard.assign(leaderboard_data["scores"])
+
+	# Load achievements
+	var achievements_data = _load_json(ACHIEVEMENTS_FILE)
+	if not achievements_data.is_empty():
+		achievements = achievements_data
 
 	# Load settings
-	var settings_file = SAVE_PATH + SETTINGS_FILE
-	if ResourceLoader.exists(settings_file):
-		var data = load(settings_file)
-		if data:
-			settings.merge(data, true)
+	var settings_data = _load_json(SETTINGS_FILE)
+	if not settings_data.is_empty():
+		settings.merge(settings_data, true)
+
+	# Load unlocked knives
+	var unlocks_data = _load_json(UNLOCKS_FILE)
+	if unlocks_data.has("knives"):
+		unlocked_knives.assign(unlocks_data["knives"])
 
 func save_game():
-	# Save leaderboard
-	var leaderboard_data = {"scores": leaderboard}
-	_save_json(LEADERBOARD_FILE, leaderboard_data)
-
-	# Save settings
+	_save_json(LEADERBOARD_FILE, {"scores": leaderboard})
+	_save_json(ACHIEVEMENTS_FILE, achievements)
 	_save_json(SETTINGS_FILE, settings)
+	_save_json(UNLOCKS_FILE, {"knives": unlocked_knives})
 
 func add_to_leaderboard(name: String, score: int, mode: String):
 	var entry = {
@@ -99,7 +104,20 @@ func update_setting(key: String, value):
 		settings[key] = value
 		save_game()
 
-func _save_json(filename: String, data: Dictionary):
+func _save_json(filename: String, data) -> void:
 	var file = FileAccess.open(SAVE_PATH + filename, FileAccess.WRITE)
 	if file:
-		file.store_var(data)
+		file.store_string(JSON.stringify(data, "\t"))
+		file.close()
+
+func _load_json(filename: String) -> Dictionary:
+	var path = SAVE_PATH + filename
+	if not FileAccess.file_exists(path):
+		return {}
+	var file = FileAccess.open(path, FileAccess.READ)
+	if not file:
+		return {}
+	var text = file.get_as_text()
+	file.close()
+	var parsed = JSON.parse_string(text)
+	return parsed if parsed is Dictionary else {}

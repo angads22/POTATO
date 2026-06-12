@@ -1,0 +1,11 @@
+{
+	"knives": [
+		{ "id": "butter",     "name": "Butter Knife",   "damage": 1.0, "cost": 0,    "unlock_xp": 0,    "color": "#c8c8c8" },
+		{ "id": "paring",     "name": "Paring Knife",   "damage": 1.1, "cost": 150,  "unlock_xp": 0,    "color": "#d4d4d4" },
+		{ "id": "santoku",    "name": "Santoku",        "damage": 1.2, "cost": 500,  "unlock_xp": 0,    "color": "#e0e0e0" },
+		{ "id": "chef",       "name": "Chef's Knife",   "damage": 1.35,"cost": 1200, "unlock_xp": 0,    "color": "#eaeaea" },
+		{ "id": "cleaver",    "name": "Cleaver",        "damage": 1.5, "cost": 2500, "unlock_xp": 0,    "color": "#f0f0f0" },
+		{ "id": "pro_ceramic","name": "Pro Ceramic",    "damage": 1.7, "cost": 5000, "unlock_xp": 800,  "color": "#ffe9a8" },
+		{ "id": "damascus",   "name": "Damascus Steel", "damage": 2.0, "cost": 9000, "unlock_xp": 2000, "color": "#ffd24a" }
+	]
+}

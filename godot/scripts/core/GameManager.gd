@@ -23,6 +23,7 @@ class GameState:
 	var coins_earned: int = 0
 	var is_running: bool = false
 	var is_paused: bool = false
+	var last_victory: bool = false
 
 var current_state: GameState = GameState.new()
 var game_modes = {}  # Will be populated with mode configurations
