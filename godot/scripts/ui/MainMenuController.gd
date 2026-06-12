@@ -11,7 +11,8 @@ var menu_items: Array[String] = [
 	"[4] Multiplayer",
 	"[5] Leaderboard",
 	"[6] Settings",
-	"[7] About",
+	"[7] Check for Updates",
+	"[8] About",
 	"[ESC] Quit"
 ]
 
@@ -43,6 +44,9 @@ func _ready():
 	mascot_knife = KnifeVisual.new()
 	mascot_knife.position = mascot.position
 	add_child(mascot_knife)
+
+	# repaint when the background update check resolves
+	UpdateManager.status_changed.connect(queue_redraw)
 	queue_redraw()
 
 func _input(event: InputEvent):
@@ -52,7 +56,16 @@ func _input(event: InputEvent):
 	if in_submenu:
 		match event.keycode:
 			KEY_SPACE, KEY_ESCAPE:
+				# while an update is mid-flight, stay on the screen
+				if current_submenu == "updates" and UpdateManager.state in ["downloading", "installing"]:
+					return
 				_close_submenu()
+			KEY_ENTER, KEY_KP_ENTER:
+				if current_submenu == "updates":
+					UpdateManager.install()
+			KEY_R:
+				if current_submenu == "updates":
+					UpdateManager.check()
 			KEY_S:
 				if current_submenu == "settings":
 					AudioManager.toggle_sound()
@@ -78,7 +91,8 @@ func _input(event: InputEvent):
 		KEY_4: _enter_lobby()
 		KEY_5: _show_leaderboard()
 		KEY_6: _show_settings()
-		KEY_7: _show_about()
+		KEY_7: _show_updates()
+		KEY_8: _show_about()
 		KEY_ESCAPE: get_tree().quit()
 
 func _start_game(mode: String):
@@ -106,6 +120,11 @@ func _show_leaderboard():
 
 func _show_settings():
 	_open_submenu("settings")
+
+func _show_updates():
+	if UpdateManager.state in ["idle", "error", "uptodate"]:
+		UpdateManager.check()
+	_open_submenu("updates")
 
 func _show_about():
 	_open_submenu("about")
@@ -148,7 +167,7 @@ func _draw_main_menu():
 	var sub = "The Potato Cutting Championship"
 	var sub_size = font.get_string_size(sub, HORIZONTAL_ALIGNMENT_CENTER, -1, 22)
 	draw_string(font, Vector2(title_x - sub_size.x / 2, 162), sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(0.35, 0.22, 0.1))
-	var ver = "v2.2.0"
+	var ver = "v" + UpdateManager.current_version
 	var ver_size = font.get_string_size(ver, HORIZONTAL_ALIGNMENT_CENTER, -1, 15)
 	draw_string(font, Vector2(title_x - ver_size.x / 2, 192), ver, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.45, 0.32, 0.2))
 
@@ -156,6 +175,13 @@ func _draw_main_menu():
 	var wallet = "Wallet: %d coins" % SaveDataManager.wallet()
 	var wallet_size = font.get_string_size(wallet, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
 	draw_string(font, Vector2(title_x - wallet_size.x / 2, 218), wallet, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.72, 0.52, 0.12))
+
+	# launch check found a newer release — nudge towards the updater
+	if UpdateManager.state == "available":
+		var nudge = "Update available: v%s — press [7]" % UpdateManager.latest_version
+		var ns = font.get_string_size(nudge, HORIZONTAL_ALIGNMENT_CENTER, -1, 15)
+		var pulse = 0.7 + 0.3 * sin(Time.get_ticks_msec() / 400.0)
+		draw_string(font, Vector2(title_x - ns.x / 2, 700), nudge, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(1.0, 0.75, 0.2, pulse))
 
 	# Menu in a walnut panel
 	var panel_rect = Rect2(title_x - 190, 236, 380, 52 + menu_items.size() * 40)
@@ -175,6 +201,7 @@ func _draw_submenu():
 	match current_submenu:
 		"leaderboard": _draw_leaderboard_screen(centre_x)
 		"settings":    _draw_settings_screen(centre_x)
+		"updates":     _draw_updates_screen(centre_x)
 		"about":       _draw_about_screen(centre_x)
 
 func _draw_leaderboard_screen(centre_x: float):
@@ -256,6 +283,53 @@ func _draw_settings_screen(centre_x: float):
 
 	draw_string(font, Vector2(centre_x - 150, 500), "[SPACE] Back",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.GRAY)
+
+func _draw_updates_screen(centre_x: float):
+	var font := ThemeDB.fallback_font
+	draw_string(font, Vector2(centre_x - 60, 100), "UPDATES",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 32, Color.GOLD)
+
+	draw_string(font, Vector2(centre_x - 230, 190),
+			"Installed version:  v" + UpdateManager.current_version,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color.WHITE)
+
+	var status := ""
+	var col := Color.WHITE
+	var action := ""
+	match UpdateManager.state:
+		"checking":
+			status = "Checking the latest release…"
+			col = Color(0.7, 0.65, 0.55)
+		"uptodate":
+			status = "You're on the newest version!  (latest: v%s)" % UpdateManager.latest_version
+			col = Color.LIGHT_GREEN
+			action = "[R] Check again   ·   [SPACE] Back"
+		"available":
+			status = "Update available:  v%s" % UpdateManager.latest_version
+			col = Color.GOLD
+			action = "[ENTER] Download & install — the game restarts itself   ·   [SPACE] Back"
+		"downloading":
+			status = "Downloading v%s…" % UpdateManager.latest_version
+			col = Color(0.5, 0.8, 1.0)
+		"installing":
+			status = "Installing — the game will restart in a moment…"
+			col = Color(0.5, 0.8, 1.0)
+		"error":
+			status = UpdateManager.error_msg
+			col = Color.ORANGE_RED
+			action = "[R] Try again   ·   [SPACE] Back"
+		_:
+			status = "Press [R] to check for updates"
+			col = Color(0.7, 0.65, 0.55)
+			action = "[R] Check   ·   [SPACE] Back"
+
+	draw_string(font, Vector2(centre_x - 230, 240), status, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, col)
+	if action != "":
+		draw_string(font, Vector2(centre_x - 230, 300), action, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.75, 0.7, 0.62))
+
+	draw_string(font, Vector2(centre_x - 230, 360),
+			"Updates come from github.com/%s/releases" % UpdateManager.REPO,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.55, 0.5, 0.45))
 
 func _draw_about_screen(centre_x: float):
 	var font := ThemeDB.fallback_font

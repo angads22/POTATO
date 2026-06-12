@@ -58,9 +58,10 @@ knives, chain combos, and chase FEVER mode.
 - **Rare golden potato** (~7% chance) worth 500 base points and bonus coins
 - **Top-10 local leaderboard** and **global online leaderboard**, both surfaced in-game
 - **Sound effects** (toggle in the menu)
-- **Auto-updates** — the standalone app checks the latest GitHub release on
-  launch and updates itself, then restarts (skip with `--no-update`);
-  there's also a manual "Check for Updates" in the menu
+- **Auto-updates, both editions** — the visual edition checks the latest
+  GitHub release on launch and has a **Check for Updates** screen in the
+  menu (`[7]`) that downloads the new build and restarts itself; the console
+  edition auto-updates on launch as before (skip with `--no-update`)
 
 ## Play Now
 
@@ -79,7 +80,7 @@ See [`godot/README.md`](godot/README.md) for the development and expansion guide
 
 ### Classic Console Edition
 
-**Newest release: [v2.2.0](https://github.com/angads22/POTATO/releases/latest)** — download the standalone build for your platform:
+**Newest release: [v2.3.0](https://github.com/angads22/POTATO/releases/latest)** — download the standalone build for your platform:
 
 - [`PotatoSlicer-win-x64.exe`](https://github.com/angads22/POTATO/releases/latest/download/PotatoSlicer-win-x64.exe) — Windows: download and double-click
 - [`PotatoSlicer-linux-x64`](https://github.com/angads22/POTATO/releases/latest/download/PotatoSlicer-linux-x64) — Linux: `chmod +x` then run
@@ -150,7 +151,8 @@ Every iteration is downloadable from the [releases page](https://github.com/anga
 
 | Version | What changed |
 |---------|--------------|
-| [v2.2.0](https://github.com/angads22/POTATO/releases/tag/v2.2.0) **(newest)** | macOS build, LAN multiplayer, global leaderboard, 3 graphics styles, streamlined modes, farm expansion + auto-farming tools + growth enhancers |
+| [v2.3.0](https://github.com/angads22/POTATO/releases/tag/v2.3.0) **(newest)** | In-game updater for the visual edition — check, download, and restart from the menu |
+| [v2.2.0](https://github.com/angads22/POTATO/releases/tag/v2.2.0) | macOS build, LAN multiplayer, global leaderboard, 3 graphics styles, streamlined modes, farm expansion + auto-farming tools + growth enhancers |
 | [v2.1.0](https://github.com/angads22/POTATO/releases/tag/v2.1.0) | Visual edition ships as a standalone app (kitchen, open-world farm, day-night cycle) |
 | [v1.1.0](https://github.com/angads22/POTATO/releases/tag/v1.1.0) | Standalone single-file binaries, auto-update on launch, in-game update checker |
 | [v1.0.2](https://github.com/angads22/POTATO/releases/tag/v1.0.2) | Overhaul: five cut mechanics, four modes, boss fight, shop, power-ups, stage orders |
@@ -159,8 +161,10 @@ Every iteration is downloadable from the [releases page](https://github.com/anga
 
 ## Cutting a Release
 
-1. Bump the `VERSION` constant in `PotatoSlicer/Core/Updater.cs` and `<Version>` in the csproj.
-2. Tag the commit and push: `git tag v2.2.0 && git push origin v2.2.0`.
+1. Bump `VERSION` in `PotatoSlicer/Core/Updater.cs`, `<Version>` in the csproj,
+   **and** `config/version` in `godot/project.godot` — both in-game updaters compare
+   against the release tag, so all three must match it.
+2. Tag the commit and push: `git tag v2.4.0 && git push origin v2.4.0`.
 3. The Release workflow builds console binaries and exports all three Godot builds
    (Win/Linux/macOS), then publishes the GitHub Release.
 
