@@ -33,6 +33,18 @@ func _ready():
 	# Initialize game modes and load saved data
 	_init_game_modes()
 	SaveDataManager.load_game()
+	_apply_window_icon()
+
+func _apply_window_icon():
+	# Use the potato as the window / taskbar icon (no-op on the headless CI
+	# server, which has no window).
+	if DisplayServer.get_name() == "headless":
+		return
+	var tex = load("res://icon.svg")
+	if tex is Texture2D:
+		var img: Image = tex.get_image()
+		if img:
+			get_window().set_icon(img)
 
 func _init_game_modes():
 	game_modes = {

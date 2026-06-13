@@ -25,7 +25,7 @@ var head: Node3D
 var camera: Camera3D
 var aim_ray: RayCast3D
 var muzzle: Node3D
-var _body_mesh: MeshInstance3D
+var _avatar: Node3D
 var _flash: MeshInstance3D
 
 # remote interpolation targets
@@ -58,25 +58,61 @@ func _build() -> void:
 	col.position = Vector3(0, 0.9, 0)
 	add_child(col)
 
-	_body_mesh = MeshInstance3D.new()
-	var body := CapsuleMesh.new()
-	body.radius = 0.4
-	body.height = 1.7
-	_body_mesh.mesh = body
-	_body_mesh.position = Vector3(0, 0.9, 0)
-	_body_mesh.material_override = _skin(_colour_for(peer_id))
-	add_child(_body_mesh)
-	# a little "eyes" block so remote chefs have a front
-	var face := MeshInstance3D.new()
-	var fb := BoxMesh.new()
-	fb.size = Vector3(0.5, 0.12, 0.08)
-	face.mesh = fb
-	face.position = Vector3(0, 1.35, -0.38)
-	face.material_override = _skin(Color(0.1, 0.07, 0.05))
-	add_child(face)
-	# the local player is invisible to its own camera
-	_body_mesh.visible = not is_local
-	face.visible = not is_local
+	# ── the potato-chef avatar (hidden from the owner's first-person camera) ──
+	_avatar = Node3D.new()
+	add_child(_avatar)
+
+	var body := MeshInstance3D.new()
+	var bm := SphereMesh.new()
+	bm.radius = 0.42
+	bm.height = 0.84
+	body.mesh = bm
+	body.scale = Vector3(0.95, 1.3, 0.85)  # upright potato, not a ball
+	body.position = Vector3(0, 0.85, 0)
+	body.material_override = _skin(_potato_brown())
+	_avatar.add_child(body)
+
+	# googly potato eyes on the front (-Z)
+	for sx in [-0.16, 0.16]:
+		var white := MeshInstance3D.new()
+		var wm := SphereMesh.new()
+		wm.radius = 0.08
+		wm.height = 0.16
+		white.mesh = wm
+		white.position = Vector3(sx, 1.08, -0.32)
+		white.material_override = _skin(Color(0.96, 0.96, 0.92))
+		_avatar.add_child(white)
+		var pupil := MeshInstance3D.new()
+		var pm := SphereMesh.new()
+		pm.radius = 0.04
+		pm.height = 0.08
+		pupil.mesh = pm
+		pupil.position = Vector3(sx, 1.08, -0.39)
+		pupil.material_override = _skin(Color(0.1, 0.07, 0.05))
+		_avatar.add_child(pupil)
+
+	# chef toque: a coloured band (the player's colour, so peers are
+	# distinguishable) topped with a white puff
+	var band := MeshInstance3D.new()
+	var bandm := CylinderMesh.new()
+	bandm.top_radius = 0.30
+	bandm.bottom_radius = 0.30
+	bandm.height = 0.14
+	band.mesh = bandm
+	band.position = Vector3(0, 1.45, 0)
+	band.material_override = _skin(_colour_for(peer_id))
+	_avatar.add_child(band)
+	var puff := MeshInstance3D.new()
+	var puffm := SphereMesh.new()
+	puffm.radius = 0.30
+	puffm.height = 0.60
+	puff.mesh = puffm
+	puff.scale = Vector3(1.0, 1.15, 1.0)
+	puff.position = Vector3(0, 1.66, 0)
+	puff.material_override = _skin(Color(0.97, 0.97, 0.95))
+	_avatar.add_child(puff)
+
+	_avatar.visible = not is_local
 
 	head = Node3D.new()
 	head.position = Vector3(0, EYE_HEIGHT, 0)
@@ -90,22 +126,34 @@ func _build() -> void:
 	muzzle.position = Vector3(0.18, -0.12, -0.4)
 	head.add_child(muzzle)
 
-	# the gun the local player sees in front of the camera
+	# first-person spud-launcher viewmodel (a tube with a potato loaded)
 	if is_local:
-		var gun := MeshInstance3D.new()
-		var gm := BoxMesh.new()
-		gm.size = Vector3(0.14, 0.14, 0.55)
-		gun.mesh = gm
-		gun.position = Vector3(0.22, -0.18, -0.5)
-		gun.material_override = _skin(Color(0.32, 0.22, 0.12))
-		camera.add_child(gun)
+		var tube := MeshInstance3D.new()
+		var tm := CylinderMesh.new()
+		tm.top_radius = 0.06
+		tm.bottom_radius = 0.07
+		tm.height = 0.5
+		tube.mesh = tm
+		tube.rotation = Vector3(PI / 2.0, 0, 0)  # lay the cylinder along -Z
+		tube.position = Vector3(0.22, -0.2, -0.45)
+		tube.material_override = _skin(Color(0.30, 0.22, 0.13))
+		camera.add_child(tube)
+		var loaded := MeshInstance3D.new()
+		var lm := SphereMesh.new()
+		lm.radius = 0.06
+		lm.height = 0.12
+		loaded.mesh = lm
+		loaded.scale = Vector3(1, 1, 1.3)
+		loaded.position = Vector3(0.22, -0.2, -0.72)
+		loaded.material_override = _skin(_potato_brown())
+		camera.add_child(loaded)
 		_flash = MeshInstance3D.new()
 		var fm := SphereMesh.new()
-		fm.radius = 0.07
-		fm.height = 0.14
+		fm.radius = 0.08
+		fm.height = 0.16
 		_flash.mesh = fm
 		_flash.material_override = _emissive(Color(1.0, 0.85, 0.35))
-		_flash.position = Vector3(0.22, -0.18, -0.82)
+		_flash.position = Vector3(0.22, -0.2, -0.8)
 		_flash.visible = false
 		camera.add_child(_flash)
 
@@ -204,6 +252,9 @@ func teleport(pos: Vector3) -> void:
 	global_position = pos
 	_target_pos = pos
 	velocity = Vector3.ZERO
+
+func _potato_brown() -> Color:
+	return Color(0.78, 0.6, 0.36)
 
 func _colour_for(id: int) -> Color:
 	var palette := [

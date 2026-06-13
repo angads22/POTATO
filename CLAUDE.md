@@ -10,11 +10,14 @@ exists in **two independent implementations** of the same game design:
 - **`PotatoSlicer/`** — the original, fully playable **C# / .NET 8.0 console** game (ASCII UI).
   This is what ships in GitHub Releases as a self-contained binary with an in-game auto-updater.
 - **`godot/`** — a **Godot 4.2+ / GDScript** visual remake (graphics, animations, an open-world
-  farm). Still in development; no binaries shipped yet.
+  farm, and a 3D first-person multiplayer arena). `release.yml` now also exports it (Win/Linux/macOS
+  `SliceIt-Visual-*.zip`) into the same GitHub Release as the console build.
 
 The two share gameplay concepts (five cut mechanics, four game modes, knives, combos, FEVER,
-lives, leaderboard) but **share no code** and version independently (console `1.1.0` in the
-csproj / `Core/Updater.cs`; Godot `2.4.0` in `project.godot`). Treat them as two codebases —
+lives, leaderboard) but **share no code**. They carry their own version constants (console in the
+csproj / `Core/Updater.cs`; Godot in `project.godot`) but ship from **one `v*` tag**, so a release
+bumps both in lockstep — currently `2.5.0`. Both editions' in-game updaters read the same
+`releases/latest`, so the tag must equal both version constants. Treat them as two codebases —
 a change in one does not propagate to the other.
 
 ## Common commands
@@ -54,16 +57,21 @@ dummy to score a frag. CI greps stdout for the `SMOKE OK` / `FARM SMOKE OK` / `T
 - **build.yml** — `dotnet build` of the console project on every push to `main` and every PR.
 - **godot.yml** — runs only when `godot/**` changes: import/compile check + the four smoke tests
   (championship, farm, town, FPS arena).
-- **release.yml** — triggered by pushing a `v*` tag (or manual `workflow_dispatch`). Publishes
-  self-contained single-file win-x64 and linux-x64 binaries and attaches them to a GitHub Release.
+- **release.yml** — triggered by pushing a `v*` tag (or manual `workflow_dispatch`). Publishes the
+  self-contained console win-x64/linux-x64 binaries **and**, when `godot/export_presets.cfg` is
+  present, the exported Godot Visual edition (`SliceIt-Visual-{win-x64,linux-x64,mac}.zip`) into one
+  GitHub Release. A tag push marks it `latest`, so both editions' auto-updaters pick it up.
 
-## Cutting a console release
+## Cutting a release (both editions ship from one tag)
 
-The in-game updater compares the running `VERSION` constant against the latest GitHub Release tag,
-so these must stay in lockstep or you get an update loop / false "up to date":
-1. Bump `VERSION` in `PotatoSlicer/Core/Updater.cs` **and** `<Version>` in `PotatoSlicer.csproj`.
-2. Commit, then `git tag vX.Y.Z && git push origin vX.Y.Z` — the tag must equal `VERSION`.
-3. release.yml builds and publishes; the updater finds the new release on next launch.
+Each in-game updater compares its `VERSION` against the latest GitHub Release tag, and both editions
+read the **same** release, so all three must stay in lockstep or you get an update loop / false
+"up to date":
+1. Bump `VERSION` in `PotatoSlicer/Core/Updater.cs`, `<Version>` in `PotatoSlicer.csproj`, **and**
+   `config/version` in `godot/project.godot` — all to the same `X.Y.Z`.
+2. Commit, then `git tag vX.Y.Z && git push origin vX.Y.Z` — the tag must equal those versions.
+3. release.yml builds & publishes; both editions' updaters find the new release on next launch.
+   (Publishing a `latest` release auto-pushes the build to every existing user, so tag from `main`.)
 
 ## Console architecture (`PotatoSlicer/`)
 

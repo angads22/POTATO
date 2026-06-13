@@ -32,7 +32,8 @@ var paused := false
 var input_locked := false
 var winner_id := -1
 
-var _tracer_mat: StandardMaterial3D
+var _spud_mat: StandardMaterial3D
+var _splat_mat: StandardMaterial3D
 var _return_timer := 0.0
 var _leaving := false
 var hud
@@ -42,7 +43,8 @@ func _ready() -> void:
 	seed(FpsNetwork.match_seed)
 	frag_limit = FpsNetwork.frag_limit
 	time_left = FpsNetwork.time_limit
-	_tracer_mat = _make_tracer_mat()
+	_spud_mat = _make_spud_mat()
+	_splat_mat = _make_splat_mat()
 
 	_build_environment()
 	_build_geometry()
@@ -183,7 +185,7 @@ func fire_from(shooter: FpsPlayer) -> void:
 	else:
 		endpoint = muzzle - shooter.global_transform.basis.z * RAY_LEN
 
-	_spawn_tracer(muzzle, endpoint)
+	_spawn_spud(muzzle, endpoint)
 	shooter.show_muzzle_flash()
 	AudioManager.play_sfx("cut_great")
 	if _net():
@@ -196,7 +198,7 @@ func fire_from(shooter: FpsPlayer) -> void:
 
 @rpc("any_peer", "call_remote", "unreliable")
 func _recv_shot(from: Vector3, to: Vector3, shooter_pid: int) -> void:
-	_spawn_tracer(from, to)
+	_spawn_spud(from, to)
 	var p = players.get(shooter_pid)
 	if p and is_instance_valid(p):
 		p.show_muzzle_flash()
@@ -402,38 +404,60 @@ func _random_ground_point() -> Vector3:
 
 # ── tracer FX ────────────────────────────────────────────────────────────────
 
-func _make_tracer_mat() -> StandardMaterial3D:
+func _make_spud_mat() -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
-	m.albedo_color = Color(1.0, 0.88, 0.4)
-	m.emission_enabled = true
-	m.emission = Color(1.0, 0.82, 0.3)
-	m.emission_energy_multiplier = 3.0
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.albedo_color = Color(0.78, 0.6, 0.36)
+	m.roughness = 0.8
 	return m
 
-func _spawn_tracer(a: Vector3, b: Vector3) -> void:
+func _make_splat_mat() -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.92, 0.86, 0.7)
+	m.roughness = 0.95
+	return m
+
+# Cosmetic only — the actual hit is the instant raycast in fire_from(). Skipped
+# on the headless CI server (no renderer).
+func _spawn_spud(a: Vector3, b: Vector3) -> void:
 	if DisplayServer.get_name() == "headless":
-		return  # no renderer on the CI server — skip the cosmetic tracer
-	var dist := a.distance_to(b)
-	if dist < 0.05:
 		return
-	var inst := MeshInstance3D.new()
-	var cyl := CylinderMesh.new()
-	cyl.top_radius = 0.025
-	cyl.bottom_radius = 0.025
-	cyl.height = dist
-	inst.mesh = cyl
-	inst.material_override = _tracer_mat
-	add_child(inst)
-	var mid := (a + b) * 0.5
-	inst.global_position = mid
+	if a.distance_to(b) < 0.05:
+		return
+	var spud := MeshInstance3D.new()
+	var sm := SphereMesh.new()
+	sm.radius = 0.12
+	sm.height = 0.24
+	spud.mesh = sm
+	spud.scale = Vector3(1.0, 1.0, 1.35)  # a little potato, not a pea
+	spud.material_override = _spud_mat
+	add_child(spud)
+	spud.global_position = a
 	var dir := (b - a).normalized()
 	if absf(dir.dot(Vector3.UP)) < 0.999:
-		inst.look_at(mid + dir, Vector3.UP)
-		inst.rotate_object_local(Vector3.RIGHT, PI / 2.0)
-	get_tree().create_timer(0.06).timeout.connect(func():
-		if is_instance_valid(inst):
-			inst.queue_free())
+		spud.look_at(b, Vector3.UP)
+	var tw := create_tween()
+	tw.tween_property(spud, "global_position", b, 0.07)
+	tw.tween_callback(func():
+		_spawn_splat(b)
+		if is_instance_valid(spud):
+			spud.queue_free())
+
+func _spawn_splat(p: Vector3) -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	var splat := MeshInstance3D.new()
+	var m := SphereMesh.new()
+	m.radius = 0.16
+	m.height = 0.32
+	splat.mesh = m
+	splat.material_override = _splat_mat
+	add_child(splat)
+	splat.global_position = p
+	var tw := create_tween()
+	tw.tween_property(splat, "scale", Vector3(2.0, 2.0, 0.5), 0.12)
+	tw.tween_callback(func():
+		if is_instance_valid(splat):
+			splat.queue_free())
 
 # ── HUD ──────────────────────────────────────────────────────────────────────
 

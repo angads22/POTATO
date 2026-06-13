@@ -4,6 +4,8 @@ extends Node2D
 # Mode selection, leaderboard, settings, about
 
 var selected_menu_item: int = 0
+var hovered_item: int = -1
+var _item_rects: Array[Rect2] = []
 var menu_items: Array[String] = [
 	"[1] Championship",
 	"[2] Endless",
@@ -50,7 +52,23 @@ func _ready():
 	UpdateManager.status_changed.connect(queue_redraw)
 	queue_redraw()
 
+func _process(_delta):
+	# keep the hover highlight and selection pulse live
+	queue_redraw()
+
 func _input(event: InputEvent):
+	# Mouse on the main menu: hover to highlight, left-click to pick.
+	if not in_submenu:
+		if event is InputEventMouseMotion:
+			_update_hover(get_global_mouse_position())
+			return
+		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			var clicked := _item_at(get_global_mouse_position())
+			if clicked >= 0:
+				selected_menu_item = clicked
+				_activate(clicked)
+			return
+
 	if not (event is InputEventKey and event.pressed):
 		return
 
@@ -86,16 +104,54 @@ func _input(event: InputEvent):
 		return
 
 	match event.keycode:
-		KEY_1: _start_game("championship")
-		KEY_2: _start_game("endless")
-		KEY_3: _enter_farm()
-		KEY_4: _enter_lobby()
-		KEY_5: _show_leaderboard()
-		KEY_6: _show_settings()
-		KEY_7: _show_updates()
-		KEY_8: _show_about()
-		KEY_9: _enter_fps_lobby()
+		KEY_UP, KEY_W: _move_selection(-1)
+		KEY_DOWN, KEY_S: _move_selection(1)
+		KEY_ENTER, KEY_KP_ENTER: _activate(selected_menu_item)
+		KEY_1: _activate(0)
+		KEY_2: _activate(1)
+		KEY_3: _activate(2)
+		KEY_4: _activate(3)
+		KEY_5: _activate(4)
+		KEY_6: _activate(5)
+		KEY_7: _activate(6)
+		KEY_8: _activate(7)
+		KEY_9: _activate(8)
 		KEY_ESCAPE: get_tree().quit()
+
+# Maps a menu row index to its action (shared by keys, arrows and clicks).
+func _activate(i: int):
+	AudioManager.play_sfx("menu_select")
+	match i:
+		0: _start_game("championship")
+		1: _start_game("endless")
+		2: _enter_farm()
+		3: _enter_lobby()
+		4: _show_leaderboard()
+		5: _show_settings()
+		6: _show_updates()
+		7: _show_about()
+		8: _enter_fps_lobby()
+		9: get_tree().quit()
+
+func _move_selection(delta: int):
+	selected_menu_item = clampi(selected_menu_item + delta, 0, menu_items.size() - 1)
+	hovered_item = -1
+	queue_redraw()
+
+func _update_hover(pos: Vector2):
+	var h := _item_at(pos)
+	if h != hovered_item:
+		hovered_item = h
+		if h >= 0:
+			selected_menu_item = h
+		Input.set_default_cursor_shape(Input.CURSOR_POINTING_HAND if h >= 0 else Input.CURSOR_ARROW)
+		queue_redraw()
+
+func _item_at(pos: Vector2) -> int:
+	for i in range(_item_rects.size()):
+		if _item_rects[i].has_point(pos):
+			return i
+	return -1
 
 func _start_game(mode: String):
 	GameManager.start_game(mode)
@@ -192,11 +248,28 @@ func _draw_main_menu():
 	# Menu in a walnut panel
 	var panel_rect = Rect2(title_x - 190, 236, 380, 52 + menu_items.size() * 40)
 	GameHUD.panel_style().draw(get_canvas_item(), panel_rect)
+	_item_rects.clear()
 	var y_pos = panel_rect.position.y + 46
 	for i in range(menu_items.size()):
-		var color = Color.GOLD if i == selected_menu_item else Color(0.95, 0.9, 0.8)
+		var row_rect := Rect2(panel_rect.position.x + 16, y_pos - 24, panel_rect.size.x - 32, 34)
+		_item_rects.append(row_rect)
+		var active := i == selected_menu_item
+		if active:
+			# glowing highlight bar, a bright left accent and a pointer
+			var pulse := 0.16 + 0.07 * sin(Time.get_ticks_msec() / 280.0)
+			draw_rect(row_rect, Color(0.85, 0.68, 0.3, pulse))
+			draw_rect(Rect2(row_rect.position, Vector2(4, row_rect.size.y)), Color(1.0, 0.8, 0.3, 0.95))
+			var tx: float = panel_rect.position.x + 28
+			var ty: float = y_pos - 13
+			draw_colored_polygon(PackedVector2Array([
+				Vector2(tx, ty), Vector2(tx, ty + 12), Vector2(tx + 9, ty + 6)]), Color.GOLD)
+		var color = Color.GOLD if active else Color(0.95, 0.9, 0.8)
 		draw_string(font, Vector2(panel_rect.position.x + 48, y_pos), menu_items[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 19, color)
 		y_pos += 40
+
+	# clickability hint
+	draw_string(font, Vector2(panel_rect.position.x + 16, panel_rect.position.y + panel_rect.size.y + 22),
+			"Click an option, or use Up/Down + Enter", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.6, 0.55, 0.45))
 
 func _draw_submenu():
 	var viewport_size = get_viewport_rect().size
