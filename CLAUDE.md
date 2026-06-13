@@ -16,7 +16,7 @@ exists in **two independent implementations** of the same game design:
 The two share gameplay concepts (five cut mechanics, four game modes, knives, combos, FEVER,
 lives, leaderboard) but **share no code**. They carry their own version constants (console in the
 csproj / `Core/Updater.cs`; Godot in `project.godot`) but ship from **one `v*` tag**, so a release
-bumps both in lockstep — currently `2.5.0`. Both editions' in-game updaters read the same
+bumps both in lockstep — currently `3.0.0`. Both editions' in-game updaters read the same
 `releases/latest`, so the tag must equal both version constants. Treat them as two codebases —
 a change in one does not propagate to the other.
 
