@@ -37,27 +37,27 @@ func _process(_delta):
 		SaveDataManager.farm["seeds"] = {"russet": 2, "purple": 1}
 		SaveDataManager.farm["spuds"] = {"russet": 5, "golden": 1}
 		SaveDataManager.farm["tiles"] = {}
-		SaveDataManager.farm["sections_owned"] = 1
 		SaveDataManager.farm["plow_uses"] = 7
 		SaveDataManager.farm["sprinkler_stock"] = 1
 		current = load("res://scenes/Farm/FarmScene.tscn").instantiate()
 		add_child.call_deferred(current)
 	elif phase == "farm" and frames == 150:
-		# stage a lived-in farm: crops at several growth stages + a sprinkler
+		# stage a lived-in farm: crops at several growth stages + a sprinkler,
+		# plowed straight onto the open grid near the player
 		current.day_t = 0.22
 		current.player.position = Vector2(900, 830)
-		for k in ["0:0:0", "0:0:1", "0:1:0", "0:2:1"]:
-			current.tile_map[k].plow()
-		current.tile_map["0:0:0"].plant("russet")
-		current.tile_map["0:0:0"].planted_at -= 12.0
-		current.tile_map["0:0:1"].plant("golden")
-		current.tile_map["0:0:1"].planted_at -= 9999.0
-		current.tile_map["0:1:0"].plant("purple")
-		current.tile_map["0:1:0"].planted_at -= 40.0
-		current.tile_map["0:2:1"].plant("yukon_gold")
-		current.tile_map["0:2:1"].watered = true
-		current.tile_map["0:2:1"].planted_at -= 10.0
-		current.place_sprinkler(current.tile_map["0:1:1"])
+		for k in ["6:6", "7:6", "6:7", "7:7"]:
+			current.plow_cell(current.key_to_cell(k))
+		current.tile_map["6:6"].plant("russet")
+		current.tile_map["6:6"].planted_at -= 12.0
+		current.tile_map["7:6"].plant("golden")
+		current.tile_map["7:6"].planted_at -= 9999.0
+		current.tile_map["6:7"].plant("purple")
+		current.tile_map["6:7"].planted_at -= 40.0
+		current.tile_map["7:7"].plant("yukon_gold")
+		current.tile_map["7:7"].watered = true
+		current.tile_map["7:7"].planted_at -= 10.0
+		current.place_sprinkler_cell(Vector2i(8, 7))
 	elif phase == "farm" and frames == 250:
 		_snap("/tmp/shot_farm.png")
 		phase = "night"

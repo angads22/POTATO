@@ -16,20 +16,6 @@
 			"placeable": true,
 			"color": "#4ac0e0",
 			"desc": "Sits on one tile and waters the 8 tiles around it"
-		},
-		{
-			"id": "harvest_drone",
-			"name": "Spud-Bot Harvester",
-			"cost": 600,
-			"color": "#c0c4cc",
-			"desc": "Hovers over the fields and collects ready crops for you"
-		},
-		{
-			"id": "auto_seeder",
-			"name": "Auto-Seeder",
-			"cost": 900,
-			"color": "#d9a13b",
-			"desc": "Replants harvested soil from your seed pouch"
 		}
 	],
 	"enhancers": [

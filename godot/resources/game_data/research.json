@@ -1,0 +1,103 @@
+{
+	"nodes": [
+		{
+			"id": "logi_cap1", "name": "Bigger Truck Bed", "branch": "logistics",
+			"cost_coins": 300, "cost_rp": 4, "requires": [],
+			"effect": { "truck_capacity": 15 },
+			"desc": "Haul +15 spuds to market per run"
+		},
+		{
+			"id": "logi_cap2", "name": "Trailer Hitch", "branch": "logistics",
+			"cost_coins": 900, "cost_rp": 12, "requires": ["logi_cap1"],
+			"effect": { "truck_capacity": 25 },
+			"desc": "A towed trailer adds +25 capacity"
+		},
+		{
+			"id": "logi_speed1", "name": "Faster Route", "branch": "logistics",
+			"cost_coins": 500, "cost_rp": 8, "requires": ["logi_cap1"],
+			"effect": { "truck_trip_delta": -30 },
+			"desc": "Shaves 30s off every market trip"
+		},
+		{
+			"id": "logi_price1", "name": "Wholesale Contract", "branch": "logistics",
+			"cost_coins": 1200, "cost_rp": 16, "requires": ["logi_cap1"],
+			"effect": { "truck_price_mult": 0.25 },
+			"desc": "+25% on everything the truck sells"
+		},
+
+		{
+			"id": "tool_dura1", "name": "Hardened Plowshare", "branch": "tools",
+			"cost_coins": 400, "cost_rp": 6, "requires": [],
+			"effect": { "plow_durability": 5 },
+			"desc": "New plows last 5 more tiles"
+		},
+		{
+			"id": "tool_radius", "name": "Wide Plow (3x3)", "branch": "tools",
+			"cost_coins": 1500, "cost_rp": 20, "requires": ["tool_dura1"],
+			"effect": { "plow_radius": 1 },
+			"desc": "Plow a 3x3 patch in one pass"
+		},
+		{
+			"id": "tool_reach", "name": "Sprinkler Pressure", "branch": "tools",
+			"cost_coins": 800, "cost_rp": 10, "requires": [],
+			"effect": { "sprinkler_reach": 1 },
+			"desc": "Sprinklers reach two tiles out"
+		},
+		{
+			"id": "tool_autoharvest", "name": "Spud-Bot Harvester", "branch": "tools",
+			"cost_coins": 1800, "cost_rp": 24, "requires": ["tool_radius"],
+			"effect": { "auto_harvest": true },
+			"desc": "A drone collects ready crops for you"
+		},
+		{
+			"id": "tool_autoseed", "name": "Auto-Seeder", "branch": "tools",
+			"cost_coins": 2400, "cost_rp": 30, "requires": ["tool_autoharvest"],
+			"effect": { "auto_seed": true },
+			"desc": "Replants harvested soil from your pouch"
+		},
+
+		{
+			"id": "crop_red", "name": "Red Potato Cultivar", "branch": "crops",
+			"cost_coins": 200, "cost_rp": 4, "requires": [],
+			"effect": { "unlock_crop": "red" },
+			"desc": "Unlock Red Potato seeds at the shop"
+		},
+		{
+			"id": "crop_purple", "name": "Purple Majesty", "branch": "crops",
+			"cost_coins": 450, "cost_rp": 8, "requires": ["crop_red"],
+			"effect": { "unlock_crop": "purple" },
+			"desc": "Unlock Purple Majesty seeds"
+		},
+		{
+			"id": "crop_fingerling", "name": "Fingerling Strain", "branch": "crops",
+			"cost_coins": 700, "cost_rp": 12, "requires": ["crop_purple"],
+			"effect": { "unlock_crop": "fingerling" },
+			"desc": "Unlock Fingerling seeds"
+		},
+		{
+			"id": "crop_king", "name": "King Edward", "branch": "crops",
+			"cost_coins": 1100, "cost_rp": 18, "requires": ["crop_fingerling"],
+			"effect": { "unlock_crop": "king_edward" },
+			"desc": "Unlock King Edward seeds"
+		},
+		{
+			"id": "crop_golden", "name": "Golden Potato", "branch": "crops",
+			"cost_coins": 3000, "cost_rp": 40, "requires": ["crop_king"],
+			"effect": { "unlock_crop": "golden" },
+			"desc": "Unlock the prized Golden Potato"
+		},
+
+		{
+			"id": "grow_speed1", "name": "Soil Science", "branch": "growth",
+			"cost_coins": 600, "cost_rp": 10, "requires": [],
+			"effect": { "grow_mult": 0.85 },
+			"desc": "Every crop grows 15% faster"
+		},
+		{
+			"id": "yield1", "name": "Hearty Harvest", "branch": "growth",
+			"cost_coins": 1000, "cost_rp": 14, "requires": ["grow_speed1"],
+			"effect": { "bonus_yield": 1 },
+			"desc": "+1 potato from every harvest"
+		}
+	]
+}

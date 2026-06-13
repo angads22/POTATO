@@ -1,45 +1,42 @@
 extends Node2D
 class_name FarmTile
 
-# One grid tile in a farm field. Wild ground must be plowed (the plow wears
+# One cell in the open farm grid. Wild ground must be plowed (the plow wears
 # out) before a seed goes in; harvested soil stays plowed. Growth is measured
 # against the wall clock (planted_at is a unix timestamp), so crops keep
 # growing while the game is closed. Watering cuts the remaining grow time
 # roughly in half; a fertilizer charge (boost < 1.0) stacks on top and can
 # add bonus yield. A tile can instead host a placed sprinkler, which waters
-# the 8 tiles around it. Locked tiles are overgrown ground in a section
-# that hasn't been bought yet.
+# the tiles around it. Tiles are sparse — one exists only once a cell is
+# plowed or holds a sprinkler; plain grass has no tile node.
 
 enum TState { UNPLOWED, PLOWED, PLANTED, READY }
 
 const WATER_FACTOR = 0.55
 
-var field := 0
-var row := 0
+var row := 0              # open-grid coordinates
 var col := 0
-var section := 0          # global section index — locked while >= sections_owned
 var state := TState.UNPLOWED
 var has_sprinkler := false
 var potato_id := ""
 var planted_at := 0.0
 var watered := false
-var locked := false
 var boost := 1.0          # growth-time multiplier from fertilizer (1.0 = none)
 var bonus_yield := 0      # extra potatoes at harvest from fertilizer
 var last_potato_id := ""  # what grew here last — the Auto-Seeder replants it
 var t := 0.0
 
 func key() -> String:
-	return "%d:%d:%d" % [field, row, col]
+	return "%d:%d" % [col, row]
 
 func plow() -> bool:
-	if locked or has_sprinkler or state != TState.UNPLOWED:
+	if has_sprinkler or state != TState.UNPLOWED:
 		return false
 	state = TState.PLOWED
 	return true
 
 func plant(id: String) -> bool:
-	if locked or has_sprinkler or state != TState.PLOWED:
+	if has_sprinkler or state != TState.PLOWED:
 		return false
 	potato_id = id
 	last_potato_id = id
@@ -69,6 +66,7 @@ func progress() -> float:
 	if watered:
 		grow *= WATER_FACTOR
 	grow *= boost
+	grow *= SaveDataManager.grow_time_mult()   # research "Soil Science" speeds growth
 	return clampf((Time.get_unix_time_from_system() - planted_at) / grow, 0.0, 1.0)
 
 # Returns the number of potatoes pulled; the soil stays plowed for replanting
@@ -124,9 +122,6 @@ func _process(delta):
 	queue_redraw()
 
 func _draw():
-	if locked:
-		_draw_locked()
-		return
 	if state == TState.UNPLOWED:
 		_draw_unplowed()
 	else:
@@ -178,7 +173,7 @@ func _draw_unplowed():
 		draw_circle(Vector2(px, py), 3.5, Color(0.58, 0.55, 0.42))
 	for i in range(3):
 		var sx = -34.0 + i * 34.0
-		var sway = sin(t * 1.4 + i + field) * 1.5
+		var sway = sin(t * 1.4 + i + col) * 1.5
 		var stub = Color(0.42, 0.5, 0.26)
 		draw_line(Vector2(sx, 18), Vector2(sx - 3 + sway, 6), stub, 2.0)
 		draw_line(Vector2(sx, 18), Vector2(sx + 3 + sway, 8), stub, 2.0)
@@ -199,26 +194,6 @@ func _draw_sprinkler():
 		draw_arc(Vector2(0, -6), 52.0, a + 0.35, a + 1.0, 10, Color(0.45, 0.75, 0.95, 0.4), 2.5)
 		var drop = Vector2(cos(a + 0.55), sin(a + 0.55)) * 58.0
 		draw_circle(Vector2(0, -6) + drop * Vector2(1.0, 0.7), 2.4, Color(0.5, 0.8, 1.0, 0.7))
-
-func _draw_locked():
-	# untilled, weed-choked ground with a little rope marker
-	var soil = StyleBoxFlat.new()
-	soil.bg_color = Color(0.4, 0.45, 0.26)
-	soil.set_corner_radius_all(16)
-	soil.border_color = Color(0.34, 0.38, 0.22)
-	soil.set_border_width_all(3)
-	soil.draw(get_canvas_item(), Rect2(-65, -45, 130, 90))
-	for i in range(6):
-		var wx = -50.0 + (i % 3) * 45.0 + (8.0 if i > 2 else 0.0)
-		var wy = -22.0 + (i / 3) * 36.0
-		var sway = sin(t * 1.6 + i) * 2.0
-		var weed = Color(0.32, 0.42, 0.2)
-		draw_line(Vector2(wx, wy + 12), Vector2(wx - 5 + sway, wy - 8), weed, 2.0)
-		draw_line(Vector2(wx, wy + 12), Vector2(wx + sway, wy - 12), weed, 2.0)
-		draw_line(Vector2(wx, wy + 12), Vector2(wx + 5 + sway, wy - 7), weed, 2.0)
-	# rope corners
-	for c in [Vector2(-58, -38), Vector2(58, -38), Vector2(-58, 38), Vector2(58, 38)]:
-		draw_circle(c, 4.0, Color(0.7, 0.6, 0.4))
 
 func _draw_growing(p: float):
 	var sway = sin(t * 2.0 + row + col) * 2.0
