@@ -23,26 +23,33 @@ var settings: Dictionary = {
 	"graphics_style": "classic"  # classic | pixel | hyperreal (see StyleManager)
 }
 
-# Farm + economy state (schema 2, grid-based fields). New games start with a
+# Farm + economy state (schema 3, free-form open grid). New games start with a
 # few russet seeds, pocket change and a fresh plow so the farming loop can
-# begin immediately. Tiles are keyed "field:row:col" and hold
+# begin immediately. The whole pasture is one plowable grid: tiles are sparse
+# (only plowed / planted / sprinkler cells exist), keyed "col:row" and holding
 # {plowed, potato_id, planted_at (unix), watered, ...} — growth survives
-# quitting because it's measured against the wall clock.
+# quitting because it's measured against the wall clock. Progression runs on
+# the Research Shed (research points + coins) and crops haul to market on the
+# truck. Schema-1 ("plots" array) and schema-2 ("field:row:col" + sections)
+# saves migrate automatically (see _migrate_farm).
 var farm: Dictionary = {
-	"schema": 2,
+	"schema": 3,
 	"wallet": 50,
 	"seeds": {"russet": 3},
 	"spuds": {},
 	"water": 0,
 	"owned_knives": ["butter"],
 	"equipped_knife": "butter",
-	"sections_owned": 1,    # field sections unlock in order; 1 = Field 1's first
-	"tiles": {},            # sparse "field:row:col" -> tile dict
+	"tiles": {},            # sparse "col:row" -> tile dict
 	"plow_uses": 10,        # durability left on the current plow; 0 = broken
 	"plows_bought": 0,      # replacement purchases — each one costs more
 	"sprinkler_stock": 0,   # sprinklers bought but not yet placed on a tile
-	"tools": [],            # global auto-farming gear (harvest_drone, auto_seeder)
-	"items": {}             # fertilizer charges remaining, per enhancer id
+	"items": {},            # fertilizer charges remaining, per enhancer id
+	"research_points": 0,   # spent with coins on the research tree
+	"research": {},         # unlocked research node ids -> true
+	# market truck: load spuds, send it off, coins + RP arrive after a trip
+	"truck": {"status": "idle", "cargo": {}, "return_at": 0.0,
+			"pending_coins": 0, "pending_rp": 0}
 }
 
 func _ready():
@@ -87,13 +94,25 @@ func save_game():
 	_save_json(UNLOCKS_FILE, {"knives": unlocked_knives})
 	_save_json(FARM_FILE, farm)
 
-# Upgrade a schema-1 farm save (fixed "plots" array, "plots_owned" counter,
-# global "sprinkler" tool) to the schema-2 grid. Crops are re-homed onto
-# Field 1's tiles, the old sprinkler becomes two placeable ones, and the
-# player is handed a fresh plow.
+# Bring any older farm save up to the current schema. Runs as a chain on the
+# raw dict (before the defaults merge, so an old "schema" key can't mask it):
+# schema-1 ("plots" array) -> schema-2 ("field:row:col" grid + sections) ->
+# schema-3 (free-form "col:row" grid + research + truck).
 func _migrate_farm(raw: Dictionary) -> Dictionary:
-	if int(raw.get("schema", 1)) >= 2 and not raw.has("plots") and not raw.has("plots_owned"):
+	if int(raw.get("schema", 1)) >= 3 and not raw.has("plots") \
+			and not raw.has("plots_owned") and not raw.has("sections_owned"):
 		return raw
+	var out := raw
+	if int(out.get("schema", 1)) < 2 or out.has("plots") or out.has("plots_owned"):
+		out = _migrate_1_to_2(out)
+	if int(out.get("schema", 2)) < 3:
+		out = _migrate_2_to_3(out)
+	return out
+
+# schema-1 (fixed "plots" array, "plots_owned" counter, global "sprinkler"
+# tool) -> schema-2 grid. Crops are re-homed onto Field 1's tiles, the old
+# sprinkler becomes two placeable ones, and the player is handed a fresh plow.
+func _migrate_1_to_2(raw: Dictionary) -> Dictionary:
 	var out := raw.duplicate(true)
 	out.erase("plots")
 	out.erase("plots_owned")
@@ -154,6 +173,84 @@ func _migrate_farm(raw: Dictionary) -> Dictionary:
 			td["bonus_yield"] = int(src.get("bonus_yield", 0))
 		tiles[slots[i]] = td
 	out["tiles"] = tiles
+	return out
+
+# schema-2 ("field:row:col" grid, "sections_owned", drone/seeder in "tools")
+# -> schema-3 (free-form "col:row" grid, research tree, market truck). Saved
+# tiles are repacked into a clear central block of the open grid (no old field
+# geometry needed), the old automation tools become research nodes, and every
+# crop the player already owns is unlocked so crop-gating can't strand a save.
+func _migrate_2_to_3(raw: Dictionary) -> Dictionary:
+	var out := raw.duplicate(true)
+	out["schema"] = 3
+	out.erase("sections_owned")
+
+	# old global automation tools become research nodes
+	var research: Dictionary = out.get("research", {})
+	var tools: Array = out.get("tools", [])
+	if "harvest_drone" in tools:
+		research["tool_autoharvest"] = true
+	if "auto_seeder" in tools:
+		research["tool_autoseed"] = true
+	out.erase("tools")
+
+	out["research_points"] = int(out.get("research_points", 0))
+	if not out.has("truck"):
+		out["truck"] = {"status": "idle", "cargo": {}, "return_at": 0.0,
+				"pending_coins": 0, "pending_rp": 0}
+
+	# Repack the old field tiles into a frozen block of open-grid cells. Order
+	# is fixed (growing crops first, then plowed-with-memory, then bare plowed,
+	# then sprinklers) so nothing important is dropped if the block is small.
+	# The block sits in the open mid-pasture, clear of the house/well/pond/
+	# truck/shed, so every destination cell is plowable. Constants are frozen
+	# here so future map edits don't shuffle migrated saves.
+	var old_tiles: Dictionary = out.get("tiles", {})
+	var growing: Array = []
+	var plowed_mem: Array = []
+	var bare: Array = []
+	var sprinklers: Array = []
+	for k in old_tiles:
+		var td = old_tiles[k]
+		if not (td is Dictionary) or td.is_empty():
+			continue
+		if td.get("sprinkler", false):
+			sprinklers.append(td)
+		elif td.has("potato_id"):
+			growing.append(td)
+		elif str(td.get("last", "")) != "":
+			plowed_mem.append(td)
+		else:
+			bare.append(td)
+	var ordered: Array = growing + plowed_mem + bare + sprinklers
+
+	const PACK_START := Vector2i(5, 5)
+	const PACK_WIDTH := 12
+	var tiles := {}
+	for i in range(ordered.size()):
+		var col = PACK_START.x + i % PACK_WIDTH
+		var row = PACK_START.y + i / PACK_WIDTH
+		tiles["%d:%d" % [col, row]] = ordered[i]
+	out["tiles"] = tiles
+
+	# Unlock every crop the player already holds (seeds, harvested spuds, or
+	# growing in a tile) so the new crop-gating never hides their own potatoes.
+	var owned_ids := {}
+	for id in out.get("seeds", {}).keys():
+		owned_ids[id] = true
+	for id in out.get("spuds", {}).keys():
+		owned_ids[id] = true
+	for td in ordered:
+		if td.has("potato_id"):
+			owned_ids[str(td["potato_id"])] = true
+		if str(td.get("last", "")) != "":
+			owned_ids[str(td["last"])] = true
+	var gd = preload("res://scripts/utils/GameData.gd")
+	for node in gd.research_nodes():
+		var eff: Dictionary = node.get("effect", {})
+		if eff.has("unlock_crop") and owned_ids.has(eff["unlock_crop"]):
+			research[node["id"]] = true
+	out["research"] = research
 	return out
 
 func add_to_leaderboard(name: String, score: int, mode: String):
@@ -233,6 +330,68 @@ func add_item(inventory: String, id: String, count: int = 1):
 
 func item_count(inventory: String, id: String) -> int:
 	return int(farm.get(inventory, {}).get(id, 0))
+
+# ── research progression ──
+
+func research_points() -> int:
+	return int(farm.get("research_points", 0))
+
+func add_research_points(n: int):
+	farm["research_points"] = research_points() + n
+	save_game()
+
+func has_research(id: String) -> bool:
+	return bool(farm.get("research", {}).get(id, false))
+
+func unlock_research(id: String):
+	var r: Dictionary = farm.get("research", {})
+	r[id] = true
+	farm["research"] = r
+	save_game()
+
+# Crop ids the player may currently plant: starter crops plus everything an
+# unlocked research node grants via its "unlock_crop" effect.
+func unlocked_crops() -> Array:
+	var out: Array = []
+	var gd = preload("res://scripts/utils/GameData.gd")
+	for node in gd.research_nodes():
+		if has_research(node.get("id", "")):
+			var eff: Dictionary = node.get("effect", {})
+			if eff.has("unlock_crop"):
+				out.append(eff["unlock_crop"])
+	return out
+
+# Sum a numeric research effect (e.g. "plow_durability") across unlocked nodes.
+func research_bonus(effect_key: String) -> float:
+	var total := 0.0
+	var gd = preload("res://scripts/utils/GameData.gd")
+	for node in gd.research_nodes():
+		if has_research(node.get("id", "")):
+			var eff: Dictionary = node.get("effect", {})
+			if eff.has(effect_key):
+				total += float(eff[effect_key])
+	return total
+
+# Product of every unlocked "grow_mult" effect (1.0 = none), applied to crop
+# grow times so research-sped crops keep growing correctly across reloads.
+func grow_time_mult() -> float:
+	var m := 1.0
+	var gd = preload("res://scripts/utils/GameData.gd")
+	for node in gd.research_nodes():
+		if has_research(node.get("id", "")):
+			var eff: Dictionary = node.get("effect", {})
+			if eff.has("grow_mult"):
+				m *= float(eff["grow_mult"])
+	return m
+
+# True when any unlocked node carries the given boolean effect (e.g. "auto_harvest").
+func research_flag(effect_key: String) -> bool:
+	var gd = preload("res://scripts/utils/GameData.gd")
+	for node in gd.research_nodes():
+		if has_research(node.get("id", "")):
+			if bool(node.get("effect", {}).get(effect_key, false)):
+				return true
+	return false
 
 func equipped_knife() -> Dictionary:
 	# preload by path: autoloads compile before the global class_name cache

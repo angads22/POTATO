@@ -2,9 +2,10 @@ extends Node2D
 class_name TownBackground
 
 # The town backdrop: a cobbled plaza with a fountain at its heart, the
-# championship kitchen at the head of the square, the four market stalls
+# championship kitchen at the head of the square, the seed/knife/tool stalls
 # around it, a couple of cottages for dressing and a boarded lot waiting
-# for whatever comes next. All procedural, like the rest of the game.
+# for whatever comes next. (Selling moved to the farm's market truck, so
+# there's no market stall here.) All procedural, like the rest of the game.
 # Geometry constants here are the single source of truth; TownController
 # reads them for collision and interaction points. A gate in the west
 # hedge leads back to the farm.
@@ -15,7 +16,6 @@ const KITCHEN_WALL = Rect2(810, 150, 300, 170)
 const SEED_STAND = Rect2(330, 380, 140, 115)
 const KNIFE_STAND = Rect2(1450, 380, 140, 115)
 const TOOL_STAND = Rect2(330, 760, 150, 115)
-const MARKET = Rect2(1400, 740, 200, 135)
 const FOUNTAIN_C = Vector2(960, 580)
 const COTTAGE_A = Rect2(120, 150, 220, 140)
 const COTTAGE_B = Rect2(1560, 140, 220, 140)
@@ -65,7 +65,7 @@ func _ready():
 # Keeps grass decorations off the buildings and the plaza
 func _on_clear_ground(p: Vector2) -> bool:
 	for r in [KITCHEN_WALL.grow(50), SEED_STAND.grow(25), KNIFE_STAND.grow(25),
-			TOOL_STAND.grow(25), MARKET.grow(25), COTTAGE_A.grow(40), COTTAGE_B.grow(40),
+			TOOL_STAND.grow(25), COTTAGE_A.grow(40), COTTAGE_B.grow(40),
 			FUTURE_LOT.grow(20)]:
 		if r.has_point(p):
 			return false
@@ -84,7 +84,6 @@ func _draw():
 	_draw_kitchen()
 	_draw_stall(SEED_STAND, Color(0.3, 0.65, 0.35), "SEEDS")
 	_draw_stall(KNIFE_STAND, Color(0.55, 0.6, 0.7), "KNIVES")
-	_draw_stall(MARKET, Color(0.85, 0.4, 0.3), "MARKET")
 	_draw_stall(TOOL_STAND, Color(0.4, 0.55, 0.8), "TOOLS")
 	_draw_fountain()
 	for lp in LAMP_POSTS:
@@ -238,12 +237,6 @@ func _draw_stall(r: Rect2, stripe: Color, label: String):
 					Vector2(px + 7, r.position.y + 44)
 				]), Color(0.85, 0.87, 0.92))
 				draw_rect(Rect2(px + 3, r.position.y + 6, 8, 9), Color(0.35, 0.22, 0.12))
-		"MARKET":
-			for i in range(2):
-				var px = r.position.x + 24 + i * 78
-				draw_rect(Rect2(px, r.position.y + 14, 56, 36), Color(0.62, 0.46, 0.26))
-				for k in range(3):
-					draw_circle(Vector2(px + 13 + k * 15, r.position.y + 18), 8.0, Color(0.78, 0.55, 0.3))
 		"TOOLS":
 			# a plow blade, a gear and a fertilizer sack on the board
 			var cx = r.position.x + 26

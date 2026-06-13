@@ -111,20 +111,25 @@ Main scene is `scenes/MainMenu.tscn`. Gameplay flow: `MainMenuController` → `G
 (PERFECT/GREAT/GOOD/MISS/FAIL) and `cut_result.score_multiplier` (0.0–1.5), call `end_minigame()`,
 then register it in `_create_minigame()`.
 
-**Balance is data-driven:** knives, potatoes, farm items and field/section geometry live in
-`resources/game_data/*.json` (`knives.json`, `potatoes.json`, `items.json`, `fields.json`) — new
+**Balance is data-driven:** knives, potatoes, farm items and the research tree live in
+`resources/game_data/*.json` (`knives.json`, `potatoes.json`, `items.json`, `research.json`) — new
 content is typically one JSON entry plus (for new mechanics) one `MinigameBase` subclass. Potatoes
 are drawn procedurally (no sprite assets required to run).
 
 **The overworld** is two walkable maps in `scripts/world/` sharing a `WorldController` base
 (movement, blockers, camera, day-night, prompts, shop overlays, economy actions) and `WorldHUD`:
-the **farm** (`FarmController` — three fenced fields of `FarmTile` grid tiles bought section by
-section; plow → plant → water/sprinkler → fertilize → harvest, soil stays plowed) and the **town**
-(`TownController` — seed/knife/market/tool stalls plus the championship kitchen; the designated
-home for future non-farming content). Gates on the map edges travel between them. Farm state is
-`SaveDataManager.farm` schema 2 (sparse `tiles` dict keyed `"field:row:col"`); schema-1 saves with
-a fixed `plots` array migrate automatically in `SaveDataManager._migrate_farm()` — migration runs
-on the raw dict *before* the defaults merge. `scripts/visuals/` holds the procedural backdrops/FX.
+the **farm** (`FarmController` — the whole pasture is one free-form plowable grid; `FarmTile`s are
+sparse, created on demand only once a cell is plowed or holds a sprinkler; plow → plant →
+water/sprinkler → fertilize → harvest, soil stays plowed) and the **town** (`TownController` —
+seed/knife/tool stalls plus the championship kitchen; the designated home for future non-farming
+content). Progression runs on the farm's **Research Shed** (`research.json` nodes bought with coins +
+research points: logistics/tools/crops/growth, incl. research-gated crops) and the **market truck**
+at the top of the farm (load spuds, send it off, coins + RP return after a wall-clock delay — selling
+no longer happens in town). Gates on the map edges travel between them. Farm state is
+`SaveDataManager.farm` schema 3 (sparse `tiles` dict keyed `"col:row"`, plus `research`/
+`research_points`/`truck`); schema-1 (`plots` array) and schema-2 (`field:row:col` + `sections_owned`)
+saves migrate automatically through `SaveDataManager._migrate_farm()` (a 1→2→3 chain) — migration
+runs on the raw dict *before* the defaults merge. `scripts/visuals/` holds the procedural backdrops/FX.
 
 **SPUD BLASTER** (`scripts/fps/`, menu item [9]) is a 3D first-person deathmatch — the only 3D mode
 in an otherwise 2D game, built entirely in code (no art assets). `FpsNetwork` (autoload) manages the

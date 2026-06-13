@@ -50,7 +50,7 @@ func _draw():
 		_draw_shop(font)
 
 func _draw_wallet_panel(font: Font):
-	GameHUD.panel_style().draw(get_canvas_item(), Rect2(10, 8, 350, 52))
+	GameHUD.panel_style().draw(get_canvas_item(), Rect2(10, 8, 420, 52))
 	# coin icon
 	draw_circle(Vector2(38, 34), 14.0, Color(0.95, 0.78, 0.25))
 	draw_arc(Vector2(38, 34), 14.0, 0, TAU, 20, Color(0.7, 0.52, 0.1), 2.5)
@@ -82,6 +82,15 @@ func _draw_wallet_panel(font: Font):
 	draw_arc(Vector2(308, 30), 9.0, -2.4, -0.7, 8, scol, 2.0)
 	draw_string(font, Vector2(320, 43), "%d" % stock, HORIZONTAL_ALIGNMENT_LEFT, -1, 17,
 			Color(0.95, 0.92, 0.85) if stock > 0 else Color(0.6, 0.55, 0.5))
+	# research points — a little flask
+	var rp: int = SaveDataManager.research_points()
+	var rcol = Color(0.55, 0.85, 0.95) if rp > 0 else Color(0.45, 0.5, 0.52)
+	draw_rect(Rect2(364, 24, 7, 5), rcol.darkened(0.2))           # flask neck
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(366, 29), Vector2(369, 29), Vector2(375, 44), Vector2(360, 44)
+	]), rcol)                                                      # flask body
+	draw_string(font, Vector2(380, 43), "%d" % rp, HORIZONTAL_ALIGNMENT_LEFT, -1, 17,
+			Color(0.95, 0.92, 0.85) if rp > 0 else Color(0.6, 0.55, 0.5))
 
 func _draw_inventory_panel(font: Font):
 	GameHUD.panel_style().draw(get_canvas_item(), Rect2(920, 8, 350, 112))
@@ -148,7 +157,8 @@ func _draw_shop(font: Font):
 	var title = ""
 	match ctrl.open_shop:
 		"seeds": title = "SEED SHOP"
-		"market": title = "MARKET — SELL YOUR SPUDS"
+		"truck": title = "MARKET TRUCK — LOAD & SHIP"
+		"research": title = "RESEARCH SHED"
 		"knives": title = "KNIFE STAND"
 		"plant": title = "PLANT A SEED"
 		"tools": title = "TOOL SHED"
@@ -164,13 +174,19 @@ func _draw_shop(font: Font):
 	match ctrl.open_shop:
 		"seeds":
 			_draw_seed_rows(font, panel, true)
-			_draw_footer(font, panel, "[1-%d] Buy seed   ·   [ESC] Close" % GameData.farmable_potatoes().size())
+			_draw_footer(font, panel, "[1-%d] Buy seed   ·   [ESC] Close" % ctrl.plantable_potatoes().size())
 		"plant":
 			_draw_seed_rows(font, panel, false)
-			_draw_footer(font, panel, "[1-%d] Plant   ·   [ESC] Cancel" % GameData.farmable_potatoes().size())
-		"market":
-			_draw_market_rows(font, panel)
-			_draw_footer(font, panel, "[1-7] Sell stack   ·   [A] Sell everything   ·   [ESC] Close")
+			_draw_footer(font, panel, "[1-%d] Plant   ·   [ESC] Cancel" % ctrl.plantable_potatoes().size())
+		"truck":
+			_draw_truck_rows(font, panel)
+			if ctrl.truck_status() == "away":
+				_draw_footer(font, panel, "[ESC] Close")
+			else:
+				_draw_footer(font, panel, "[1-7] Load stack   ·   [A] Load all   ·   [S] Send to market   ·   [ESC] Close")
+		"research":
+			_draw_research_rows(font, panel)
+			_draw_footer(font, panel, "[1-%d] Research   ·   [ESC] Close" % maxi(ctrl.research_menu_nodes().size(), 1))
 		"knives":
 			_draw_knife_rows(font, panel)
 			_draw_footer(font, panel, "[1-%d] Buy / Equip   ·   [ESC] Close" % GameData.knives().size())
@@ -184,7 +200,7 @@ func _draw_shop(font: Font):
 func _draw_seed_rows(font: Font, panel: Rect2, shop_mode: bool):
 	var y = 210.0
 	var i = 0
-	for p in GameData.farmable_potatoes():
+	for p in ctrl.plantable_potatoes():
 		i += 1
 		var owned = SaveDataManager.item_count("seeds", p["id"])
 		var cost = int(p["seed_cost"])
@@ -204,27 +220,83 @@ func _draw_seed_rows(font: Font, panel: Rect2, shop_mode: bool):
 			draw_string(font, Vector2(panel.position.x + 70, y + 18), "owned: %d" % owned, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.7, 0.65, 0.55))
 		y += 48.0
 
-func _draw_market_rows(font: Font, panel: Rect2):
-	var y = 210.0
+func _draw_truck_rows(font: Font, panel: Rect2):
+	# header line: capacity, trip time, price bonus
+	var cap = "Truck %d/%d  ·  trip %ds  ·  price ×%.2f" % [
+		ctrl.truck_cargo_count(), ctrl.truck_capacity(),
+		int(ctrl.truck_trip_seconds()), ctrl.truck_price_mult()]
+	draw_string(font, Vector2(panel.position.x + 40, 198), cap, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.8, 0.85, 0.95))
+
+	if ctrl.truck_status() == "away":
+		var left = int(float(ctrl._truck().get("return_at", 0.0)) - Time.get_unix_time_from_system())
+		var msg = "On the road to market — back in %ds" % maxi(0, left)
+		var ms = font.get_string_size(msg, HORIZONTAL_ALIGNMENT_CENTER, -1, 20)
+		draw_string(font, Vector2(640 - ms.x / 2, 320), msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color.GOLD)
+		var pend = "bringing back %d coins + %d research" % [int(ctrl._truck().get("pending_coins", 0)), int(ctrl._truck().get("pending_rp", 0))]
+		var pds = font.get_string_size(pend, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
+		draw_string(font, Vector2(640 - pds.x / 2, 350), pend, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.85, 0.8, 0.6))
+		return
+
+	var y = 232.0
 	var i = 0
 	var any = false
 	for p in GameData.farmable_potatoes():
 		i += 1
 		var n = SaveDataManager.item_count("spuds", p["id"])
-		if n <= 0:
+		var loaded = int(ctrl._truck().get("cargo", {}).get(p["id"], 0))
+		if n <= 0 and loaded <= 0:
 			continue
 		any = true
-		var value = n * int(p["sell_value"])
+		var value = int(round(n * int(p["sell_value"]) * ctrl.truck_price_mult()))
 		draw_circle(Vector2(panel.position.x + 48, y - 7), 10.0, Color(p.get("color", "#b87333")))
-		draw_string(font, Vector2(panel.position.x + 70, y), "[%d] %s × %d" % [i, p["name"], n], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(0.95, 0.92, 0.85))
-		var detail = "sell for %d c" % value
+		var label = "[%d] %s × %d" % [i, p["name"], n]
+		if loaded > 0:
+			label += "   (on truck: %d)" % loaded
+		draw_string(font, Vector2(panel.position.x + 70, y), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(0.95, 0.92, 0.85))
+		var detail = "ships for %d c" % value
 		var ds = font.get_string_size(detail, HORIZONTAL_ALIGNMENT_CENTER, -1, 18)
 		draw_string(font, Vector2(panel.end.x - ds.x - 30, y), detail, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.GOLD)
-		y += 48.0
+		y += 46.0
 	if not any:
-		var msg = "Nothing to sell — go grow some potatoes!"
+		var msg = "Nothing to ship — go grow some potatoes!"
 		var ms = font.get_string_size(msg, HORIZONTAL_ALIGNMENT_CENTER, -1, 18)
-		draw_string(font, Vector2(640 - ms.x / 2, 300), msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.7, 0.65, 0.55))
+		draw_string(font, Vector2(640 - ms.x / 2, 320), msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.7, 0.65, 0.55))
+
+func _draw_research_rows(font: Font, panel: Rect2):
+	# research-point balance up top
+	draw_string(font, Vector2(panel.position.x + 40, 198),
+			"Research points: %d" % SaveDataManager.research_points(),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.6, 0.85, 0.95))
+	var nodes = ctrl.research_menu_nodes()
+	if nodes.is_empty():
+		var msg = "Everything researched — nice work, chef!"
+		var ms = font.get_string_size(msg, HORIZONTAL_ALIGNMENT_CENTER, -1, 18)
+		draw_string(font, Vector2(640 - ms.x / 2, 320), msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.7, 0.85, 0.6))
+		return
+	var y = 234.0
+	var i = 0
+	for node in nodes:
+		i += 1
+		var afford = ctrl.can_afford_research(node)
+		var col = Color(0.95, 0.92, 0.85) if afford else Color(0.55, 0.5, 0.45)
+		var branch_col = _branch_color(str(node.get("branch", "")))
+		draw_circle(Vector2(panel.position.x + 48, y - 7), 9.0, branch_col)
+		draw_string(font, Vector2(panel.position.x + 70, y), "[%d] %s" % [i, node.get("name", "?")], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, col)
+		draw_string(font, Vector2(panel.position.x + 70, y + 18), str(node.get("desc", "")), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.7, 0.65, 0.55))
+		var cost = "%d c · %d rp" % [int(node.get("cost_coins", 0)), int(node.get("cost_rp", 0))]
+		var cs = font.get_string_size(cost, HORIZONTAL_ALIGNMENT_CENTER, -1, 17)
+		draw_string(font, Vector2(panel.end.x - cs.x - 30, y), cost, HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color.GOLD if afford else col)
+		y += 50.0
+		if y > panel.end.y - 60:
+			break
+
+func _branch_color(branch: String) -> Color:
+	match branch:
+		"logistics": return Color(0.85, 0.7, 0.4)
+		"tools": return Color(0.6, 0.7, 0.8)
+		"crops": return Color(0.5, 0.8, 0.4)
+		"growth": return Color(0.7, 0.55, 0.85)
+	return Color(0.7, 0.7, 0.7)
 
 func _draw_knife_rows(font: Font, panel: Rect2):
 	var y = 200.0

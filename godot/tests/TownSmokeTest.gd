@@ -1,10 +1,11 @@
 extends Node
 
 # Headless town smoke test: walks the chef around the plaza, drives the seed
-# shop through the real keyboard path, sells spuds at the market, and buys a
-# knife, a replacement plow, a sprinkler and fertilizer at the stalls. The
-# kitchen and farm-gate prompts are asserted but never pressed — a scene
-# change would free this test root.
+# shop through the real keyboard path, and buys a knife, a replacement plow, a
+# sprinkler and fertilizer at the stalls. (Selling moved to the farm's market
+# truck, so there's no market stall here any more.) The kitchen and farm-gate
+# prompts are asserted but never pressed — a scene change would free this test
+# root.
 # NOTE: writes to the user:// save like a real session would.
 #
 #   godot --headless --path . res://tests/TownSmokeTest.tscn --quit-after 600
@@ -15,12 +16,14 @@ var fails: Array[String] = []
 var expected_wallet := 0
 
 func _ready():
-	# deterministic starting economy: a harvest to sell and a broken plow
+	# deterministic starting economy: pocket money and a broken plow to replace
 	SaveDataManager.farm = {
-		"schema": 2, "wallet": 20000, "seeds": {}, "spuds": {"russet": 5},
+		"schema": 3, "wallet": 20000, "seeds": {}, "spuds": {},
 		"water": 0, "owned_knives": ["butter"], "equipped_knife": "butter",
-		"sections_owned": 1, "tiles": {}, "plow_uses": 0, "plows_bought": 0,
-		"sprinkler_stock": 0, "tools": [], "items": {}
+		"tiles": {}, "plow_uses": 0, "plows_bought": 0,
+		"sprinkler_stock": 0, "items": {}, "research_points": 0, "research": {},
+		"truck": {"status": "idle", "cargo": {}, "return_at": 0.0,
+				"pending_coins": 0, "pending_rp": 0}
 	}
 	expected_wallet = 20000
 	town = load("res://scenes/Town/TownScene.tscn").instantiate()
@@ -48,29 +51,16 @@ func _process(_delta):
 			_tap(KEY_ESCAPE)
 		18:
 			_check(town.open_shop == "", "[ESC] closes the shop")
-			town.player.position = TownBackground.MARKET.get_center() + Vector2(0, 80)
-		20:
-			_check(town.prompt == "[E] Sell at the market", "market prompt appears")
-			_tap(KEY_E)
-		22:
-			_check(town.open_shop == "market", "[E] opens the market")
-			_tap(KEY_1)
-		24:
-			expected_wallet += 5 * 6
-			_check(SaveDataManager.item_count("spuds", "russet") == 0, "market sells the russet stack")
-			_check(SaveDataManager.wallet() == expected_wallet, "sale lands in the wallet")
-			_tap(KEY_ESCAPE)
-		26:
 			_run_stalls()
-		30:
+		24:
 			town.player.position = Vector2(TownBackground.KITCHEN_WALL.get_center().x,
 					TownBackground.KITCHEN_WALL.end.y + 30)
-		32:
+		26:
 			_check(town.prompt == "[E] Enter the championship kitchen", "kitchen prompt appears")
 			town.player.position = TownBackground.FARM_GATE_POS
-		34:
+		28:
 			_check(town.prompt == "[E] Take the road back to the farm", "farm gate prompt appears")
-		40:
+		34:
 			_finish()
 
 # Knife stand and tool shed, driven through the shared economy actions

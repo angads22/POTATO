@@ -1,10 +1,11 @@
 extends WorldController
 class_name TownController
 
-# The town: home of the market stalls, the tool shed and the championship
-# kitchen — and the future home of any non-farming content. The player
-# arrives through the west gate from the farm, shops with the same overlay
-# menus the farm used to host, and can walk into the kitchen to start a
+# The town: home of the seed shop, knife stand, tool shed and the championship
+# kitchen — and the future home of any non-farming content. Selling has moved
+# to the market truck on the farm, so there's no market stall here any more.
+# The player arrives through the west gate from the farm, shops with the same
+# overlay menus the farm hosts, and can walk into the kitchen to start a
 # championship run directly.
 
 var bg: TownBackground
@@ -32,7 +33,6 @@ func _build_world():
 		TownBackground.SEED_STAND.grow(4),
 		TownBackground.KNIFE_STAND.grow(4),
 		TownBackground.TOOL_STAND.grow(4),
-		TownBackground.MARKET.grow(4),
 		TownBackground.COTTAGE_A.grow(6),
 		TownBackground.COTTAGE_B.grow(6),
 		TownBackground.FUTURE_LOT.grow(4),
@@ -50,8 +50,6 @@ func _scan_interactions():
 			"text": "[E] Browse the seed shop", "act": func(): open_shop = "seeds"},
 		{"pos": TownBackground.KNIFE_STAND.get_center() + Vector2(0, 70), "r": 120.0,
 			"text": "[E] Browse the knife stand", "act": func(): open_shop = "knives"},
-		{"pos": TownBackground.MARKET.get_center() + Vector2(0, 80), "r": 130.0,
-			"text": "[E] Sell at the market", "act": func(): open_shop = "market"},
 		{"pos": TownBackground.TOOL_STAND.get_center() + Vector2(0, 70), "r": 120.0,
 			"text": "[E] Browse the tool shed", "act": func(): open_shop = "tools"},
 		{"pos": Vector2(TownBackground.KITCHEN_WALL.get_center().x, TownBackground.KITCHEN_WALL.end.y + 30), "r": 120.0,

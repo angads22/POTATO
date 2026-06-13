@@ -30,7 +30,7 @@ var day_t := 0.18          # start mid-morning (0.25 = noon, 0.75 = midnight)
 var night01 := 0.0
 var prompt := ""
 var prompt_action := Callable()
-var open_shop := ""        # "", "seeds", "market", "knives", "tools" (+ farm extras)
+var open_shop := ""        # "", "seeds", "knives", "tools" (+ farm extras: plant, enhance, truck, research)
 var popups: Array = []
 var banner_text := ""
 var banner_age := 99.0
@@ -191,16 +191,9 @@ func _shop_input(key: Key):
 	var idx = key - KEY_1  # 0-based row number
 	match open_shop:
 		"seeds":
-			var farmables = GameData.farmable_potatoes()
+			var farmables = plantable_potatoes()
 			if idx >= 0 and idx < farmables.size():
 				buy_seed(farmables[idx]["id"])
-		"market":
-			if key == KEY_A:
-				sell_all()
-			else:
-				var farmables2 = GameData.farmable_potatoes()
-				if idx >= 0 and idx < farmables2.size():
-					sell_spuds(farmables2[idx]["id"])
 		"knives":
 			var knives = GameData.knives()
 			if idx >= 0 and idx < knives.size():
@@ -217,6 +210,13 @@ func _shop_input(key: Key):
 # ────────────────────────────────────────────────────────
 #  Economy actions (public so the smoke tests can drive them)
 # ────────────────────────────────────────────────────────
+
+# Farmable varieties the player may currently plant/buy (starter crops plus
+# anything unlocked in the Research Shed). Seed shop + plant menu use this;
+# the sell/inventory side keeps the full farmable list so owned spuds always
+# stay sellable.
+func plantable_potatoes() -> Array:
+	return GameData.unlocked_potatoes(SaveDataManager.unlocked_crops())
 
 func buy_seed(id: String) -> bool:
 	var cost = int(GameData.potato_by_id(id).get("seed_cost", 9999))
@@ -303,7 +303,9 @@ func buy_plow() -> bool:
 		_popup("Not enough coins!", Color.ORANGE_RED)
 		return false
 	var pd = GameData.tool_by_id("plow")
-	SaveDataManager.farm["plow_uses"] = int(pd.get("durability", 10))
+	# research "plow_durability" upgrades apply to the next plow you buy
+	var dur = int(pd.get("durability", 10)) + int(SaveDataManager.research_bonus("plow_durability"))
+	SaveDataManager.farm["plow_uses"] = dur
 	SaveDataManager.farm["plows_bought"] = int(SaveDataManager.farm.get("plows_bought", 0)) + 1
 	SaveDataManager.save_game()
 	_popup("New plow — good for %d tiles!" % plow_uses(), Color.GOLD)

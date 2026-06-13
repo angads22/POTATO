@@ -73,24 +73,31 @@ These are global managers available everywhere:
 Two walkable maps share a `WorldController` base (movement, blockers, camera,
 day-night cycle, prompts, shop overlays, economy actions) and a `WorldHUD`:
 
-- **The farm** (`FarmController`, `scenes/Farm/FarmScene.tscn`) — three fenced
-  fields of grid tiles (`FarmTile`, 12 + 20 + 27 tiles) that unlock section by
-  section for escalating sums (`resources/game_data/fields.json`). Tiles start
-  wild: plow them (the plow wears out after 10 uses; replacements cost more
-  each time), plant, water (or place a sprinkler on a tile to auto-water its
-  8 neighbours), fertilize (multi-charge), harvest — the soil stays plowed.
-  The farmhouse, well and pond live here.
+- **The farm** (`FarmController`, `scenes/Farm/FarmScene.tscn`) — the whole
+  pasture is one free-form plowable grid (no fenced fields). `FarmTile`s are
+  sparse: one is created on demand only when you plow a cell or drop a
+  sprinkler there. Plow the grass (the plow wears out after 10 uses;
+  replacements cost more each time), plant, water (or place a sprinkler to
+  auto-water the tiles around it — now a real spatial puzzle), fertilize
+  (multi-charge), harvest — the soil stays plowed. Progression runs on the
+  **Research Shed** (coins + research points buy logistics/tools/crops/growth
+  upgrades, `resources/game_data/research.json`, incl. research-gated crops),
+  and the harvest ships from the **market truck** by the top hedge (load it,
+  send it off, coins + research points return after a wall-clock delay). The
+  farmhouse, well and pond live here too.
 - **The town** (`TownController`, `scenes/Town/TownScene.tscn`) — the seed
-  shop, knife stand, sell-market and tool shed around a fountain plaza, plus
-  the championship kitchen (walk in to start a run). Future non-farming
-  content belongs here (there's a boarded "coming soon" lot on the plaza).
+  shop, knife stand and tool shed around a fountain plaza, plus the
+  championship kitchen (walk in to start a run). Selling moved to the farm's
+  truck, so there's no market stall here. Future non-farming content belongs
+  here (there's a boarded "coming soon" lot on the plaza).
 - Gates on the farm's east hedge and the town's west hedge travel between the
   two; the time of day carries across.
 
-Farm state lives in `SaveDataManager.farm` (schema 2: sparse `tiles` dict
-keyed `"field:row:col"`, `sections_owned`, `plow_uses`/`plows_bought`,
-`sprinkler_stock`, fertilizer charges in `items`). Schema-1 saves (fixed
-`plots` array) are migrated automatically on load.
+Farm state lives in `SaveDataManager.farm` (schema 3: sparse `tiles` dict
+keyed `"col:row"`, `research`/`research_points`, the `truck`,
+`plow_uses`/`plows_bought`, `sprinkler_stock`, fertilizer charges in `items`).
+Schema-1 (`plots` array) and schema-2 (`field:row:col` + `sections_owned`)
+saves are migrated automatically on load through a 1→2→3 chain.
 
 ### SPUD BLASTER — 3D first-person arena (multiplayer)
 
@@ -251,12 +258,15 @@ CI runs these on every PR touching `godot/` (see `.github/workflows/godot.yml`).
   pass in `StyleManager` restyles the whole game, cycle with [G] in Settings
 - ✅ Game-over screen with name entry and leaderboard submission
 - ✅ Save/load persistence (JSON: leaderboard, achievements, settings, unlocks)
-- ✅ Data-driven balance: knives, potatoes, items and fields in
+- ✅ Data-driven balance: knives, potatoes, items and the research tree in
   `resources/game_data/*.json`
-- ✅ Grid-based farm: three fields bought section by section, a plow that
-  wears out (and costs more each replacement), placeable sprinklers,
-  multi-charge fertilizer, drone/seeder automation, schema-1 save migration
-- ✅ Town map: fountain plaza with the four market stalls and the
+- ✅ Open-grid farm: the whole pasture is free-form plowable (sparse,
+  on-demand tiles), a plow that wears out (and costs more each replacement),
+  placeable sprinklers, multi-charge fertilizer, and a Research Shed
+  (coins + research points → logistics/tools/crops/growth, research-gated
+  crops, drone/seeder automation) feeding a market truck that ships the
+  harvest. Schema-1/2 saves migrate automatically (1→2→3 chain).
+- ✅ Town map: fountain plaza with the seed/knife/tool stalls and the
   championship kitchen, gates between farm and town
 - ✅ SPUD BLASTER: 3D first-person deathmatch arena with LAN + internet
   (UPnP) multiplayer and a solo practice mode vs. bots

@@ -76,15 +76,16 @@ Two more biomes: the **open-world potato farm** and the **town**
 procedural-first rules, sunnier palette:
 
 - **FarmBackground** — 2560×1440 pasture with mown stripes, swaying grass
-  tufts, flowers, dirt paths, three fenced grid fields (geometry from
-  `fields.json`), a farmhouse with chimney smoke, a stone well, a shimmering
-  pond with lily pads, and a gate in the east hedge signposted to town.
-  Geometry constants double as the collision/interaction source of truth.
+  tufts, flowers and dirt paths (the whole pasture is a free-form plowable
+  grid now — no fenced fields), a farmhouse with chimney smoke, a stone well,
+  a shimmering pond with lily pads, the **market truck** by the top hedge, the
+  **research shed** in the lower-left, and a gate in the east hedge signposted
+  to town. Geometry constants double as the collision/interaction source of truth.
 - **TownBackground** — 1920×1080 plaza: cobbled circle with an animated
-  fountain, the championship kitchen at the head of the square, the four
-  market stalls (seeds, knives, market, tools) with scalloped awnings,
-  lamp posts that glow at night, two cottages, a boarded "coming soon" lot
-  for future content, and the farm gate in the west hedge.
+  fountain, the championship kitchen at the head of the square, the seed/knife/
+  tool stalls with scalloped awnings (selling moved to the farm truck, so no
+  market stall), lamp posts that glow at night, two cottages, a boarded
+  "coming soon" lot for future content, and the farm gate in the west hedge.
 - **Day-night cycle** — `WorldController.day_t` drives a tint overlay
   (CanvasLayer between world and HUD), building windows and lamps that warm
   up at dusk, and fireflies by the farm pond at night. The HUD has a
@@ -94,11 +95,12 @@ procedural-first rules, sunnier palette:
 - **FarmTile** — wild stubbled ground, then a furrowed soil bed once plowed
   (darker when watered), sprout→bush growth stages, pulsing harvest ring,
   variety-coloured potatoes peeking out; golden crops glint. A placed
-  sprinkler is a tripod with sweeping spray arcs; locked sections are
-  weed-choked with rope markers.
-- **WorldHUD** — wallet + water + plow + sprinkler panel, seed/spud/
-  fertilizer inventory, interaction prompt, shop overlays (seeds, market,
-  knives, tools, plant picker, fertilize picker).
+  sprinkler is a tripod with sweeping spray arcs. Tiles are sparse — plain
+  grass has no tile, so the open grid reads as one continuous pasture.
+- **WorldHUD** — wallet + research-points + water + plow + sprinkler panel,
+  seed/spud/fertilizer inventory, interaction prompt, shop overlays (seeds,
+  knives, tools, plant picker, fertilize picker, the market-truck loader and
+  the research-shed tree).
 
 ## Phase 3 — next
 

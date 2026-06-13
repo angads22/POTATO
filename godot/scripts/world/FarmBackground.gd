@@ -2,11 +2,12 @@ extends Node2D
 class_name FarmBackground
 
 # The farm backdrop: striped pasture, dirt paths, the farmhouse, a well, a
-# pond, fenced crop fields and a tree line — all procedural, like the rest
-# of the game. The market stalls and the championship kitchen live in town
-# now (TownBackground); a gate in the east hedge leads there. Geometry
-# constants here are the single source of truth; FarmController reads them
-# for collision and interaction points.
+# pond, a market truck, a research shed and a tree line — all procedural, like
+# the rest of the game. The whole pasture is a free-form plowable grid (no
+# fenced fields). The seed/knife/tool stalls and the championship kitchen live
+# in town (TownBackground); a gate in the east hedge leads there. Geometry
+# constants here are the single source of truth; FarmController reads them for
+# collision and interaction points.
 
 const WORLD = Vector2(2560, 1440)
 
@@ -15,6 +16,12 @@ const WELL_POS = Vector2(1560, 460)
 const POND_C = Vector2(2230, 1230)
 const POND_R = Vector2(250, 135)
 const TOWN_GATE_POS = Vector2(2470, 870)  # hedge gap on the east edge
+# market truck near the top hedge — load spuds here to ship them to market
+const TRUCK_RECT = Rect2(1180, 95, 230, 130)
+const TRUCK_POS = Vector2(1295, 160)
+# research shed in the open lower-left, clear of the house/well/pond
+const RESEARCH_WALL = Rect2(360, 980, 230, 150)
+const RESEARCH_POS = Vector2(475, 1055)
 
 const PATHS = [
 	[Vector2(440, 430), Vector2(560, 540), Vector2(1240, 540), Vector2(1560, 500)],
@@ -38,20 +45,9 @@ var night01 := 0.0  # 0 = noon, 1 = midnight; set each frame by the controller
 var _tufts: Array = []    # {pos, ph}
 var _flowers: Array = []  # {pos, col}
 var _rocks: Array = []
-var _fences: Array = []   # {rect, gate} derived from fields.json
-
-# Fence rect around a field grid: tile art is 130×90 on 140×110 cells,
-# plus a 20 px margin
-static func field_rect(fd: Dictionary) -> Rect2:
-	var cell = GameData.field_cell()
-	var origin = Vector2(float(fd["origin"][0]), float(fd["origin"][1]))
-	return Rect2(origin.x - 85, origin.y - 65,
-			(int(fd["cols"]) - 1) * cell.x + 170, (int(fd["rows"]) - 1) * cell.y + 130)
 
 func _ready():
 	z_index = -1
-	for fd in GameData.fields():
-		_fences.append({"rect": field_rect(fd), "gate": str(fd.get("gate", ""))})
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 0xFA12  # stable decoration layout across sessions
 	var flower_cols = [Color(0.95, 0.85, 0.3), Color(0.9, 0.5, 0.6), Color(0.85, 0.85, 0.95)]
@@ -68,13 +64,12 @@ func _ready():
 		if _on_clear_ground(p):
 			_rocks.append(p)
 
-# Keeps grass decorations off the house, the crop fields and the pond
+# Keeps grass decorations off the buildings and the pond
 func _on_clear_ground(p: Vector2) -> bool:
 	if HOUSE_WALL.grow(50).has_point(p):
 		return false
-	for f in _fences:
-		if f.rect.grow(10).has_point(p):
-			return false
+	if TRUCK_RECT.grow(30).has_point(p) or RESEARCH_WALL.grow(40).has_point(p):
+		return false
 	var d = (p - POND_C) / (POND_R * 1.3)
 	return d.length() > 1.0
 
@@ -86,10 +81,10 @@ func _draw():
 	_draw_grass()
 	_draw_paths()
 	_draw_pond()
-	for f in _fences:
-		_draw_field_fence(f.rect, f.gate)
 	_draw_house()
 	_draw_well()
+	_draw_truck()
+	_draw_research_shed()
 	for i in range(TREE_POSITIONS.size()):
 		_draw_tree(TREE_POSITIONS[i], 1.0 + 0.25 * sin(i * 2.4), float(i))
 	_draw_town_gate()
@@ -151,46 +146,72 @@ func _draw_pond():
 		draw_line(rp, rp + Vector2(sway, -42), Color(0.32, 0.5, 0.24), 3.0)
 		draw_rect(Rect2(rp.x + sway - 3, rp.y - 54, 6, 14), Color(0.45, 0.3, 0.16))
 
-# Rail-and-post fence around a crop field, with a gate gap on one side.
-# Purely decorative — the player walks through it like the original field
-# fence did.
-func _draw_field_fence(r: Rect2, gate: String):
-	var rail = Color(0.55, 0.4, 0.24)
-	var post = Color(0.45, 0.32, 0.18)
-	var gap = 130.0
-	var gx0 = r.get_center().x - gap / 2.0
-	var gx1 = r.get_center().x + gap / 2.0
-	var gy0 = r.get_center().y - gap / 2.0
-	var gy1 = r.get_center().y + gap / 2.0
-	# horizontal rail pairs (top, bottom)
-	for side in ["top", "bottom"]:
-		for off in [0.0, 14.0]:
-			var y = r.position.y + off if side == "top" else r.end.y - off - 5
-			if gate == side:
-				draw_rect(Rect2(r.position.x, y, gx0 - r.position.x, 5), rail)
-				draw_rect(Rect2(gx1, y, r.end.x - gx1, 5), rail)
-			else:
-				draw_rect(Rect2(r.position.x, y, r.size.x, 5), rail)
-	# vertical picket pairs (left, right)
-	for side in ["left", "right"]:
-		var x = r.position.x if side == "left" else r.end.x
-		var y = r.position.y
-		while y < r.end.y:
-			if not (gate == side and y > gy0 and y < gy1):
-				draw_rect(Rect2(x - 2, y, 5, 18), rail)
-				draw_rect(Rect2(x - 2, y + 32, 5, 18), rail)
-			y += 50
-	# posts every 100 px along the perimeter
-	for x in range(int(r.position.x), int(r.end.x) + 1, 100):
-		if not (gate == "top" and x > gx0 and x < gx1):
-			draw_rect(Rect2(x - 4, r.position.y - 8, 8, 30), post)
-		if not (gate == "bottom" and x > gx0 and x < gx1):
-			draw_rect(Rect2(x - 4, r.end.y - 8, 8, 30), post)
-	for y in range(int(r.position.y), int(r.end.y) + 1, 100):
-		if not (gate == "left" and y > gy0 and y < gy1):
-			draw_rect(Rect2(r.position.x - 4, y - 8, 8, 30), post)
-		if not (gate == "right" and y > gy0 and y < gy1):
-			draw_rect(Rect2(r.end.x - 4, y - 8, 8, 30), post)
+# The market truck: a little flatbed parked by the top hedge. Load spuds here
+# and send it off to market. Drawn static; the prompt conveys away/back status.
+func _draw_truck():
+	var r = TRUCK_RECT
+	# ground shadow
+	draw_set_transform(Vector2(r.get_center().x, r.end.y + 6), 0.0, Vector2(1.0, 0.3))
+	draw_circle(Vector2.ZERO, r.size.x * 0.55, Color(0, 0, 0, 0.16))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	# cargo bed + slatted side
+	var bed = Rect2(r.position.x, r.position.y + 36, r.size.x - 78, r.size.y - 70)
+	draw_rect(bed, Color(0.55, 0.4, 0.24))
+	for i in range(4):
+		draw_rect(Rect2(bed.position.x, bed.position.y + 8 + i * 16, bed.size.x, 4), Color(0.45, 0.32, 0.18))
+	# crates of potatoes in the bed
+	for i in range(2):
+		var cx = bed.position.x + 26 + i * 60
+		draw_rect(Rect2(cx, bed.position.y + 10, 44, 30), Color(0.5, 0.35, 0.2))
+		for k in range(3):
+			draw_circle(Vector2(cx + 10 + k * 12, bed.position.y + 16), 6.0, Color(0.78, 0.55, 0.3))
+	# cab
+	var cab = Rect2(r.end.x - 76, r.position.y + 18, 76, r.size.y - 52)
+	draw_rect(cab, Color(0.82, 0.32, 0.26))
+	draw_rect(Rect2(cab.position.x + 8, cab.position.y + 10, 48, 34), Color(0.6, 0.78, 0.9))  # windshield
+	draw_rect(Rect2(cab.position.x + 4, cab.end.y - 10, cab.size.x - 8, 8), Color(0.6, 0.22, 0.18))  # bumper
+	# wheels
+	for wx in [r.position.x + 40, r.end.x - 110, r.end.x - 34]:
+		draw_circle(Vector2(wx, r.end.y - 14), 17.0, Color(0.12, 0.12, 0.14))
+		draw_circle(Vector2(wx, r.end.y - 14), 7.0, Color(0.5, 0.5, 0.54))
+	# "MARKET" placard on a post
+	var sp = Vector2(r.position.x - 4, r.position.y - 6)
+	draw_rect(Rect2(sp.x - 2, sp.y - 40, 6, 46), Color(0.45, 0.32, 0.18))
+	draw_rect(Rect2(sp.x - 44, sp.y - 64, 96, 28), Color(0.85, 0.68, 0.3))
+	var font = ThemeDB.fallback_font
+	var label = "MARKET"
+	var ls = font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
+	draw_string(font, Vector2(sp.x + 4 - ls.x / 2, sp.y - 44), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.2, 0.13, 0.06))
+
+# The research shed: a workshop where coins + research points buy upgrades.
+func _draw_research_shed():
+	var w = RESEARCH_WALL
+	# walls with vertical board siding
+	draw_rect(w, Color(0.52, 0.58, 0.5))
+	for x in range(int(w.position.x) + 20, int(w.end.x), 20):
+		draw_rect(Rect2(x, w.position.y, 2, w.size.y), Color(0.42, 0.48, 0.4))
+	# corrugated gable roof
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(w.position.x - 18, w.position.y), Vector2(w.end.x + 18, w.position.y),
+		Vector2(w.get_center().x, w.position.y - 64)
+	]), Color(0.36, 0.4, 0.46))
+	# door + window
+	draw_rect(Rect2(w.get_center().x - 24, w.end.y - 70, 48, 70), Color(0.3, 0.26, 0.2))
+	draw_rect(Rect2(w.position.x + 22, w.position.y + 30, 46, 40), Color(0.4, 0.36, 0.3))
+	draw_rect(Rect2(w.position.x + 26, w.position.y + 34, 38, 32), _window_color())
+	# a flask + gear sign
+	var sc = Vector2(w.end.x - 48, w.position.y + 50)
+	draw_circle(sc, 13.0, Color(0.7, 0.72, 0.78))
+	for k in range(6):
+		var a = k * TAU / 6.0
+		draw_circle(sc + Vector2(cos(a), sin(a)) * 13.0, 3.5, Color(0.7, 0.72, 0.78))
+	draw_circle(sc, 5.0, Color(0.45, 0.62, 0.75))
+	# name plate
+	var font = ThemeDB.fallback_font
+	GameHUD.panel_style(Color(0.2, 0.24, 0.2, 0.95)).draw(get_canvas_item(), Rect2(w.get_center().x - 84, w.end.y + 6, 168, 30))
+	var label = "RESEARCH SHED"
+	var ls = font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 15)
+	draw_string(font, Vector2(w.get_center().x - ls.x / 2, w.end.y + 26), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.85, 0.95, 0.7))
 
 func _window_color() -> Color:
 	# panes go from daylight blue to a warm lit glow as night falls
