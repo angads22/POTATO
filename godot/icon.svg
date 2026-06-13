@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- potato body -->
+  <path d="M66 14 C96 12 116 36 116 66 C116 96 96 118 64 118 C32 118 12 96 12 68 C12 38 36 16 66 14 Z"
+        fill="#c89a5a" stroke="#7a5326" stroke-width="5"/>
+  <!-- spots / eyes of the potato -->
+  <ellipse cx="38" cy="48" rx="5" ry="3.2" fill="#8a6230"/>
+  <ellipse cx="95" cy="80" rx="6" ry="4" fill="#8a6230"/>
+  <ellipse cx="78" cy="32" rx="4" ry="3" fill="#8a6230"/>
+  <ellipse cx="30" cy="84" rx="4.5" ry="3" fill="#8a6230"/>
+  <!-- cartoon face -->
+  <circle cx="50" cy="64" r="9" fill="#fff"/>
+  <circle cx="51" cy="65" r="4" fill="#2a1c0e"/>
+  <circle cx="84" cy="64" r="9" fill="#fff"/>
+  <circle cx="85" cy="65" r="4" fill="#2a1c0e"/>
+  <path d="M48 84 Q66 100 86 84" fill="none" stroke="#2a1c0e" stroke-width="4.5" stroke-linecap="round"/>
+  <!-- little sprout -->
+  <path d="M66 14 q-5 -12 -16 -13 q9 3 11 11 q5 -10 16 -10 q-9 4 -9 14 Z"
+        fill="#5fae46" stroke="#3c7a2b" stroke-width="2"/>
+</svg>
