@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://b0fps0smoke01"]
+
+[ext_resource type="Script" path="res://tests/FpsSmokeTest.gd" id="1_fpssmoke"]
+
+[node name="FpsSmokeTest" type="Node"]
+script = ExtResource("1_fpssmoke")

@@ -92,6 +92,35 @@ keyed `"field:row:col"`, `sections_owned`, `plow_uses`/`plows_bought`,
 `sprinkler_stock`, fertilizer charges in `items`). Schema-1 saves (fixed
 `plots` array) are migrated automatically on load.
 
+### SPUD BLASTER — 3D first-person arena (multiplayer)
+
+A first-person potato deathmatch, reachable from the main menu ([9]). This is
+a true 3D mode (the rest of the game is 2D) and everything in it is built
+procedurally in code — no art assets:
+
+- `scripts/fps/FpsNetwork.gd` (autoload `FpsNetwork`) — the session manager.
+  Three modes: **offline** practice vs. target-dummy bots, **host** (an ENet
+  server on UDP `7370`), and **client** (join by IP). Hosting also fires a
+  background **UPnP** worker that forwards the port and reports the machine's
+  public IP, so a host is reachable both on the LAN and over the internet
+  ("global"). If UPnP isn't available the lobby explains the manual
+  port-forward fallback. It is fully independent of the rhythm-duel
+  `MultiplayerManager` (different port, different game).
+- `scripts/fps/FpsLobbyController.gd` (`scenes/Fps/FpsLobby.tscn`) — host /
+  join-by-IP / practice, shows the LAN + public addresses and the roster; the
+  host presses ENTER to start the match for everyone.
+- `scripts/fps/FpsArena.gd` (`scenes/Fps/FpsArena.tscn`) — a procedurally
+  built box arena. It has a stable scene path, so it owns all the gameplay
+  RPCs (movement / shots / damage / scores). The host (or, offline, the lone
+  peer) is authoritative for health, frags and respawns; each peer simulates
+  its own avatar and broadcasts its transform, and ENet's server relay carries
+  client→client packets.
+- `scripts/fps/FpsPlayer.gd` — a code-built first-person `CharacterBody3D`
+  (mouse-look, WASD, jump, hitscan spud-gun). `FpsBot.gd` is the practice
+  target dummy. `FpsHud.gd` draws the crosshair / health / scoreboard / timer.
+
+Controls: WASD move · mouse look · LMB (or F) shoot · SPACE jump · ESC pause.
+
 ## Adding New Features
 
 ### Adding a New Minigame Mechanic
@@ -191,6 +220,10 @@ godot --headless --path godot res://tests/FarmSmokeTest.tscn --quit-after 600
 
 godot --headless --path godot res://tests/TownSmokeTest.tscn --quit-after 600
 # walks the plaza, buys/sells at every stall — prints "TOWN SMOKE OK"
+
+godot --headless --path godot res://tests/FpsSmokeTest.tscn --quit-after 300
+# boots a solo SPUD BLASTER match, shoots a target dummy, scores a frag —
+# prints "FPS SMOKE OK"
 ```
 
 CI runs these on every PR touching `godot/` (see `.github/workflows/godot.yml`).
@@ -225,7 +258,9 @@ CI runs these on every PR touching `godot/` (see `.github/workflows/godot.yml`).
   multi-charge fertilizer, drone/seeder automation, schema-1 save migration
 - ✅ Town map: fountain plaza with the four market stalls and the
   championship kitchen, gates between farm and town
-- ✅ Headless smoke tests (gameplay, farm, town) + CI workflow
+- ✅ SPUD BLASTER: 3D first-person deathmatch arena with LAN + internet
+  (UPnP) multiplayer and a solo practice mode vs. bots
+- ✅ Headless smoke tests (gameplay, farm, town, FPS arena) + CI workflow
 - ⏳ Audio files (framework wired, OGG assets needed)
 - ⏳ Boss fight minigame
 - ⏳ Particles and richer juice (squash/stretch, trails)
