@@ -55,3 +55,9 @@ jobs:
           cd godot
           ~/godot-bin/godot --headless --path . res://tests/TownSmokeTest.tscn --quit-after 600 2>&1 | tee town.log
           grep -q "TOWN SMOKE OK" town.log
+
+      - name: Headless FPS arena smoke test
+        run: |
+          cd godot
+          ~/godot-bin/godot --headless --path . res://tests/FpsSmokeTest.tscn --quit-after 300 2>&1 | tee fps.log
+          grep -q "FPS SMOKE OK" fps.log

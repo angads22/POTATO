@@ -39,18 +39,21 @@ godot --headless --import .                                          # compile c
 godot --headless --path . res://tests/SmokeTest.tscn --quit-after 900      # gameplay smoke test → prints "SMOKE OK"
 godot --headless --path . res://tests/FarmSmokeTest.tscn --quit-after 600  # farm smoke test → prints "FARM SMOKE OK"
 godot --headless --path . res://tests/TownSmokeTest.tscn --quit-after 600  # town smoke test → prints "TOWN SMOKE OK"
+godot --headless --path . res://tests/FpsSmokeTest.tscn --quit-after 300   # FPS arena smoke test → prints "FPS SMOKE OK"
 ```
 The smoke tests are auto-players, not assertions: `SmokeTest.gd` drives a full championship run
 (cuts at centre, locks the peel band, bins rotten potatoes), `FarmSmokeTest.gd` drives the farm
-(plow/plant/harvest, sections, sprinklers, fertilizer, save migration) and `TownSmokeTest.gd`
-shops the town stalls. CI greps stdout for the `SMOKE OK` / `FARM SMOKE OK` / `TOWN SMOKE OK`
-sentinel strings, so any test you add must print its own sentinel and exit.
+(plow/plant/harvest, sections, sprinklers, fertilizer, save migration), `TownSmokeTest.gd`
+shops the town stalls, and `FpsSmokeTest.gd` boots a solo SPUD BLASTER match and shoots a target
+dummy to score a frag. CI greps stdout for the `SMOKE OK` / `FARM SMOKE OK` / `TOWN SMOKE OK` /
+`FPS SMOKE OK` sentinel strings, so any test you add must print its own sentinel and exit.
 `tests/Screenshot.tscn` exists for capturing frames.
 
 ## CI (`.github/workflows/`)
 
 - **build.yml** — `dotnet build` of the console project on every push to `main` and every PR.
-- **godot.yml** — runs only when `godot/**` changes: import/compile check + the three smoke tests.
+- **godot.yml** — runs only when `godot/**` changes: import/compile check + the four smoke tests
+  (championship, farm, town, FPS arena).
 - **release.yml** — triggered by pushing a `v*` tag (or manual `workflow_dispatch`). Publishes
   self-contained single-file win-x64 and linux-x64 binaries and attaches them to a GitHub Release.
 
@@ -114,6 +117,16 @@ home for future non-farming content). Gates on the map edges travel between them
 `SaveDataManager.farm` schema 2 (sparse `tiles` dict keyed `"field:row:col"`); schema-1 saves with
 a fixed `plots` array migrate automatically in `SaveDataManager._migrate_farm()` — migration runs
 on the raw dict *before* the defaults merge. `scripts/visuals/` holds the procedural backdrops/FX.
+
+**SPUD BLASTER** (`scripts/fps/`, menu item [9]) is a 3D first-person deathmatch — the only 3D mode
+in an otherwise 2D game, built entirely in code (no art assets). `FpsNetwork` (autoload) manages the
+session: offline practice vs. bots, LAN host (ENet UDP `7370`), or client-by-IP, plus a threaded
+**UPnP** port-forward + public-IP lookup so a host is reachable over the internet ("global"). It is
+separate from the rhythm-duel `MultiplayerManager` (`scripts/multiplayer/`, port `7369`) — don't
+conflate the two. `FpsArena.gd` has a stable scene path and owns all gameplay RPCs; the host (or the
+lone offline peer) is authoritative for health/frags/respawns while each peer simulates and
+broadcasts its own avatar (ENet server relay carries client→client packets). `FpsPlayer`/`FpsBot`/
+`FpsHud` are the avatar, practice dummy and HUD.
 
 See `godot/README.md` and `godot/VISUALS.md` for the detailed expansion guide and current status checklist.
 

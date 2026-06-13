@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://b0fps0lobby001"]
+
+[ext_resource type="Script" path="res://scripts/fps/FpsLobbyController.gd" id="1_fpslobby"]
+
+[node name="FpsLobby" type="Node2D"]
+script = ExtResource("1_fpslobby")

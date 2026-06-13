@@ -13,6 +13,7 @@ var menu_items: Array[String] = [
 	"[6] Settings",
 	"[7] Check for Updates",
 	"[8] About",
+	"[9] Spud Blaster (FPS)",
 	"[ESC] Quit"
 ]
 
@@ -93,6 +94,7 @@ func _input(event: InputEvent):
 		KEY_6: _show_settings()
 		KEY_7: _show_updates()
 		KEY_8: _show_about()
+		KEY_9: _enter_fps_lobby()
 		KEY_ESCAPE: get_tree().quit()
 
 func _start_game(mode: String):
@@ -105,6 +107,10 @@ func _enter_farm():
 
 func _enter_lobby():
 	get_tree().change_scene_to_file("res://scenes/Multiplayer/LobbyScene.tscn")
+
+func _enter_fps_lobby():
+	AudioManager.stop_music(0.5)
+	get_tree().change_scene_to_file("res://scenes/Fps/FpsLobby.tscn")
 
 func _show_leaderboard():
 	online_scores.clear()
@@ -341,7 +347,9 @@ func _draw_about_screen(centre_x: float):
 		"Press SPACE to cut, dodge rotten potatoes,\n" +
 		"and climb both the local and global leaderboard.\n\n" +
 		"Play solo across 6 championship stages, brave the\n" +
-		"endless waves, or face a friend over LAN multiplayer.\n\n" +
+		"endless waves, face a friend over LAN multiplayer, or\n" +
+		"drop into SPUD BLASTER — a first-person potato\n" +
+		"deathmatch you can host on your LAN or worldwide.\n\n" +
 		"Pick your look in Settings: Classic, Pixel Art,\n" +
 		"or Hyperreal.\n\n" +
 		"Crafted with Godot Engine 4.2")
