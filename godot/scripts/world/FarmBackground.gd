@@ -22,6 +22,9 @@ const TRUCK_POS = Vector2(1295, 160)
 # research shed in the open lower-left, clear of the house/well/pond
 const RESEARCH_WALL = Rect2(360, 980, 230, 150)
 const RESEARCH_POS = Vector2(475, 1055)
+# a purely decorative fenced kitchen garden tucked beside the farmhouse (drawn
+# in the backdrop layer, below the plowable grid — cosmetic only)
+const GARDEN_RECT = Rect2(150, 470, 300, 180)
 
 const PATHS = [
 	[Vector2(440, 430), Vector2(560, 540), Vector2(1240, 540), Vector2(1560, 500)],
@@ -45,11 +48,21 @@ var night01 := 0.0  # 0 = noon, 1 = midnight; set each frame by the controller
 var _tufts: Array = []    # {pos, ph}
 var _flowers: Array = []  # {pos, col}
 var _rocks: Array = []
+var _dapples: Array = []  # {pos, r, col} — soft layered ground mottling
 
 func _ready():
 	z_index = -1
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 0xFA12  # stable decoration layout across sessions
+	# dappled, layered ground: large soft blobs that break up the mown stripes
+	var dapple_cols = [
+		Color(0.46, 0.66, 0.33, 0.35), Color(0.36, 0.55, 0.26, 0.35),
+		Color(0.5, 0.7, 0.36, 0.28),
+	]
+	for i in range(150):
+		var p = Vector2(rng.randf_range(40, WORLD.x - 40), rng.randf_range(40, WORLD.y - 40))
+		_dapples.append({"pos": p, "r": rng.randf_range(60.0, 150.0),
+				"col": dapple_cols[rng.randi() % dapple_cols.size()]})
 	var flower_cols = [Color(0.95, 0.85, 0.3), Color(0.9, 0.5, 0.6), Color(0.85, 0.85, 0.95)]
 	for i in range(280):
 		var p = Vector2(rng.randf_range(70, WORLD.x - 70), rng.randf_range(70, WORLD.y - 70))
@@ -64,11 +77,13 @@ func _ready():
 		if _on_clear_ground(p):
 			_rocks.append(p)
 
-# Keeps grass decorations off the buildings and the pond
+# Keeps grass decorations off the buildings, the pond and the kitchen garden
 func _on_clear_ground(p: Vector2) -> bool:
 	if HOUSE_WALL.grow(50).has_point(p):
 		return false
 	if TRUCK_RECT.grow(30).has_point(p) or RESEARCH_WALL.grow(40).has_point(p):
+		return false
+	if GARDEN_RECT.grow(8).has_point(p):
 		return false
 	var d = (p - POND_C) / (POND_R * 1.3)
 	return d.length() > 1.0
@@ -80,6 +95,7 @@ func _process(delta):
 func _draw():
 	_draw_grass()
 	_draw_paths()
+	_draw_kitchen_garden()
 	_draw_pond()
 	_draw_house()
 	_draw_well()
@@ -95,6 +111,9 @@ func _draw_grass():
 	for i in range(0, int(WORLD.y), 120):
 		var shade = Color(0.42, 0.62, 0.3) if (i / 120) % 2 == 0 else Color(0.38, 0.58, 0.27)
 		draw_rect(Rect2(0, i, WORLD.x, 120), shade)
+	# dappled, layered ground — soft mottled blobs over the stripes for depth
+	for d in _dapples:
+		draw_circle(d.pos, d.r, d.col)
 	for f in _flowers:
 		var p: Vector2 = f.pos
 		for k in range(4):
@@ -113,14 +132,45 @@ func _draw_grass():
 		draw_line(p, p + Vector2(sway, -14), col, 2.0)
 		draw_line(p, p + Vector2(4 + sway, -10), col, 2.0)
 
+# Soft-edged connected dirt paths: a soft grass-overhang halo, a gravel base,
+# a lighter worn centre rut, rounded joints at every vertex, and a scatter of
+# gravel speckles — Stardew-style packed-earth tracks.
 func _draw_paths():
+	var grass_edge := Color(0.3, 0.46, 0.22, 0.5)  # darker green overhang
+	var gravel := Color(0.5, 0.38, 0.23)
+	var earth := Color(0.62, 0.48, 0.30)
+	var worn := Color(0.7, 0.57, 0.37)
+	# pass 1: grass overhang halo (slightly wider, soft green) under everything
 	for path in PATHS:
 		var pts = PackedVector2Array(path)
-		draw_polyline(pts, Color(0.55, 0.42, 0.26), 54.0)
-		draw_polyline(pts, Color(0.66, 0.52, 0.33), 44.0)
-	# worn patches at the junctions
+		draw_polyline(pts, grass_edge, 60.0)
+	# pass 2: gravel base, then packed earth, then a worn lighter centre rut
+	for path in PATHS:
+		var pts = PackedVector2Array(path)
+		draw_polyline(pts, gravel, 52.0)
+		draw_polyline(pts, earth, 44.0)
+		draw_polyline(pts, worn, 20.0)
+		# rounded joints so corners read as smooth bends, not mitred cuts
+		for i in range(path.size()):
+			draw_circle(path[i], 22.0, earth)
+			draw_circle(path[i], 10.0, worn)
+	# worn patches at the busy junctions
 	for c in [Vector2(1240, 540), Vector2(1560, 500)]:
-		draw_circle(c, 30.0, Color(0.66, 0.52, 0.33))
+		draw_circle(c, 32.0, earth)
+		draw_circle(c, 16.0, worn)
+	# gravel speckle — stable per-frame via a fixed-seed walk along each path
+	var grng := RandomNumberGenerator.new()
+	grng.seed = 0x6A77  # stable gravel speckle layout across frames
+	for path in PATHS:
+		for i in range(path.size() - 1):
+			var a: Vector2 = path[i]
+			var b: Vector2 = path[i + 1]
+			var steps := int(a.distance_to(b) / 26.0)
+			for s in range(steps):
+				var base := a.lerp(b, float(s) / maxf(1.0, steps))
+				var off := Vector2(grng.randf_range(-16, 16), grng.randf_range(-16, 16))
+				var shade: Color = gravel.darkened(0.12) if (s % 2 == 0) else worn.lightened(0.05)
+				draw_circle(base + off, grng.randf_range(1.5, 3.0), shade)
 
 func _draw_pond():
 	# sandy rim, then layered water
@@ -263,16 +313,65 @@ func _draw_well():
 		draw_arc(Vector2.ZERO, 43.0, a, a + 0.5, 6, Color(0.4, 0.4, 0.42), 4.0)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
+# Lusher layered tree: a soft ground shadow, a tapered trunk, a darker canopy
+# base, mid-tone billows, then sun-dappled highlight tufts on top.
 func _draw_tree(pos: Vector2, s: float, ph: float):
 	var sway = sin(t * 0.8 + ph) * 3.0 * s
-	draw_set_transform(pos + Vector2(6, 4) * s, 0.0, Vector2(1.0, 0.4))
-	draw_circle(Vector2.ZERO, 42.0 * s, Color(0, 0, 0, 0.16))
+	# elongated soft ground shadow
+	draw_set_transform(pos + Vector2(8, 6) * s, 0.0, Vector2(1.0, 0.4))
+	draw_circle(Vector2.ZERO, 48.0 * s, Color(0, 0, 0, 0.16))
+	draw_circle(Vector2.ZERO, 38.0 * s, Color(0, 0, 0, 0.12))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	# tapered trunk with a touch of bark shading
 	draw_rect(Rect2(pos.x - 9 * s, pos.y - 60 * s, 18 * s, 62 * s), Color(0.42, 0.28, 0.16))
-	draw_circle(pos + Vector2(sway - 26 * s, -78 * s), 34 * s, Color(0.22, 0.42, 0.18))
-	draw_circle(pos + Vector2(sway + 26 * s, -76 * s), 32 * s, Color(0.25, 0.46, 0.2))
+	draw_rect(Rect2(pos.x - 9 * s, pos.y - 60 * s, 6 * s, 62 * s), Color(0.34, 0.22, 0.12))
+	# dark canopy underlayer for depth
+	for o in [Vector2(-28, -70), Vector2(28, -68), Vector2(0, -92), Vector2(-8, -52), Vector2(12, -54)]:
+		draw_circle(pos + Vector2(sway, 0) + o * s, 30.0 * s, Color(0.18, 0.36, 0.15))
+	# mid-tone billows
+	draw_circle(pos + Vector2(sway - 26 * s, -78 * s), 34 * s, Color(0.24, 0.45, 0.2))
+	draw_circle(pos + Vector2(sway + 26 * s, -76 * s), 32 * s, Color(0.27, 0.48, 0.22))
 	draw_circle(pos + Vector2(sway, -100 * s), 36 * s, Color(0.3, 0.52, 0.24))
-	draw_circle(pos + Vector2(sway - 12 * s, -108 * s), 16 * s, Color(0.38, 0.6, 0.3))
+	draw_circle(pos + Vector2(sway + 6 * s, -64 * s), 26 * s, Color(0.28, 0.5, 0.23))
+	# sun-dappled highlight tufts
+	draw_circle(pos + Vector2(sway - 12 * s, -108 * s), 16 * s, Color(0.4, 0.62, 0.32))
+	draw_circle(pos + Vector2(sway + 18 * s, -94 * s), 11 * s, Color(0.45, 0.66, 0.35))
+	draw_circle(pos + Vector2(sway - 24 * s, -84 * s), 9 * s, Color(0.43, 0.64, 0.34))
+
+# Decorative fenced kitchen garden beside the farmhouse — picket fence, tilled
+# beds and a few leafy veg. Backdrop only (the real plowable grid draws above).
+func _draw_kitchen_garden():
+	var r = GARDEN_RECT
+	# soft drop shadow + tilled soil patch
+	draw_rect(Rect2(r.position.x + 6, r.position.y + 8, r.size.x, r.size.y), Color(0, 0, 0, 0.12))
+	var soil = Rect2(r.position.x + 10, r.position.y + 10, r.size.x - 20, r.size.y - 20)
+	draw_rect(soil, Color(0.43, 0.3, 0.18))
+	# raised rows with furrow highlights
+	for i in range(3):
+		var ry = soil.position.y + 16 + i * 46
+		draw_rect(Rect2(soil.position.x + 8, ry, soil.size.x - 16, 26), Color(0.5, 0.35, 0.2))
+		draw_rect(Rect2(soil.position.x + 8, ry, soil.size.x - 16, 4), Color(0.6, 0.45, 0.27))
+		# leafy veg tufts along each row
+		for k in range(5):
+			var vx = soil.position.x + 24 + k * (soil.size.x - 48) / 4.0
+			var vy = ry + 14
+			var sway = sin(t * 1.3 + k + i) * 1.5
+			for leaf in [Vector2(-6, 0), Vector2(6, 0), Vector2(0, -7)]:
+				draw_circle(Vector2(vx + leaf.x + sway, vy + leaf.y), 5.0, Color(0.3, 0.55, 0.26))
+			draw_circle(Vector2(vx + sway, vy), 3.0, Color(0.85, 0.55, 0.3))
+	# picket fence around the plot (posts + two rails), with a gap as a gate
+	var fence = Color(0.82, 0.78, 0.68)
+	var fence_dk = Color(0.62, 0.58, 0.48)
+	draw_rect(Rect2(r.position.x, r.position.y + 6, r.size.x, 4), fence_dk)
+	draw_rect(Rect2(r.position.x, r.position.y + 22, r.size.x, 4), fence_dk)
+	draw_rect(Rect2(r.position.x, r.end.y - 12, r.size.x, 4), fence_dk)
+	for px in range(int(r.position.x), int(r.end.x) + 1, 26):
+		# leave a gate gap near the middle of the bottom edge
+		var post = Vector2(px, r.position.y)
+		draw_rect(Rect2(post.x - 3, post.y, 6, r.size.y), fence)
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(post.x - 3, post.y), Vector2(post.x + 3, post.y), Vector2(post.x, post.y - 8)
+		]), fence)
 
 # Road stub and signpost where the east hedge opens toward town
 func _draw_town_gate():

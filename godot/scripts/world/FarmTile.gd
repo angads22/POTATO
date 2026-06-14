@@ -136,16 +136,26 @@ func _draw():
 		TState.READY:
 			_draw_ready()
 
-# Plowed soil bed — darker when watered
+# Plowed soil bed — darker when watered, with a soft drop shadow for depth and
+# furrows that carry both a shaded groove and a sunlit highlight lip
 func _draw_soil_bed():
+	# drop shadow: a slightly offset, darker rounded slab beneath the bed
+	var shadow = StyleBoxFlat.new()
+	shadow.bg_color = Color(0, 0, 0, 0.18)
+	shadow.set_corner_radius_all(16)
+	shadow.draw(get_canvas_item(), Rect2(-62, -39, 130, 90))
+
 	var soil = StyleBoxFlat.new()
 	soil.bg_color = Color(0.36, 0.24, 0.13) if watered else Color(0.46, 0.32, 0.18)
 	soil.set_corner_radius_all(16)
 	soil.border_color = soil.bg_color.darkened(0.3)
 	soil.set_border_width_all(3)
 	soil.draw(get_canvas_item(), Rect2(-65, -45, 130, 90))
+	# furrows: a shaded groove with a highlighted lip just above it
 	for i in range(3):
-		draw_rect(Rect2(-52, -26 + i * 24, 104, 3), soil.bg_color.darkened(0.22))
+		var fy = -26 + i * 24
+		draw_rect(Rect2(-52, fy, 104, 3), soil.bg_color.darkened(0.28))
+		draw_rect(Rect2(-52, fy - 3, 104, 2), soil.bg_color.lightened(0.16))
 	if watered and state == TState.PLANTED:
 		for i in range(3):
 			draw_circle(Vector2(-34 + i * 34, 32), 2.5, Color(0.5, 0.75, 0.95, 0.8))

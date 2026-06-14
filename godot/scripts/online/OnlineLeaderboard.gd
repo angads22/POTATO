@@ -12,6 +12,7 @@ extends Node
 #          score      integer not null,
 #          mode       text not null,
 #          knife      text,
+#          starch     integer default 0,
 #          created_at timestamptz default now()
 #        );
 #        alter table sliceit_scores enable row level security;
@@ -19,6 +20,11 @@ extends Node
 #          on sliceit_scores for insert to anon with check (true);
 #        create policy "anyone can read"
 #          on sliceit_scores for select to anon using (true);
+#
+#   If you created the table before the SPUD BLASTER economy update, add the
+#   premium-currency column to your existing table instead:
+#
+#        alter table sliceit_scores add column starch integer default 0;
 #
 #   3. Replace SUPABASE_URL and SUPABASE_KEY below with your project's
 #      values (Settings → API in the Supabase dashboard).
@@ -40,7 +46,7 @@ func is_available() -> bool:
 
 # Fire-and-forget: submit a score. Errors are silently swallowed so a
 # network hiccup never interrupts gameplay.
-func submit_score(player_name: String, score: int, mode: String, knife: String):
+func submit_score(player_name: String, score: int, mode: String, knife: String, starch: int = 0):
 	if not is_available():
 		return
 	var body := JSON.stringify({
@@ -48,6 +54,7 @@ func submit_score(player_name: String, score: int, mode: String, knife: String):
 		"score": score,
 		"mode": mode,
 		"knife": knife,
+		"starch": starch,
 	})
 	var req := HTTPRequest.new()
 	add_child(req)
@@ -57,6 +64,33 @@ func submit_score(player_name: String, score: int, mode: String, knife: String):
 		_headers("application/json"),
 		HTTPClient.METHOD_POST,
 		body
+	)
+
+# SPUD BLASTER result: the global leaderboard ranks by lifetime starch, so we
+# submit the player's all-time starch as the score under the "spud_blaster"
+# mode (frags ride along in the "score" column too via the starch field).
+func submit_fps_result(player_name: String, lifetime_starch: int, frags: int):
+	submit_score(player_name, frags, "spud_blaster", "", lifetime_starch)
+
+# Fetch the top chefs ranked by lifetime starch. Calls callback(Array).
+func fetch_starch_leaders(callback: Callable):
+	if not is_available():
+		callback.call([])
+		return
+	var filter := "?mode=eq.spud_blaster&order=starch.desc&limit=%d" % FETCH_LIMIT
+	var req := HTTPRequest.new()
+	add_child(req)
+	req.request_completed.connect(func(_result, code, _h, body):
+		req.queue_free()
+		if code != 200:
+			callback.call([])
+			return
+		var parsed = JSON.parse_string(body.get_string_from_utf8())
+		callback.call(parsed if parsed is Array else [])
+	)
+	req.request(
+		SUPABASE_URL + "/rest/v1/" + TABLE + filter,
+		_headers("")
 	)
 
 # Fetch top FETCH_LIMIT scores, optionally filtered by mode.
