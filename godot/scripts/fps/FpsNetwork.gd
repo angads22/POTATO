@@ -27,12 +27,19 @@ const MAX_PLAYERS := 4
 const DEFAULT_FRAG_LIMIT := 15
 const DEFAULT_TIME_LIMIT := 180.0  # seconds
 
+# preload by path: autoloads compile before the global class_name cache exists
+# on a clean import, so "FpsMaps" isn't resolvable here by name
+const FpsMapsData = preload("res://scripts/fps/FpsMaps.gd")
+
 var mode := "offline"            # "offline" | "host" | "client"
 # peer_id -> { "name": String }   (frags are tracked by the arena)
 var players := {}
 var frag_limit := DEFAULT_FRAG_LIMIT
 var time_limit := DEFAULT_TIME_LIMIT
 var match_seed := 0
+# Selected arena: a FpsMaps id, or "random". Host/solo resolves it to a concrete
+# id before the match loads, then ships it to every peer so all load the same.
+var map_id := "farmyard"
 
 # Diagnostics surfaced by the lobby
 var lan_ip := ""
@@ -68,6 +75,7 @@ func start_offline() -> void:
 	_reset()
 	mode = "offline"
 	match_seed = randi()
+	map_id = FpsMapsData.resolve(map_id)
 	players = {1: _new_player(my_name())}
 	roster_changed.emit()
 
@@ -101,7 +109,8 @@ func join_game(ip: String) -> Error:
 # host-only: tell every peer to load the arena. Offline starts locally.
 func start_match() -> void:
 	if mode == "host":
-		_begin_match.rpc(match_seed, frag_limit, time_limit)
+		map_id = FpsMapsData.resolve(map_id)  # pin "random" to a concrete map for all peers
+		_begin_match.rpc(match_seed, frag_limit, time_limit, map_id)
 	else:
 		match_starting.emit()
 
@@ -187,10 +196,11 @@ func _sync_roster(roster: Dictionary) -> void:
 	roster_changed.emit()
 
 @rpc("authority", "call_local", "reliable")
-func _begin_match(seed_val: int, fl: int, tl: float) -> void:
+func _begin_match(seed_val: int, fl: int, tl: float, map: String) -> void:
 	match_seed = seed_val
 	frag_limit = fl
 	time_limit = tl
+	map_id = map
 	match_starting.emit()
 
 # ── networking helpers ───────────────────────────────────────────────────────

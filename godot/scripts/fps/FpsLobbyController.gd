@@ -6,11 +6,15 @@ class_name FpsLobbyController
 # look as the rhythm-duel lobby. The host starts the match for everyone once at
 # least one opponent has joined.
 
-enum Phase { MENU, HOSTING, JOINING, CONNECTED, ERROR }
+enum Phase { MENU, HOSTING, JOINING, CONNECTED, ERROR, SHOP }
+
+const PLASMA_COST := 25  # starch to unlock the exclusive Plasma Fryer
 
 var phase: Phase = Phase.MENU
 var ip_chars: Array[String] = []
 var status_msg := ""
+var shop_index := 0
+var shop_msg := ""
 var blink := 0.0
 
 func _ready() -> void:
@@ -47,8 +51,19 @@ func _input(event: InputEvent) -> void:
 					phase = Phase.JOINING
 					ip_chars.clear()
 				KEY_3: _do_practice()
+				KEY_4:
+					shop_index = 0
+					shop_msg = ""
+					phase = Phase.SHOP
+				KEY_M: _cycle_map()
 				KEY_ESCAPE:
 					get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
+		Phase.SHOP:
+			match event.keycode:
+				KEY_UP: shop_index = maxi(0, shop_index - 1)
+				KEY_DOWN: shop_index = mini(_shop_items().size() - 1, shop_index + 1)
+				KEY_ENTER, KEY_KP_ENTER, KEY_SPACE: _shop_activate()
+				KEY_ESCAPE: phase = Phase.MENU
 		Phase.JOINING:
 			match event.keycode:
 				KEY_ENTER, KEY_KP_ENTER: _do_join("".join(ip_chars))
@@ -66,6 +81,7 @@ func _input(event: InputEvent) -> void:
 				KEY_ENTER, KEY_KP_ENTER:
 					if FpsNetwork.players.size() >= 2:
 						FpsNetwork.start_match()
+				KEY_M: _cycle_map()
 				KEY_ESCAPE:
 					FpsNetwork.leave()
 					phase = Phase.MENU
@@ -97,6 +113,57 @@ func _do_join(ip: String) -> void:
 func _do_practice() -> void:
 	FpsNetwork.start_offline()
 	_start_arena()
+
+func _cycle_map() -> void:
+	# rotate through the maps, plus a "random" choice at the end
+	var options := FpsMaps.ids()
+	options.append("random")
+	var i := options.find(FpsNetwork.map_id)
+	FpsNetwork.map_id = options[(i + 1) % options.size()]
+
+func _map_label() -> String:
+	if FpsNetwork.map_id == "random":
+		return "Random"
+	return FpsMaps.map_name(FpsNetwork.map_id)
+
+# ── Starch Exchange ──────────────────────────────────────────────────────────
+
+func _shop_items() -> Array:
+	var items: Array = []
+	for s in FpsWeapons.skins():
+		items.append({"type": "skin", "id": s["id"], "name": "Skin · " + str(s["name"]),
+				"cost": int(s["cost"])})
+	items.append({"type": "weapon", "id": "plasma_fryer",
+			"name": "Weapon · " + FpsWeapons.display_name("plasma_fryer"), "cost": PLASMA_COST})
+	return items
+
+func _owned(item: Dictionary) -> bool:
+	if item["type"] == "skin" and int(item["cost"]) == 0:
+		return true  # the free Classic skin
+	return SaveDataManager.fps_owns(item["id"])
+
+func _shop_activate() -> void:
+	var items := _shop_items()
+	if shop_index < 0 or shop_index >= items.size():
+		return
+	var item: Dictionary = items[shop_index]
+	if _owned(item):
+		if item["type"] == "skin":
+			SaveDataManager.set_fps_skin(item["id"])
+			shop_msg = "Equipped %s" % item["name"]
+		else:
+			shop_msg = "Already owned"
+		return
+	var cost := int(item["cost"])
+	if not SaveDataManager.spend_starch(cost):
+		shop_msg = "Not enough starch (need %d)" % cost
+		return
+	SaveDataManager.fps_unlock(item["id"])
+	if item["type"] == "skin":
+		SaveDataManager.set_fps_skin(item["id"])
+		shop_msg = "Bought + equipped %s" % item["name"]
+	else:
+		shop_msg = "Unlocked the %s! It joins your loadout." % FpsWeapons.display_name(item["id"])
 
 func _start_arena() -> void:
 	get_tree().change_scene_to_file("res://scenes/Fps/FpsArena.tscn")
@@ -132,20 +199,65 @@ func _draw() -> void:
 		Phase.JOINING: _draw_joining(font, cx)
 		Phase.CONNECTED: _draw_connected(font, cx)
 		Phase.ERROR: _draw_error(font, cx)
+		Phase.SHOP: _draw_shop(font, cx)
 
 func _draw_menu(font: Font, cx: float) -> void:
 	var items := [
 		["[1] Host a game", "Open this machine. Friends join on your LAN, or over the internet (UPnP)."],
 		["[2] Join a game", "Enter a host's IP — a 192.168.x address on LAN, or their public IP."],
-		["[3] Practice solo", "Warm up in an empty arena against target-dummy bots."],
+		["[3] Practice solo", "Warm up against target-dummy bots. Earn coins; win to earn starch."],
+		["[4] Starch Exchange", "Spend starch on weapon skins and the exclusive Plasma Fryer."],
 		["[ESC] Back", ""],
 	]
-	var y := 210.0
+	var y := 196.0
 	for item in items:
-		draw_string(font, Vector2(cx - 250, y), item[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 24, Color.WHITE)
+		draw_string(font, Vector2(cx - 250, y), item[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 23, Color.WHITE)
 		if item[1] != "":
-			draw_string(font, Vector2(cx - 250, y + 26), item[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.62, 0.57, 0.47))
-		y += 78.0
+			draw_string(font, Vector2(cx - 250, y + 24), item[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.62, 0.57, 0.47))
+		y += 68.0
+
+	# map picker + starch balance footer
+	draw_line(Vector2(cx - 250, y - 6), Vector2(cx + 250, y - 6), Color(0.4, 0.34, 0.24), 1.0)
+	draw_string(font, Vector2(cx - 250, y + 22), "[M] Map: %s" % _map_label(),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(0.95, 0.85, 0.5))
+	var bal := "Starch: %d   ·   Coins: %d" % [SaveDataManager.starch(), SaveDataManager.wallet()]
+	var bs := font.get_string_size(bal, HORIZONTAL_ALIGNMENT_RIGHT, -1, 18)
+	draw_string(font, Vector2(cx + 250 - bs.x, y + 22), bal,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.7, 0.85, 0.8))
+
+func _draw_shop(font: Font, cx: float) -> void:
+	draw_string(font, Vector2(cx - 250, 178), "STARCH EXCHANGE", HORIZONTAL_ALIGNMENT_LEFT, -1, 26, Color.GOLD)
+	var bal := "Starch: %d" % SaveDataManager.starch()
+	var bs := font.get_string_size(bal, HORIZONTAL_ALIGNMENT_RIGHT, -1, 20)
+	draw_string(font, Vector2(cx + 250 - bs.x, 178), bal, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(0.7, 0.9, 0.82))
+
+	var items := _shop_items()
+	var y := 222.0
+	for i in range(items.size()):
+		var it: Dictionary = items[i]
+		var sel: bool = i == shop_index
+		if sel:
+			draw_rect(Rect2(cx - 256, y - 18, 512, 30), Color(0.9, 0.7, 0.25, 0.18))
+		var owned := _owned(it)
+		var equipped: bool = it["type"] == "skin" and SaveDataManager.fps_skin() == it["id"]
+		var status := ""
+		if equipped:
+			status = "EQUIPPED"
+		elif owned:
+			status = "OWNED — [ENTER] equip" if it["type"] == "skin" else "OWNED"
+		else:
+			status = "%d starch" % int(it["cost"])
+		var name_col: Color = Color(1, 0.95, 0.7) if sel else Color(0.88, 0.86, 0.8)
+		draw_string(font, Vector2(cx - 244, y + 4), str(it["name"]), HORIZONTAL_ALIGNMENT_LEFT, -1, 19, name_col)
+		var st_col: Color = Color(0.6, 0.95, 0.7) if (owned or equipped) else Color(0.95, 0.85, 0.45)
+		var ss := font.get_string_size(status, HORIZONTAL_ALIGNMENT_RIGHT, -1, 16)
+		draw_string(font, Vector2(cx + 244 - ss.x, y + 4), status, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, st_col)
+		y += 38.0
+
+	if shop_msg != "":
+		draw_string(font, Vector2(cx - 250, y + 18), shop_msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.85, 0.95, 0.8))
+	draw_string(font, Vector2(cx - 250, 640), "[↑/↓] Select   [ENTER] Buy / Equip   [ESC] Back",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.6, 0.55, 0.5))
 
 func _draw_hosting(font: Font, cx: float) -> void:
 	draw_string(font, Vector2(cx - 250, 185), "LAN address (same Wi-Fi / network):", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.7, 0.65, 0.55))
@@ -177,6 +289,8 @@ func _draw_hosting(font: Font, cx: float) -> void:
 		draw_string(font, Vector2(cx - 230, y), "• " + nm + tag, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.WHITE)
 		y += 28.0
 
+	draw_string(font, Vector2(cx - 250, 520), "[M] Map: %s" % _map_label(),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.95, 0.85, 0.5))
 	if FpsNetwork.players.size() >= 2:
 		draw_string(font, Vector2(cx - 250, 560), "[ENTER] Start match", HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color.LIGHT_GREEN)
 	else:

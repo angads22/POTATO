@@ -20,7 +20,16 @@ var settings: Dictionary = {
 	"sound_enabled": true,
 	"particle_effects": true,
 	"screen_shake": true,
-	"graphics_style": "classic"  # classic | pixel | hyperreal (see StyleManager)
+	"graphics_style": "classic",  # classic | pixel | hyperreal (see StyleManager)
+	# SPUD BLASTER economy: "starch" is the premium currency, earned only by
+	# winning a match and spent at the lobby Starch Exchange. "lifetime_starch"
+	# is the all-time total that ranks the global leaderboard. fps_unlocks holds
+	# bought skin ids and the exclusive "plasma_fryer"; fps_skin is the equipped
+	# cosmetic tint.
+	"starch": 0,
+	"lifetime_starch": 0,
+	"fps_unlocks": [],
+	"fps_skin": "classic"
 }
 
 # Farm + economy state (schema 3, free-form open grid). New games start with a
@@ -318,6 +327,46 @@ func spend_coins(amount: int) -> bool:
 	farm["wallet"] = wallet() - amount
 	save_game()
 	return true
+
+# ── SPUD BLASTER premium economy (starch) ──
+
+func starch() -> int:
+	return int(settings.get("starch", 0))
+
+func lifetime_starch() -> int:
+	return int(settings.get("lifetime_starch", 0))
+
+# Earned only by winning a match; bumps both the spendable balance and the
+# all-time total that ranks the global leaderboard.
+func add_starch(amount: int):
+	settings["starch"] = starch() + amount
+	settings["lifetime_starch"] = lifetime_starch() + maxi(0, amount)
+	save_game()
+
+func spend_starch(amount: int) -> bool:
+	if starch() < amount:
+		return false
+	settings["starch"] = starch() - amount
+	save_game()
+	return true
+
+# Starch Exchange unlocks (skin ids + the exclusive "plasma_fryer")
+func fps_owns(id: String) -> bool:
+	return id in settings.get("fps_unlocks", [])
+
+func fps_unlock(id: String):
+	var owned: Array = settings.get("fps_unlocks", [])
+	if id not in owned:
+		owned.append(id)
+		settings["fps_unlocks"] = owned
+		save_game()
+
+func fps_skin() -> String:
+	return str(settings.get("fps_skin", "classic"))
+
+func set_fps_skin(id: String):
+	settings["fps_skin"] = id
+	save_game()
 
 # Generic counter bump for the "seeds"/"spuds" inventories
 func add_item(inventory: String, id: String, count: int = 1):
