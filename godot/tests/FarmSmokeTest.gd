@@ -45,6 +45,8 @@ func _process(_delta):
 			_run_truck()
 		28:
 			_run_research()
+		30:
+			_run_plow_modes()
 		31:
 			_run_cover()
 		34:
@@ -72,12 +74,12 @@ func _run_grid():
 
 	# dirt paths stay clear: a path cell is farmland-shaped ground but no plot
 	# can be opened on it, and a rejected plow wastes nothing
-	var path_cell := Vector2i(6, 4)
-	_check(FarmBackground.on_path(farm.cell_center(path_cell)), "the (6,4) cell sits on a dirt path")
+	var path_cell := Vector2i(6, 5)
+	_check(FarmBackground.on_path(farm.cell_center(path_cell)), "the (6,5) cell sits on the dividing path")
 	_check(farm.is_farmable_cell(path_cell), "a path cell is still farmland-shaped ground")
 	_check(not farm.is_plowable_cell(path_cell), "but a dirt-path cell isn't plowable")
 	_check(not farm.plow_cell(path_cell), "plowing a path is rejected")
-	_check(not farm.tile_map.has("6:4"), "a rejected path-plow leaves no tile behind")
+	_check(not farm.tile_map.has("6:5"), "a rejected path-plow leaves no tile behind")
 	_check(farm.plow_uses() == 10, "a rejected path-plow wastes no plow uses")
 
 	_check(farm.buy_seed("russet"), "seed purchase succeeds")
@@ -112,7 +114,7 @@ func _run_grid():
 func _run_sprinkler_fertilizer():
 	_check(farm.buy_sprinkler(), "sprinkler purchase succeeds")
 	_check(farm.sprinkler_stock() == 1, "sprinkler lands in the pack")
-	_check(not farm.place_sprinkler_cell(Vector2i(6, 4)), "a sprinkler can't be dropped on a path")
+	_check(not farm.place_sprinkler_cell(Vector2i(6, 5)), "a sprinkler can't be dropped on a path")
 	_check(farm.sprinkler_stock() == 1, "a rejected path-sprinkler stays in the pack")
 	var sc := Vector2i(10, 8)
 	_check(farm.place_sprinkler_cell(sc), "sprinkler drops onto open grass")
@@ -240,6 +242,30 @@ func _run_research_map():
 	_check(farm.buy_research("champ_field"), "Field Research buys")
 	_check(SaveDataManager.research_bonus("champ_rp_per") > 0.0, "Field Research grants champ_rp_per")
 
+# ── plow modes: research a wider plow, switch sizes, plow a single tile ──
+func _run_plow_modes():
+	SaveDataManager.farm["wallet"] = 20000
+	SaveDataManager.add_research_points(50)
+	SaveDataManager.farm["plow_uses"] = 30
+	SaveDataManager.farm.erase("plow_mode")
+	_check(farm.max_plow_radius() == 0, "no wide plow researched yet")
+	_check(farm.buy_research("tool_radius"), "Wide Plow researches once its prereq is owned")
+	_check(farm.max_plow_radius() == 1, "Wide Plow lifts the max plow radius to 1 (3x3)")
+	_check(farm.plow_radius() == 1, "the active plow defaults to the widest size")
+	_check(farm.plow_size_label() == "3×3", "the active size reads 3×3")
+	farm.cycle_plow_mode()
+	_check(farm.plow_radius() == 0, "[X] cycles down to the single-tile plow")
+	# a 1x1 plow stamps exactly one cell, leaving the neighbours untouched
+	var c := Vector2i(13, 7)
+	_check(farm.plow_cell(c), "single-tile plow succeeds")
+	_check(farm.tile_map.has("13:7"), "the targeted cell is plowed")
+	_check(not farm.tile_map.has("12:7") and not farm.tile_map.has("14:7"),
+			"a 1x1 plow leaves the neighbours untouched")
+	farm.cycle_plow_mode()
+	_check(farm.plow_radius() == 1, "[X] cycles back up to 3x3")
+	# leave the plow on single-tile so the cover test below stamps one cell
+	SaveDataManager.farm["plow_mode"] = 0
+
 # ── cover a plot back over: freebies first, then coins, plow never refunded ──
 func _run_cover():
 	var c := Vector2i(7, 9)
@@ -306,12 +332,12 @@ func _run_migration():
 	_check(SaveDataManager.item_count("items", "compost") == 2, "fertilizer charges survive")
 	_check(SaveDataManager.has_research("tool_autoharvest"), "the old drone becomes a research node")
 
-	# tiles repacked onto the open grid's central block, growing crop intact
+	# tiles repacked onto the open field's central block, growing crop intact
 	var tiles: Dictionary = f.get("tiles", {})
-	var grown: Dictionary = tiles.get("5:5", {})
+	var grown: Dictionary = tiles.get("5:6", {})
 	_check(grown.get("potato_id", "") == "red" and float(grown.get("planted_at", 0)) == 1700000000.0
 			and bool(grown.get("watered", false)), "the growing crop migrates intact")
-	var bare: Dictionary = tiles.get("6:5", {})
+	var bare: Dictionary = tiles.get("6:6", {})
 	_check(bool(bare.get("plowed", false)) and str(bare.get("last", "")) == "yukon_gold"
 			and not bare.has("potato_id"), "bare plowed soil migrates with its memory")
 

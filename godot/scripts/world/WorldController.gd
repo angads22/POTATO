@@ -63,6 +63,10 @@ func _on_alt_interact():
 func _on_cover_interact():
 	pass
 
+# [X] while walking — the farm uses it to cycle the researched plow sizes
+func _on_tool_cycle():
+	pass
+
 # shop overlay was closed with ESC
 func _on_shop_closed():
 	pass
@@ -190,6 +194,8 @@ func _input(event: InputEvent):
 		_on_alt_interact()
 	elif event.keycode == KEY_C:
 		_on_cover_interact()
+	elif event.keycode == KEY_X:
+		_on_tool_cycle()
 
 # Numeric hotkeys inside the store overlays both maps share; the farm
 # overrides this to add its plant/enhance menus.

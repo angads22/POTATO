@@ -81,6 +81,10 @@ func _draw_wallet_panel(font: Font):
 	]), pcol.lightened(0.15))
 	draw_string(font, Vector2(262, 43), "%d" % uses, HORIZONTAL_ALIGNMENT_LEFT, -1, 17,
 			Color(0.95, 0.92, 0.85) if uses > 0 else Color(0.6, 0.55, 0.5))
+	# active plow size, once a wider plow has been researched (farm only)
+	if ctrl.has_method("max_plow_radius") and ctrl.max_plow_radius() > 0:
+		draw_string(font, Vector2(286, 42), ctrl.plow_size_label(), HORIZONTAL_ALIGNMENT_LEFT, -1, 11,
+				Color(0.8, 0.85, 0.6))
 	# sprinklers waiting in the pack
 	var stock: int = int(SaveDataManager.farm.get("sprinkler_stock", 0))
 	var scol = Color(0.45, 0.75, 0.95) if stock > 0 else Color(0.42, 0.4, 0.38)
