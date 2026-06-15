@@ -108,8 +108,9 @@ func key_to_cell(k: String) -> Vector2i:
 	var parts = k.split(":")
 	return Vector2i(int(parts[0]), int(parts[1]))
 
-# The one place that decides "can I plow here": inside the interior bounds and
-# walkable (so not under the house, well, truck, shed or pond).
+# Farmland-shaped ground: inside the interior bounds and walkable (so not under
+# the house, well, truck, shed or pond). is_plowable_cell adds the path rule on
+# top to decide where a brand-new plot may actually be opened.
 func is_farmable_cell(c: Vector2i) -> bool:
 	var p = cell_center(c)
 	if p.x < FARM_MARGIN.x or p.x > world_size.x - FARM_MARGIN.x:
@@ -117,6 +118,13 @@ func is_farmable_cell(c: Vector2i) -> bool:
 	if p.y < FARM_MARGIN.y or p.y > world_size.y - FARM_MARGIN.y:
 		return false
 	return _walkable(p)
+
+# Like is_farmable_cell, but also refuses the dirt paths: a brand-new plot
+# (plowed soil or a dropped sprinkler) can't be created on a track, so the
+# walkways stay clear. Already-worked tiles aren't gated by this, so crops that
+# predate the rule (or sit on a path in an old save) stay fully workable.
+func is_plowable_cell(c: Vector2i) -> bool:
+	return is_farmable_cell(c) and not FarmBackground.on_path(cell_center(c))
 
 func _ensure_tile(c: Vector2i) -> FarmTile:
 	var k = cell_key(c)
@@ -191,13 +199,17 @@ func _scan_interactions():
 
 	# Otherwise act on the cell under the player's feet
 	var c = cell_of(player.position)
-	if not is_farmable_cell(c):
-		return
 	var existing = tile_map.get(cell_key(c))
 	if existing != null:
-		_set_tile_prompt(existing)
-	else:
-		_set_grass_prompt(c)
+		_set_tile_prompt(existing)   # already-worked tiles stay workable
+		return
+	if not is_farmable_cell(c):
+		return
+	# Brand-new plots can't be opened on a dirt path — keep the tracks clear
+	if FarmBackground.on_path(cell_center(c)):
+		prompt = "A well-worn path — the soil here is too packed to plow"
+		return
+	_set_grass_prompt(c)
 
 # Virgin grass: offer to plow it (and to drop a sprinkler on it)
 func _set_grass_prompt(c: Vector2i):
@@ -333,7 +345,7 @@ func plow_cell(c: Vector2i) -> bool:
 		return false
 	var radius = plow_radius()
 	if radius <= 0:
-		if not is_farmable_cell(c):
+		if not is_plowable_cell(c):
 			return false
 		return plow_tile(_ensure_tile(c))
 	var any := false
@@ -342,7 +354,7 @@ func plow_cell(c: Vector2i) -> bool:
 			if plow_uses() <= 0:
 				break
 			var nc = Vector2i(c.x + dc, c.y + dr)
-			if not is_farmable_cell(nc):
+			if not is_plowable_cell(nc):
 				continue
 			var t = _ensure_tile(nc)
 			if t.state == FarmTile.TState.UNPLOWED and not t.has_sprinkler:
@@ -407,7 +419,7 @@ func cover_tile(tile: FarmTile) -> bool:
 	return true
 
 func place_sprinkler_cell(c: Vector2i) -> bool:
-	if sprinkler_stock() <= 0 or not is_farmable_cell(c):
+	if sprinkler_stock() <= 0 or not is_plowable_cell(c):
 		return false
 	return place_sprinkler(_ensure_tile(c))
 
