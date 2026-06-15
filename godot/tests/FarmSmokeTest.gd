@@ -62,13 +62,23 @@ func _process(_delta):
 
 # ── the open grid: plow anywhere, grow, harvest ──
 func _run_grid():
-	var c := Vector2i(8, 6)
-	_check(not farm.tile_map.has("8:6"), "an untouched cell has no tile (plain grass)")
+	var c := Vector2i(4, 7)
+	_check(not farm.tile_map.has("4:7"), "an untouched cell has no tile (plain grass)")
 	_check(farm.is_farmable_cell(c), "a mid-pasture cell is plowable")
+
+	# dirt paths stay clear: a path cell is farmland-shaped ground but no plot
+	# can be opened on it, and a rejected plow wastes nothing
+	var path_cell := Vector2i(6, 4)
+	_check(FarmBackground.on_path(farm.cell_center(path_cell)), "the (6,4) cell sits on a dirt path")
+	_check(farm.is_farmable_cell(path_cell), "a path cell is still farmland-shaped ground")
+	_check(not farm.is_plowable_cell(path_cell), "but a dirt-path cell isn't plowable")
+	_check(not farm.plow_cell(path_cell), "plowing a path is rejected")
+	_check(not farm.tile_map.has("6:4"), "a rejected path-plow leaves no tile behind")
+	_check(farm.plow_uses() == 10, "a rejected path-plow wastes no plow uses")
 
 	_check(farm.buy_seed("russet"), "seed purchase succeeds")
 	_check(farm.plow_cell(c), "plowing virgin grass succeeds")
-	var tile: FarmTile = farm.tile_map.get("8:6")
+	var tile: FarmTile = farm.tile_map.get("4:7")
 	_check(tile != null and tile.state == FarmTile.TState.PLOWED, "plowing creates a plowed tile")
 	_check(farm.plow_uses() == 9, "plowing wears the plow")
 
@@ -92,12 +102,14 @@ func _run_grid():
 	SaveDataManager.farm["wallet"] = -1
 	SaveDataManager.load_game()
 	_check(SaveDataManager.wallet() != -1, "wallet survives save/load")
-	_check(SaveDataManager.farm.get("tiles", {}).get("8:6", {}).get("plowed", false), "open-grid tiles persist")
+	_check(SaveDataManager.farm.get("tiles", {}).get("4:7", {}).get("plowed", false), "open-grid tiles persist")
 
 # ── sprinkler + fertilizer on the open grid ──
 func _run_sprinkler_fertilizer():
 	_check(farm.buy_sprinkler(), "sprinkler purchase succeeds")
 	_check(farm.sprinkler_stock() == 1, "sprinkler lands in the pack")
+	_check(not farm.place_sprinkler_cell(Vector2i(6, 4)), "a sprinkler can't be dropped on a path")
+	_check(farm.sprinkler_stock() == 1, "a rejected path-sprinkler stays in the pack")
 	var sc := Vector2i(10, 8)
 	_check(farm.place_sprinkler_cell(sc), "sprinkler drops onto open grass")
 	var spr: FarmTile = farm.tile_map.get("10:8")

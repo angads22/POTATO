@@ -34,6 +34,12 @@ const PATHS = [
 	[Vector2(1560, 500), Vector2(2000, 660), Vector2(2330, 820), Vector2(2480, 870)],
 ]
 
+# Plots and grass decorations stay this far (px) clear of a path's centre-line so
+# the dirt tracks read as walkways, never as fields. The drawn earth is ~44px
+# wide and the soft grass overhang ~60, so 34 keeps tilled soil off the whole
+# visible track. FarmController reads this when deciding what's plowable.
+const PATH_CLEARANCE := 34.0
+
 const TREE_POSITIONS = [
 	Vector2(170, 560), Vector2(150, 900), Vector2(220, 1240),
 	Vector2(380, 1340), Vector2(1920, 760), Vector2(2440, 990),
@@ -77,7 +83,8 @@ func _ready():
 		if _on_clear_ground(p):
 			_rocks.append(p)
 
-# Keeps grass decorations off the buildings, the pond and the kitchen garden
+# Keeps grass decorations off the buildings, the pond, the kitchen garden and
+# the dirt paths
 func _on_clear_ground(p: Vector2) -> bool:
 	if HOUSE_WALL.grow(50).has_point(p):
 		return false
@@ -85,8 +92,33 @@ func _on_clear_ground(p: Vector2) -> bool:
 		return false
 	if GARDEN_RECT.grow(8).has_point(p):
 		return false
+	if on_path(p):
+		return false
 	var d = (p - POND_C) / (POND_R * 1.3)
 	return d.length() > 1.0
+
+# ── path geometry (FarmController uses this to keep plots off the tracks) ──
+
+# True when a point sits on (or within `clearance` of) any dirt path.
+static func on_path(p: Vector2, clearance := PATH_CLEARANCE) -> bool:
+	return path_distance(p) <= clearance
+
+# Distance from a point to the nearest dirt-path centre-line (INF if no paths).
+static func path_distance(p: Vector2) -> float:
+	var best := INF
+	for path in PATHS:
+		for i in range(path.size() - 1):
+			best = minf(best, _segment_distance(p, path[i], path[i + 1]))
+	return best
+
+# Shortest distance from point p to the line segment a→b.
+static func _segment_distance(p: Vector2, a: Vector2, b: Vector2) -> float:
+	var ab := b - a
+	var len2 := ab.length_squared()
+	if len2 < 0.0001:
+		return p.distance_to(a)
+	var tt := clampf((p - a).dot(ab) / len2, 0.0, 1.0)
+	return p.distance_to(a + ab * tt)
 
 func _process(delta):
 	t += delta
