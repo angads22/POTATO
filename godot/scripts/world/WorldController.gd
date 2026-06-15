@@ -287,9 +287,6 @@ func buy_or_equip_knife(id: String) -> bool:
 
 # ── tools: the wearing plow, placeable sprinklers, global gear ──
 
-func owns_tool(id: String) -> bool:
-	return id in SaveDataManager.farm.get("tools", [])
-
 func plow_uses() -> int:
 	return int(SaveDataManager.farm.get("plow_uses", 0))
 
@@ -338,25 +335,13 @@ func buy_sprinkler() -> bool:
 	return true
 
 func buy_tool(id: String) -> bool:
-	# the plow and sprinklers have their own purchase rules
+	# Base equipment lives in the shop; every permanent upgrade lives in the
+	# research tree, so the plow and sprinkler are the only buyable tools.
 	if id == "plow":
 		return buy_plow()
 	if id == "sprinkler":
 		return buy_sprinkler()
-	if owns_tool(id):
-		_popup("Already installed!", Color(0.7, 0.65, 0.55))
-		return false
-	var tool_data = GameData.tool_by_id(id)
-	if not SaveDataManager.spend_coins(int(tool_data.get("cost", 99999))):
-		_popup("Not enough coins!", Color.ORANGE_RED)
-		return false
-	var owned: Array = SaveDataManager.farm.get("tools", [])
-	owned.append(id)
-	SaveDataManager.farm["tools"] = owned
-	SaveDataManager.save_game()
-	_popup("%s installed!" % tool_data.get("name", id), Color.GOLD)
-	AudioManager.play_sfx("level_complete")
-	return true
+	return false
 
 # Fertilizers come as multi-charge bags; the items inventory counts charges
 func buy_enhancer(id: String) -> bool:
