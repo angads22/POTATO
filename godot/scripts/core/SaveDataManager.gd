@@ -252,7 +252,7 @@ func _migrate_2_to_3(raw: Dictionary) -> Dictionary:
 			bare.append(td)
 	var ordered: Array = growing + plowed_mem + bare + sprinklers
 
-	const PACK_START := Vector2i(5, 5)
+	const PACK_START := Vector2i(5, 6)
 	const PACK_WIDTH := 12
 	var tiles := {}
 	for i in range(ordered.size()):

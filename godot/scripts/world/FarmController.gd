@@ -41,8 +41,8 @@ func _world_size() -> Vector2:
 func _spawn_point() -> Vector2:
 	if WorldController.travel_spawn == "from_town":
 		WorldController.travel_spawn = ""
-		return Vector2(2410, 870)
-	return Vector2(1450, 620)
+		return Vector2(2350, 760)
+	return Vector2(1280, 950)
 
 func _build_world():
 	bg = FarmBackground.new()
@@ -108,7 +108,8 @@ func key_to_cell(k: String) -> Vector2i:
 	var parts = k.split(":")
 	return Vector2i(int(parts[0]), int(parts[1]))
 
-# Farmland-shaped ground: inside the interior bounds and walkable (so not under
+# Farmland-shaped ground: the open pasture below the dividing path — inside the
+# interior bounds, clear of the top farmyard strip, and walkable (so not under
 # the house, well, truck, shed or pond). is_plowable_cell adds the path rule on
 # top to decide where a brand-new plot may actually be opened.
 func is_farmable_cell(c: Vector2i) -> bool:
@@ -117,6 +118,8 @@ func is_farmable_cell(c: Vector2i) -> bool:
 		return false
 	if p.y < FARM_MARGIN.y or p.y > world_size.y - FARM_MARGIN.y:
 		return false
+	if p.y <= FarmBackground.FIELD_TOP_Y:
+		return false  # the top farmyard strip isn't farmland
 	return _walkable(p)
 
 # Like is_farmable_cell, but also refuses the dirt paths: a brand-new plot
@@ -216,12 +219,19 @@ func _set_grass_prompt(c: Vector2i):
 	prompt_cell = c
 	prompt_cell_valid = true
 	if plow_uses() > 0:
-		prompt = "[E] Plow the soil — plow has %d uses left" % plow_uses()
+		prompt = _plow_prompt()
 		prompt_action = func(): plow_cell(c)
 	else:
 		prompt = "Wild soil — your plow is broken; buy a new one in town"
 	if sprinkler_stock() > 0:
 		prompt += "  ·  [F] Place sprinkler"
+
+# The "[E] Plow…" line, including the active size + [X] toggle once a wider plow
+# has been researched.
+func _plow_prompt() -> String:
+	if max_plow_radius() > 0:
+		return "[E] Plow %s — plow has %d uses left  ·  [X] Plow size" % [plow_size_label(), plow_uses()]
+	return "[E] Plow the soil — plow has %d uses left" % plow_uses()
 
 func _set_tile_prompt(tile: FarmTile):
 	prompt_tile = tile
@@ -232,7 +242,7 @@ func _set_tile_prompt(tile: FarmTile):
 	match tile.state:
 		FarmTile.TState.UNPLOWED:
 			if plow_uses() > 0:
-				prompt = "[E] Plow the soil — plow has %d uses left" % plow_uses()
+				prompt = _plow_prompt()
 				prompt_action = func(): plow_tile(tile)
 			else:
 				prompt = "Wild soil — your plow is broken; buy a new one in town"
@@ -611,8 +621,34 @@ func _truck_station():
 func has_research(id: String) -> bool:
 	return SaveDataManager.has_research(id)
 
-func plow_radius() -> int:
+# The widest plow the player has researched (0 = single tile, 1 = 3x3, 2 = 5x5).
+func max_plow_radius() -> int:
 	return int(SaveDataManager.research_bonus("plow_radius"))
+
+# The plow size currently in use: the player's chosen mode clamped to what's
+# been researched. Defaults to the widest available (the old behaviour) until
+# the player picks a smaller one with [X].
+func plow_radius() -> int:
+	return clampi(int(SaveDataManager.farm.get("plow_mode", 99)), 0, max_plow_radius())
+
+# "1×1" / "3×3" / "5×5" for a radius (defaults to the active one).
+func plow_size_label(r := -1) -> String:
+	var n = (r if r >= 0 else plow_radius()) * 2 + 1
+	return "%d×%d" % [n, n]
+
+# Cycle through the researched plow sizes (1×1 → 3×3 → 5×5 → 1×1), so small
+# fixes don't force the whole wide square. No-op until a wider plow is researched.
+func cycle_plow_mode():
+	var m = max_plow_radius()
+	if m <= 0:
+		return
+	SaveDataManager.farm["plow_mode"] = (plow_radius() + 1) % (m + 1)
+	SaveDataManager.save_game()
+	_popup("Plow size: %s" % plow_size_label(), Color(0.85, 0.7, 0.4))
+
+# [X] while walking the farm
+func _on_tool_cycle():
+	cycle_plow_mode()
 
 func sprinkler_reach() -> int:
 	return 1 + int(SaveDataManager.research_bonus("sprinkler_reach"))

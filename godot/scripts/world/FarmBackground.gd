@@ -1,38 +1,45 @@
 extends Node2D
 class_name FarmBackground
 
-# The farm backdrop: striped pasture, dirt paths, the farmhouse, a well, a
-# pond, a market truck, a research shed and a tree line — all procedural, like
-# the rest of the game. The whole pasture is a free-form plowable grid (no
-# fenced fields). The seed/knife/tool stalls and the championship kitchen live
-# in town (TownBackground); a gate in the east hedge leads there. Geometry
-# constants here are the single source of truth; FarmController reads them for
-# collision and interaction points.
+# The farm backdrop: a tidy farmyard strip across the top (the farmhouse, a
+# well, a pond, the market truck and the research shed), one straight dirt path
+# dividing that strip from a single large open pasture below, and a tree line
+# along the very top — all procedural, like the rest of the game. The pasture
+# is one free-form plowable grid (no fenced fields); only the open field below
+# the path is farmland. The seed/knife/tool stalls and the championship kitchen
+# live in town (TownBackground); a gate at the east end of the path leads there.
+# Geometry constants here are the single source of truth; FarmController reads
+# them for collision and interaction points.
 
-const WORLD = Vector2(2560, 1440)
+const WORLD = Vector2(2560, 1600)
 
-const HOUSE_WALL = Rect2(310, 270, 260, 150)
-const WELL_POS = Vector2(1560, 460)
-const POND_C = Vector2(2230, 1230)
-const POND_R = Vector2(250, 135)
-const TOWN_GATE_POS = Vector2(2470, 870)  # hedge gap on the east edge
-# market truck near the top hedge — load spuds here to ship them to market
-const TRUCK_RECT = Rect2(1180, 95, 230, 130)
-const TRUCK_POS = Vector2(1295, 160)
-# research shed in the open lower-left, clear of the house/well/pond
-const RESEARCH_WALL = Rect2(360, 980, 230, 150)
-const RESEARCH_POS = Vector2(475, 1055)
+# ── top farmyard strip: every fixture lives up here, above the dividing path ──
+const HOUSE_WALL = Rect2(180, 200, 260, 150)
+const WELL_POS = Vector2(900, 360)
+const POND_C = Vector2(2200, 360)
+const POND_R = Vector2(220, 120)
+const TOWN_GATE_POS = Vector2(2470, 620)  # hedge gap at the east end of the path
+# market truck in the yard — load spuds here to ship them to market
+const TRUCK_RECT = Rect2(1180, 150, 230, 130)
+const TRUCK_POS = Vector2(1295, 215)
+# research shed in the yard, clear of the house/well/pond
+const RESEARCH_WALL = Rect2(1620, 250, 230, 150)
+const RESEARCH_POS = Vector2(1735, 325)
 # a purely decorative fenced kitchen garden tucked beside the farmhouse (drawn
 # in the backdrop layer, below the plowable grid — cosmetic only)
-const GARDEN_RECT = Rect2(150, 470, 300, 180)
+const GARDEN_RECT = Rect2(180, 380, 240, 140)
 
+# One straight dirt track runs the full width, splitting the yard above from the
+# open pasture below.
 const PATHS = [
-	[Vector2(440, 430), Vector2(560, 540), Vector2(1240, 540), Vector2(1560, 500)],
-	[Vector2(1240, 540), Vector2(1180, 660), Vector2(1140, 745)],
-	[Vector2(1560, 500), Vector2(1648, 455)],
-	[Vector2(1240, 540), Vector2(1220, 800), Vector2(1200, 1010)],
-	[Vector2(1560, 500), Vector2(2000, 660), Vector2(2330, 820), Vector2(2480, 870)],
+	[Vector2(90, 620), Vector2(2470, 620)],
 ]
+
+# Cells whose centre sits at or above this line are the farmyard, not farmland —
+# FarmController refuses to plow there, keeping the field a single clean block
+# below the path. Set just above the path band so the path row itself still
+# reads as farmland-shaped ground (but stays unplowable, being on the track).
+const FIELD_TOP_Y := 580.0
 
 # Plots and grass decorations stay this far (px) clear of a path's centre-line so
 # the dirt tracks read as walkways, never as fields. The drawn earth is ~44px
@@ -40,12 +47,11 @@ const PATHS = [
 # visible track. FarmController reads this when deciding what's plowable.
 const PATH_CLEARANCE := 34.0
 
+# A tree line strung along the very top of the yard, between the buildings.
 const TREE_POSITIONS = [
-	Vector2(170, 560), Vector2(150, 900), Vector2(220, 1240),
-	Vector2(380, 1340), Vector2(1920, 760), Vector2(2440, 990),
-	Vector2(820, 320), Vector2(1240, 240), Vector2(1450, 140),
-	Vector2(2480, 330), Vector2(2380, 1060), Vector2(1980, 800),
-	Vector2(2160, 970), Vector2(650, 170)
+	Vector2(80, 110), Vector2(560, 120), Vector2(1080, 100),
+	Vector2(1530, 120), Vector2(2010, 100), Vector2(2360, 130),
+	Vector2(740, 470), Vector2(2480, 470)
 ]
 
 var t := 0.0
@@ -186,10 +192,6 @@ func _draw_paths():
 		for i in range(path.size()):
 			draw_circle(path[i], 22.0, earth)
 			draw_circle(path[i], 10.0, worn)
-	# worn patches at the busy junctions
-	for c in [Vector2(1240, 540), Vector2(1560, 500)]:
-		draw_circle(c, 32.0, earth)
-		draw_circle(c, 16.0, worn)
 	# gravel speckle — stable per-frame via a fixed-seed walk along each path
 	var grng := RandomNumberGenerator.new()
 	grng.seed = 0x6A77  # stable gravel speckle layout across frames
@@ -405,11 +407,11 @@ func _draw_kitchen_garden():
 			Vector2(post.x - 3, post.y), Vector2(post.x + 3, post.y), Vector2(post.x, post.y - 8)
 		]), fence)
 
-# Road stub and signpost where the east hedge opens toward town
+# Road stub and signpost where the east hedge opens toward town (east end of path)
 func _draw_town_gate():
-	draw_rect(Rect2(WORLD.x - 120, 830, 120, 80), Color(0.55, 0.42, 0.26))
-	draw_rect(Rect2(WORLD.x - 120, 838, 120, 64), Color(0.66, 0.52, 0.33))
-	var sp = Vector2(2392, 800)
+	draw_rect(Rect2(WORLD.x - 120, 580, 120, 80), Color(0.55, 0.42, 0.26))
+	draw_rect(Rect2(WORLD.x - 120, 588, 120, 64), Color(0.66, 0.52, 0.33))
+	var sp = Vector2(2392, 552)
 	draw_rect(Rect2(sp.x - 4, sp.y - 52, 8, 56), Color(0.45, 0.32, 0.18))
 	draw_rect(Rect2(sp.x - 42, sp.y - 78, 84, 30), Color(0.55, 0.4, 0.24))
 	draw_rect(Rect2(sp.x - 42, sp.y - 78, 84, 4), Color(0.65, 0.5, 0.3))
@@ -423,13 +425,13 @@ func _draw_hedge_border():
 	draw_rect(Rect2(0, 0, WORLD.x, 36), hedge)
 	draw_rect(Rect2(0, WORLD.y - 36, WORLD.x, 36), hedge)
 	draw_rect(Rect2(0, 0, 36, WORLD.y), hedge)
-	# east hedge leaves a gap for the town gate
-	draw_rect(Rect2(WORLD.x - 36, 0, 36, 800), hedge)
-	draw_rect(Rect2(WORLD.x - 36, 940, 36, WORLD.y - 940), hedge)
+	# east hedge leaves a gap for the town gate at the end of the path
+	draw_rect(Rect2(WORLD.x - 36, 0, 36, 560), hedge)
+	draw_rect(Rect2(WORLD.x - 36, 690, 36, WORLD.y - 690), hedge)
 	for x in range(45, int(WORLD.x), 90):
 		draw_circle(Vector2(x, 36), 16.0, hedge)
 		draw_circle(Vector2(x, WORLD.y - 36), 16.0, hedge)
 	for y in range(45, int(WORLD.y), 90):
 		draw_circle(Vector2(36, y), 16.0, hedge)
-		if y < 790 or y > 950:
+		if y < 550 or y > 700:
 			draw_circle(Vector2(WORLD.x - 36, y), 16.0, hedge)
