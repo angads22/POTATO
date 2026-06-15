@@ -70,6 +70,7 @@ var farm: Dictionary = {
 	"tiles": {},            # sparse "col:row" -> tile dict
 	"plow_uses": 10,        # durability left on the current plow; 0 = broken
 	"plows_bought": 0,      # replacement purchases — each one costs more
+	"cover_freebies": 9,    # free "cover plot" uses; once spent, covering costs coins
 	"sprinkler_stock": 0,   # sprinklers bought but not yet placed on a tile
 	"items": {},            # fertilizer charges remaining, per enhancer id
 	"research_points": 0,   # spent with coins on the research tree
