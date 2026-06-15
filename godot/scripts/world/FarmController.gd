@@ -16,6 +16,8 @@ const CELL := Vector2(140, 110)
 const GRID_ORIGIN := Vector2(70, 70)   # world position of cell (0,0)'s centre
 # interior bounds a cell centre must sit inside to be plowable (off the hedge)
 const FARM_MARGIN := Vector2(110, 120)
+# coins charged to cover a plowed plot back over once the free covers run out
+const COVER_COST := 25
 
 var bg: FarmBackground
 var fireflies: CPUParticles2D
@@ -232,6 +234,7 @@ func _set_tile_prompt(tile: FarmTile):
 				prompt = "Plowed soil — buy seeds at the town seed shop"
 			if sprinkler_stock() > 0:
 				prompt += "  ·  [F] Place sprinkler"
+			prompt += "  ·  [C] Cover (%s)" % _cover_hint()
 		FarmTile.TState.PLANTED:
 			var pct = int(tile.progress() * 100.0)
 			var nm = GameData.potato_by_id(tile.potato_id).get("name", "?")
@@ -266,6 +269,12 @@ func _on_alt_interact():
 					open_shop = "enhance"
 	elif prompt_cell_valid and sprinkler_stock() > 0:
 		place_sprinkler_cell(prompt_cell)
+
+# [C]: cover a plowed plot back over to wild grass
+func _on_cover_interact():
+	if prompt_tile != null and not prompt_tile.has_sprinkler \
+			and prompt_tile.state == FarmTile.TState.PLOWED:
+		cover_tile(prompt_tile)
 
 func _shop_input(key: Key):
 	var idx = key - KEY_1  # 0-based row number
@@ -357,6 +366,44 @@ func plow_tile(tile: FarmTile) -> bool:
 		_popup("Soil plowed — ready for a seed", Color.LIGHT_GREEN)
 	if SaveDataManager.settings.get("particle_effects", true):
 		Fx.burst(self, tile.position, Color(0.46, 0.32, 0.18), 10, 160.0)
+	return true
+
+# Free "cover plot" uses left; once spent, covering costs COVER_COST coins.
+func cover_freebies() -> int:
+	return int(SaveDataManager.farm.get("cover_freebies", 0))
+
+# 0 while freebies remain, otherwise the coin price for one cover
+func cover_cost() -> int:
+	return 0 if cover_freebies() > 0 else COVER_COST
+
+func _cover_hint() -> String:
+	return ("%d free" % cover_freebies()) if cover_freebies() > 0 else ("%d c" % COVER_COST)
+
+# Cover a plowed plot back over to wild grass. Spends a freebie (9 to start),
+# or COVER_COST coins once those run out. The plow is NOT refunded and there's
+# no undo — the cell drops back to plain grass and must be plowed again to use.
+func cover_tile(tile: FarmTile) -> bool:
+	if tile == null or tile.has_sprinkler or tile.state != FarmTile.TState.PLOWED:
+		return false
+	var free = cover_freebies()
+	if free <= 0 and not SaveDataManager.spend_coins(COVER_COST):
+		_popup("Need %d coins to cover this plot" % COVER_COST, Color.ORANGE_RED)
+		return false
+	if free > 0:
+		SaveDataManager.farm["cover_freebies"] = free - 1
+	var pos = tile.position
+	# back to virgin grass: clear the soil so to_dict() empties and the sparse
+	# tile node is dropped — no plow refund, no last-crop memory to replant.
+	tile.state = FarmTile.TState.UNPLOWED
+	tile.last_potato_id = ""
+	_drop_tile(tile)
+	_sync_tiles()
+	if free > 0:
+		_popup("Plot covered over — %d free %s left" % [free - 1, ("cover" if free - 1 == 1 else "covers")], Color(0.72, 0.62, 0.48))
+	else:
+		_popup("Plot covered over for %d coins" % COVER_COST, Color(0.72, 0.62, 0.48))
+	if SaveDataManager.settings.get("particle_effects", true):
+		Fx.burst(self, pos, Color(0.5, 0.46, 0.28), 10, 150.0)
 	return true
 
 func place_sprinkler_cell(c: Vector2i) -> bool:

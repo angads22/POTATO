@@ -120,7 +120,8 @@ are drawn procedurally (no sprite assets required to run).
 (movement, blockers, camera, day-night, prompts, shop overlays, economy actions) and `WorldHUD`:
 the **farm** (`FarmController` — the whole pasture is one free-form plowable grid; `FarmTile`s are
 sparse, created on demand only once a cell is plowed or holds a sprinkler; plow → plant →
-water/sprinkler → fertilize → harvest, soil stays plowed) and the **town** (`TownController` —
+water/sprinkler → fertilize → harvest, soil stays plowed; `[C]` covers a plowed plot back to
+grass for coins — 9 freebies, no plow refund, must replow) and the **town** (`TownController` —
 seed/knife/tool stalls plus the championship kitchen; the designated home for future non-farming
 content). Progression runs on the farm's **Research Shed** (`research.json` nodes bought with coins +
 research points: logistics/tools/crops/growth, incl. research-gated crops) and the **market truck**

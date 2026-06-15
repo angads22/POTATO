@@ -5,7 +5,8 @@ extends Node
 # and fertilizer on the open grid, ship a load on the MARKET TRUCK (load →
 # send → time-travel the return → coins + research points come back), buy a
 # RESEARCH node and see its effect, confirm crops stay gated until researched,
-# the [E] well refill, and the schema-2 -> schema-3 save migration.
+# cover a plowed plot back over (freebies then coins, no plow refund), the
+# [E] well refill, and the schema-2 -> schema-3 save migration.
 # NOTE: writes to the user:// save like a real session would, and never
 # triggers a scene change (that would free this test root).
 #
@@ -20,7 +21,8 @@ func _ready():
 	SaveDataManager.farm = {
 		"schema": 3, "wallet": 20000, "seeds": {}, "spuds": {}, "water": 0,
 		"owned_knives": ["butter"], "equipped_knife": "butter",
-		"tiles": {}, "plow_uses": 10, "plows_bought": 0, "sprinkler_stock": 0,
+		"tiles": {}, "plow_uses": 10, "plows_bought": 0, "cover_freebies": 9,
+		"sprinkler_stock": 0,
 		"items": {}, "research_points": 0, "research": {},
 		"truck": {"status": "idle", "cargo": {}, "return_at": 0.0,
 				"pending_coins": 0, "pending_rp": 0}
@@ -43,6 +45,8 @@ func _process(_delta):
 			_run_truck()
 		28:
 			_run_research()
+		31:
+			_run_cover()
 		34:
 			# stand by the well with an empty can for the input probe
 			SaveDataManager.farm["water"] = 0
@@ -223,6 +227,38 @@ func _run_research_map():
 	_check(SaveDataManager.research_bonus("golden_luck") > 0.0, "Lucky Spuds raises golden_luck")
 	_check(farm.buy_research("champ_field"), "Field Research buys")
 	_check(SaveDataManager.research_bonus("champ_rp_per") > 0.0, "Field Research grants champ_rp_per")
+
+# ── cover a plot back over: freebies first, then coins, plow never refunded ──
+func _run_cover():
+	var c := Vector2i(7, 9)
+	_check(farm.cover_freebies() == 9, "cover: 9 freebies to start")
+	_check(farm.plow_cell(c), "cover: plow a fresh plot to cover")
+	var tile: FarmTile = farm.tile_map.get("7:9")
+	_check(tile != null and tile.state == FarmTile.TState.PLOWED, "cover: plot starts plowed")
+	var uses_before = farm.plow_uses()
+	_check(farm.cover_tile(tile), "cover: a freebie cover succeeds")
+	_check(farm.cover_freebies() == 8, "cover: a freebie is spent")
+	_check(not farm.tile_map.has("7:9"), "cover: covered plot reverts to wild grass")
+	_check(farm.plow_uses() == uses_before, "cover: covering doesn't refund the plow")
+
+	# once the freebies are gone, a cover costs coins
+	SaveDataManager.farm["cover_freebies"] = 0
+	_check(farm.cover_cost() == FarmController.COVER_COST, "cover: costs coins with no freebies")
+	farm.plow_cell(c)
+	var tile2: FarmTile = farm.tile_map.get("7:9")
+	var wallet_before = SaveDataManager.wallet()
+	_check(farm.cover_tile(tile2), "cover: a paid cover succeeds")
+	_check(SaveDataManager.wallet() == wallet_before - FarmController.COVER_COST, "cover: paid cover spends coins")
+	_check(not farm.tile_map.has("7:9"), "cover: paid-covered plot is wild again")
+
+	# broke and out of freebies: covering is refused (land stays plowed)
+	SaveDataManager.farm["wallet"] = 0
+	farm.plow_cell(c)
+	var tile3: FarmTile = farm.tile_map.get("7:9")
+	_check(not farm.cover_tile(tile3), "cover: blocked when broke and out of freebies")
+	_check(farm.tile_map.has("7:9") and tile3.state == FarmTile.TState.PLOWED, "cover: a refused cover leaves the plot plowed")
+	# refill the wallet so later steps (research already ran) aren't starved
+	SaveDataManager.farm["wallet"] = 20000
 
 func _is_plantable(id: String) -> bool:
 	for p in farm.plantable_potatoes():
