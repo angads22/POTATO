@@ -79,7 +79,10 @@ day-night cycle, prompts, shop overlays, economy actions) and a `WorldHUD`:
   sprinkler there. Plow the grass (the plow wears out after 10 uses;
   replacements cost more each time), plant, water (or place a sprinkler to
   auto-water the tiles around it — now a real spatial puzzle), fertilize
-  (multi-charge), harvest — the soil stays plowed. Progression runs on the
+  (multi-charge), harvest — the soil stays plowed. A plowed plot you no longer
+  want can be **covered back over** with `[C]` (9 free covers, then a small
+  coin fee); the plow isn't refunded and there's no undo, so the cell must be
+  plowed again to farm it. Progression runs on the
   **Research Shed** (coins + research points buy logistics/tools/crops/growth
   upgrades, `resources/game_data/research.json`, incl. research-gated crops),
   and the harvest ships from the **market truck** by the top hedge (load it,
@@ -95,7 +98,8 @@ day-night cycle, prompts, shop overlays, economy actions) and a `WorldHUD`:
 
 Farm state lives in `SaveDataManager.farm` (schema 3: sparse `tiles` dict
 keyed `"col:row"`, `research`/`research_points`, the `truck`,
-`plow_uses`/`plows_bought`, `sprinkler_stock`, fertilizer charges in `items`).
+`plow_uses`/`plows_bought`, `cover_freebies`, `sprinkler_stock`, fertilizer
+charges in `items`).
 Schema-1 (`plots` array) and schema-2 (`field:row:col` + `sections_owned`)
 saves are migrated automatically on load through a 1→2→3 chain.
 

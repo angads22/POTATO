@@ -59,6 +59,10 @@ func _tick(_delta: float):
 func _on_alt_interact():
 	pass
 
+# [C] while walking — the farm uses it to cover a plowed plot back over to grass
+func _on_cover_interact():
+	pass
+
 # shop overlay was closed with ESC
 func _on_shop_closed():
 	pass
@@ -184,6 +188,8 @@ func _input(event: InputEvent):
 			prompt_action.call()
 	elif event.keycode == KEY_F:
 		_on_alt_interact()
+	elif event.keycode == KEY_C:
+		_on_cover_interact()
 
 # Numeric hotkeys inside the store overlays both maps share; the farm
 # overrides this to add its plant/enhance menus.
