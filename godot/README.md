@@ -80,8 +80,11 @@ day-night cycle, prompts, shop overlays, economy actions) and a `WorldHUD`:
   replacements cost more each time), plant, water (or place a sprinkler to
   auto-water the tiles around it — now a real spatial puzzle), fertilize
   (multi-charge), harvest — the soil stays plowed. Progression runs on the
-  **Research Shed** (coins + research points buy logistics/tools/crops/growth
-  upgrades, `resources/game_data/research.json`, incl. research-gated crops),
+  **Research Shed** — a node-based skill-tree map (arrow keys navigate, [E]
+  buys the highlighted node) where coins + research points buy
+  logistics/tools/crops/growth/championship upgrades plus cross-branch
+  capstones (`resources/game_data/research.json`, incl. research-gated crops
+  and championship nodes that earn research from runs / raise golden odds),
   and the harvest ships from the **market truck** by the top hedge (load it,
   send it off, coins + research points return after a wall-clock delay). The
   farmhouse, well and pond live here too.
@@ -263,8 +266,9 @@ CI runs these on every PR touching `godot/` (see `.github/workflows/godot.yml`).
 - ✅ Open-grid farm: the whole pasture is free-form plowable (sparse,
   on-demand tiles), a plow that wears out (and costs more each replacement),
   placeable sprinklers, multi-charge fertilizer, and a Research Shed
-  (coins + research points → logistics/tools/crops/growth, research-gated
-  crops, drone/seeder automation) feeding a market truck that ships the
+  (node-based skill-tree map; coins + research points →
+  logistics/tools/crops/growth/championship + cross-branch capstones,
+  research-gated crops, drone/seeder automation) feeding a market truck that ships the
   harvest. Schema-1/2 saves migrate automatically (1→2→3 chain).
 - ✅ Town map: fountain plaza with the seed/knife/tool stalls and the
   championship kitchen, gates between farm and town

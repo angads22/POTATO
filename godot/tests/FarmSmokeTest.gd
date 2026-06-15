@@ -167,6 +167,63 @@ func _run_research():
 	_check(farm.buy_research("crop_red"), "unlocking a crop via research succeeds")
 	_check(_is_plantable("red"), "the crop becomes plantable once researched")
 
+	_run_research_map()
+
+# ── node-map backend: full graph, locked/available state, navigation ──
+func _run_research_map():
+	SaveDataManager.add_research_points(200)  # plenty to shop the tree with
+
+	# the map draws every node; the buyable frontier is a strict subset
+	var all = farm.research_all_nodes()
+	_check(all.size() == GameData.research_nodes().size(), "research_all_nodes returns every node")
+	_check(all.size() > farm.research_menu_nodes().size(), "the frontier is a subset of all nodes")
+
+	# every node carries a valid, unique [gridX, gridY] position
+	var seen := {}
+	var pos_ok := true
+	for node in all:
+		var p = node.get("pos", null)
+		if not (p is Array) or p.size() != 2:
+			pos_ok = false
+		else:
+			var k = "%d:%d" % [int(p[0]), int(p[1])]
+			if seen.has(k):
+				pos_ok = false
+			seen[k] = true
+	_check(pos_ok, "every research node has a unique [gridX, gridY] pos")
+
+	# locked / available classification (logi_cap1 + crop_red are owned by now)
+	_check(farm.research_locked(GameData.research_by_id("tool_radius2")), "a node with an unmet prereq is locked")
+	_check(not farm.research_locked(GameData.research_by_id("grow_speed1")), "an available root is not locked")
+	_check(not farm.research_locked(GameData.research_by_id("logi_cap1")), "an owned node is not locked")
+
+	# directional selection moves to a real neighbour, and stops at the edge
+	farm.research_sel_id = "logi_cap1"
+	farm.research_select_dir(Vector2.DOWN)
+	_check(farm.research_sel_id != "logi_cap1" and farm.research_sel_id != "", "DOWN moves the selection")
+	farm.research_sel_id = "logi_speed1"   # top-row node, nothing above it
+	farm.research_select_dir(Vector2.UP)
+	_check(farm.research_sel_id == "logi_speed1", "selecting past the edge keeps the selection")
+
+	# buying acts on the SELECTED node (the UI path), not a number index
+	farm.research_sel_id = "tool_dura1"
+	_check(farm.buy_research(farm.research_sel_id), "buying the selected node works")
+	_check(farm.has_research("tool_dura1"), "the selected-node buy is applied")
+
+	# new tiers sum through the existing effect plumbing (pure data)
+	_check(SaveDataManager.research_bonus("plow_durability") == 5.0, "one durability node sums to +5")
+	_check(farm.buy_research("tool_dura2"), "a deeper tier unlocks once its prereq is owned")
+	_check(SaveDataManager.research_bonus("plow_durability") == 13.0, "stacked durability nodes sum to +13")
+	_check(farm.buy_research("grow_speed1") and farm.buy_research("grow_speed2"),
+			"stacked growth-speed tiers buy in order")
+	_check(abs(SaveDataManager.grow_time_mult() - 0.7225) < 0.0001, "two grow_mult tiers multiply (0.85 x 0.85)")
+
+	# championship hooks expose their bonus through research_bonus
+	_check(farm.buy_research("champ_lucky"), "a championship node buys")
+	_check(SaveDataManager.research_bonus("golden_luck") > 0.0, "Lucky Spuds raises golden_luck")
+	_check(farm.buy_research("champ_field"), "Field Research buys")
+	_check(SaveDataManager.research_bonus("champ_rp_per") > 0.0, "Field Research grants champ_rp_per")
+
 func _is_plantable(id: String) -> bool:
 	for p in farm.plantable_potatoes():
 		if p["id"] == id:
