@@ -89,10 +89,12 @@ func _load_stage_potatoes():
 	var golden = GameData.potato_by_id("golden")
 	var count = 6 + GameManager.current_state.stage * 2
 
-	# Endless sweetens the pot: golden odds climb with every wave survived
-	var golden_chance: float = golden.get("chance", 0.07)
+	# Endless sweetens the pot: golden odds climb with every wave survived.
+	# The "Lucky Spuds" research line raises the base odds in every mode.
+	var golden_chance: float = golden.get("chance", 0.07) + SaveDataManager.research_bonus("golden_luck")
 	if GameManager.current_state.mode == "endless":
-		golden_chance = minf(0.25, golden_chance + 0.01 * GameManager.current_state.stage)
+		golden_chance += 0.01 * GameManager.current_state.stage
+	golden_chance = minf(0.35, golden_chance)
 
 	for i in range(count):
 		if i > 0 and i % 4 == 0 and not rotten.is_empty():

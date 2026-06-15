@@ -81,6 +81,10 @@ func end_game(victory: bool):
 	current_state.last_payout = current_state.coins_earned + current_state.score / 20
 	if current_state.last_payout > 0:
 		SaveDataManager.add_coins(current_state.last_payout)
+	# "Field Research" turns championship scores into research points
+	var champ_rp = int(current_state.score * SaveDataManager.research_bonus("champ_rp_per"))
+	if champ_rp > 0:
+		SaveDataManager.add_research_points(champ_rp)
 	# Submit to global leaderboard (no-op when Supabase isn't configured)
 	var knife_id: String = SaveDataManager.farm.get("equipped_knife", "butter")
 	var player_name: String = SaveDataManager.settings.get("player_name", "Chef")

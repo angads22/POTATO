@@ -7,6 +7,13 @@ class_name WorldHUD
 
 var ctrl  # WorldController
 
+# research node-map geometry: a graph region on the left, a node-details
+# sidebar on the right. Nodes are laid out on a grid by their "pos" field.
+const RES_MAP := Rect2(36, 178, 856, 496)
+const RES_SIDE := Rect2(904, 178, 340, 496)
+const RES_CELL := Vector2(150, 86)
+const RES_NODE_R := 20.0
+
 func _draw():
 	if ctrl == null:
 		return
@@ -151,8 +158,11 @@ func _draw_day_dial():
 
 func _draw_shop(font: Font):
 	draw_rect(Rect2(0, 0, 1280, 720), Color(0, 0, 0, 0.55))
+	# the research shed uses a full-width node map, not the shared centred panel
+	var is_research = ctrl.open_shop == "research"
 	var panel = Rect2(320, 110, 640, 500)
-	GameHUD.panel_style(Color(0.16, 0.1, 0.06, 0.97)).draw(get_canvas_item(), panel)
+	if not is_research:
+		GameHUD.panel_style(Color(0.16, 0.1, 0.06, 0.97)).draw(get_canvas_item(), panel)
 
 	var title = ""
 	match ctrl.open_shop:
@@ -166,10 +176,11 @@ func _draw_shop(font: Font):
 	var ts = font.get_string_size(title, HORIZONTAL_ALIGNMENT_CENTER, -1, 30)
 	draw_string(font, Vector2(640 - ts.x / 2, 160), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, Color.GOLD)
 
-	# wallet, top-right of the panel
-	var wt = "%d coins" % SaveDataManager.wallet()
-	var ws = font.get_string_size(wt, HORIZONTAL_ALIGNMENT_CENTER, -1, 18)
-	draw_string(font, Vector2(panel.end.x - ws.x - 24, 146), wt, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.GOLD)
+	# wallet, top-right of the panel (the research map draws its own balances)
+	if not is_research:
+		var wt = "%d coins" % SaveDataManager.wallet()
+		var ws = font.get_string_size(wt, HORIZONTAL_ALIGNMENT_CENTER, -1, 18)
+		draw_string(font, Vector2(panel.end.x - ws.x - 24, 146), wt, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.GOLD)
 
 	match ctrl.open_shop:
 		"seeds":
@@ -185,8 +196,7 @@ func _draw_shop(font: Font):
 			else:
 				_draw_footer(font, panel, "[1-7] Load stack   ·   [A] Load all   ·   [S] Send to market   ·   [ESC] Close")
 		"research":
-			_draw_research_rows(font, panel)
-			_draw_footer(font, panel, "[1-%d] Research   ·   [ESC] Close" % maxi(ctrl.research_menu_nodes().size(), 1))
+			_draw_research_map(font)
 		"knives":
 			_draw_knife_rows(font, panel)
 			_draw_footer(font, panel, "[1-%d] Buy / Equip   ·   [ESC] Close" % GameData.knives().size())
@@ -262,33 +272,207 @@ func _draw_truck_rows(font: Font, panel: Rect2):
 		var ms = font.get_string_size(msg, HORIZONTAL_ALIGNMENT_CENTER, -1, 18)
 		draw_string(font, Vector2(640 - ms.x / 2, 320), msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.7, 0.65, 0.55))
 
-func _draw_research_rows(font: Font, panel: Rect2):
-	# research-point balance up top
-	draw_string(font, Vector2(panel.position.x + 40, 198),
-			"Research points: %d" % SaveDataManager.research_points(),
+# ── research shed: a node-based skill-tree map ──
+
+func _npos(node: Dictionary) -> Vector2:
+	var p = node.get("pos", [0, 0])
+	if p is Array and p.size() >= 2:
+		return Vector2(float(p[0]), float(p[1]))
+	return Vector2.ZERO
+
+func _node_center(node: Dictionary, origin: Vector2) -> Vector2:
+	return origin + _npos(node) * RES_CELL
+
+# Pixel position of grid cell (0,0): the tree is centred when it fits the map
+# region, otherwise the camera follows the selection clamped to the content.
+func _research_origin(nodes: Array) -> Vector2:
+	var min_p := Vector2(INF, INF)
+	var max_p := Vector2(-INF, -INF)
+	for n in nodes:
+		var p = _npos(n)
+		min_p.x = minf(min_p.x, p.x)
+		min_p.y = minf(min_p.y, p.y)
+		max_p.x = maxf(max_p.x, p.x)
+		max_p.y = maxf(max_p.y, p.y)
+	var content = (max_p - min_p) * RES_CELL
+	var margin := 52.0
+	var sel = GameData.research_by_id(ctrl.research_sel_id)
+	var sp = _npos(sel) if not sel.is_empty() else min_p
+	var origin := Vector2.ZERO
+	if content.x <= RES_MAP.size.x - margin * 2.0:
+		origin.x = RES_MAP.position.x + (RES_MAP.size.x - content.x) * 0.5 - min_p.x * RES_CELL.x
+	else:
+		origin.x = clampf(RES_MAP.get_center().x - sp.x * RES_CELL.x,
+				RES_MAP.end.x - margin - max_p.x * RES_CELL.x,
+				RES_MAP.position.x + margin - min_p.x * RES_CELL.x)
+	if content.y <= RES_MAP.size.y - margin * 2.0:
+		origin.y = RES_MAP.position.y + (RES_MAP.size.y - content.y) * 0.5 - min_p.y * RES_CELL.y
+	else:
+		origin.y = clampf(RES_MAP.get_center().y - sp.y * RES_CELL.y,
+				RES_MAP.end.y - margin - max_p.y * RES_CELL.y,
+				RES_MAP.position.y + margin - min_p.y * RES_CELL.y)
+	return origin
+
+# owned / afford(able) / unafford(able) / locked — drives node and edge colour.
+func _node_state(node: Dictionary) -> String:
+	if ctrl.has_research(node.get("id", "")):
+		return "owned"
+	if ctrl.research_available(node):
+		return "afford" if ctrl.can_afford_research(node) else "unafford"
+	return "locked"
+
+func _edge_color(child: Dictionary, parent: Dictionary) -> Color:
+	if ctrl.has_research(child.get("id", "")):
+		return Color(0.5, 0.85, 0.45, 0.9)        # both owned — a finished path
+	if ctrl.has_research(parent.get("id", "")):
+		return Color(0.85, 0.7, 0.35, 0.8)         # prereq met — child reachable
+	return Color(0.45, 0.42, 0.4, 0.55)            # still locked
+
+func _draw_research_map(font: Font):
+	var nodes: Array = ctrl.research_all_nodes()
+	draw_string(font, Vector2(RES_MAP.position.x + 4, 150),
+			"Coins: %d        Research points: %d" % [SaveDataManager.wallet(), SaveDataManager.research_points()],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.6, 0.85, 0.95))
-	var nodes = ctrl.research_menu_nodes()
 	if nodes.is_empty():
-		var msg = "Everything researched — nice work, chef!"
-		var ms = font.get_string_size(msg, HORIZONTAL_ALIGNMENT_CENTER, -1, 18)
-		draw_string(font, Vector2(640 - ms.x / 2, 320), msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.7, 0.85, 0.6))
 		return
-	var y = 234.0
-	var i = 0
+	var origin = _research_origin(nodes)
+
+	# 1. connector lines for every prerequisite edge (under the nodes)
 	for node in nodes:
-		i += 1
-		var afford = ctrl.can_afford_research(node)
-		var col = Color(0.95, 0.92, 0.85) if afford else Color(0.55, 0.5, 0.45)
-		var branch_col = _branch_color(str(node.get("branch", "")))
-		draw_circle(Vector2(panel.position.x + 48, y - 7), 9.0, branch_col)
-		draw_string(font, Vector2(panel.position.x + 70, y), "[%d] %s" % [i, node.get("name", "?")], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, col)
-		draw_string(font, Vector2(panel.position.x + 70, y + 18), str(node.get("desc", "")), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.7, 0.65, 0.55))
-		var cost = "%d c · %d rp" % [int(node.get("cost_coins", 0)), int(node.get("cost_rp", 0))]
-		var cs = font.get_string_size(cost, HORIZONTAL_ALIGNMENT_CENTER, -1, 17)
-		draw_string(font, Vector2(panel.end.x - cs.x - 30, y), cost, HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color.GOLD if afford else col)
-		y += 50.0
-		if y > panel.end.y - 60:
-			break
+		var cc = _node_center(node, origin)
+		for req_id in node.get("requires", []):
+			var parent = GameData.research_by_id(req_id)
+			if parent.is_empty():
+				continue
+			draw_line(_node_center(parent, origin), cc, _edge_color(node, parent), 3.0, true)
+
+	# 2. node discs, state rings, glyphs and labels
+	for node in nodes:
+		var c = _node_center(node, origin)
+		if not RES_MAP.grow(46.0).has_point(c):
+			continue  # scrolled off-screen
+		var bcol = _branch_color(str(node.get("branch", "")))
+		var state = _node_state(node)
+		var fill = bcol
+		var ring = Color(0, 0, 0, 0.45)
+		var rw := 2.0
+		match state:
+			"owned":
+				ring = Color.LIGHT_GREEN
+				rw = 3.0
+			"afford":
+				fill = bcol.darkened(0.12)
+				ring = Color.GOLD
+				rw = 3.0
+			"unafford":
+				fill = bcol.darkened(0.45)
+				ring = Color(0.7, 0.55, 0.35, 0.85)
+			"locked":
+				fill = Color(0.30, 0.29, 0.27)
+				ring = Color(0.5, 0.48, 0.45, 0.7)
+		draw_circle(c, RES_NODE_R, fill)
+		draw_arc(c, RES_NODE_R, 0, TAU, 24, ring, rw)
+		if state == "owned":
+			_draw_check(c, Color.LIGHT_GREEN)
+		elif state == "locked":
+			_draw_lock(c, Color(0.62, 0.6, 0.56))
+		var label = str(node.get("name", "?"))
+		var ls = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12)
+		var lcol = Color(0.92, 0.89, 0.82) if state != "locked" else Color(0.62, 0.6, 0.56)
+		draw_string(font, Vector2(c.x - ls.x / 2.0, c.y + RES_NODE_R + 15), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, lcol)
+
+	# 3. pulsing highlight on the selected node
+	var sel = GameData.research_by_id(ctrl.research_sel_id)
+	if not sel.is_empty():
+		var sc = _node_center(sel, origin)
+		var pulse = 0.5 + 0.5 * sin(Time.get_ticks_msec() / 220.0)
+		draw_arc(sc, RES_NODE_R + 6.0, 0, TAU, 28, Color(1.0, 0.95, 0.6, 0.45 + 0.4 * pulse), 3.0)
+
+	# 4. details sidebar + footer
+	_draw_research_details(font, sel)
+	var hint = "[Arrows] Move   ·   [E] Research   ·   [ESC] Close"
+	var hs = font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 16)
+	draw_string(font, Vector2(RES_MAP.get_center().x - hs.x / 2.0, 700), hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.78, 0.73, 0.64))
+
+func _draw_research_details(font: Font, node: Dictionary):
+	GameHUD.panel_style(Color(0.12, 0.09, 0.05, 0.97)).draw(get_canvas_item(), RES_SIDE)
+	if node.is_empty():
+		return
+	var x = RES_SIDE.position.x + 16
+	var w = int(RES_SIDE.size.x - 32)
+	var y = RES_SIDE.position.y + 34
+	var bcol = _branch_color(str(node.get("branch", "")))
+	draw_circle(Vector2(x + 8, y - 6), 8.0, bcol)
+	draw_string(font, Vector2(x + 24, y), str(node.get("name", "?")), HORIZONTAL_ALIGNMENT_LEFT, w - 24, 20, Color.GOLD)
+	y += 34
+	draw_multiline_string(font, Vector2(x, y), str(node.get("desc", "")), HORIZONTAL_ALIGNMENT_LEFT, w, 14, 3, Color(0.85, 0.8, 0.72))
+	y += 58
+	var afford = ctrl.can_afford_research(node)
+	draw_string(font, Vector2(x, y), "Cost:  %d c   ·   %d rp" % [int(node.get("cost_coins", 0)), int(node.get("cost_rp", 0))],
+			HORIZONTAL_ALIGNMENT_LEFT, w, 16, Color.GOLD if afford else Color(0.72, 0.6, 0.45))
+	y += 30
+	draw_multiline_string(font, Vector2(x, y), "Effect: " + _effect_summary(node), HORIZONTAL_ALIGNMENT_LEFT, w, 13, 2, Color(0.6, 0.85, 0.95))
+	y += 44
+	var reqs: Array = node.get("requires", [])
+	if reqs.is_empty():
+		draw_string(font, Vector2(x, y), "Requires: nothing", HORIZONTAL_ALIGNMENT_LEFT, w, 14, Color(0.7, 0.68, 0.6))
+	else:
+		draw_string(font, Vector2(x, y), "Requires:", HORIZONTAL_ALIGNMENT_LEFT, w, 14, Color(0.7, 0.68, 0.6))
+		y += 22
+		for r in reqs:
+			var rn = GameData.research_by_id(r)
+			var have = ctrl.has_research(r)
+			var rcol = Color.LIGHT_GREEN if have else Color(0.82, 0.5, 0.42)
+			draw_string(font, Vector2(x + 10, y), ("[x] " if have else "[ ] ") + str(rn.get("name", r)),
+					HORIZONTAL_ALIGNMENT_LEFT, w - 10, 13, rcol)
+			y += 20
+	var status = ""
+	var scol = Color(0.7, 0.65, 0.55)
+	match _node_state(node):
+		"owned":
+			status = "RESEARCHED"
+			scol = Color.LIGHT_GREEN
+		"afford":
+			status = "[E] Research now"
+			scol = Color.GOLD
+		"unafford":
+			status = "Need more coins / research"
+			scol = Color.ORANGE_RED
+		"locked":
+			status = "Locked — get the prerequisites"
+			scol = Color(0.72, 0.62, 0.5)
+	draw_string(font, Vector2(x, RES_SIDE.end.y - 22), status, HORIZONTAL_ALIGNMENT_LEFT, w, 16, scol)
+
+# Format a node's effect dict into a short human line for the sidebar.
+func _effect_summary(node: Dictionary) -> String:
+	var eff: Dictionary = node.get("effect", {})
+	var parts: PackedStringArray = []
+	for k in eff:
+		var v = eff[k]
+		match k:
+			"truck_capacity": parts.append("+%d truck capacity" % int(v))
+			"truck_trip_delta": parts.append("%ds market trip" % int(v))
+			"truck_price_mult": parts.append("+%d%% truck price" % int(round(float(v) * 100.0)))
+			"plow_durability": parts.append("+%d plow durability" % int(v))
+			"plow_radius": parts.append("wider plow")
+			"sprinkler_reach": parts.append("+1 sprinkler reach")
+			"grow_mult": parts.append("%d%% faster growth" % int(round((1.0 - float(v)) * 100.0)))
+			"bonus_yield": parts.append("+%d harvest yield" % int(v))
+			"auto_harvest": parts.append("auto-harvest")
+			"auto_seed": parts.append("auto-replant")
+			"unlock_crop": parts.append("unlock crop: %s" % str(v))
+			"golden_luck": parts.append("+%d%% golden odds" % int(round(float(v) * 100.0)))
+			"champ_rp_per": parts.append("research from championship runs")
+			_: parts.append(str(k))
+	return ", ".join(parts)
+
+func _draw_check(c: Vector2, col: Color):
+	draw_line(c + Vector2(-6, 0), c + Vector2(-1, 6), col, 3.0)
+	draw_line(c + Vector2(-1, 6), c + Vector2(8, -7), col, 3.0)
+
+func _draw_lock(c: Vector2, col: Color):
+	draw_rect(Rect2(c.x - 6, c.y - 1, 12, 9), col)
+	draw_arc(c + Vector2(0, -1), 4.5, PI, TAU, 10, col, 2.0)
 
 func _branch_color(branch: String) -> Color:
 	match branch:
@@ -296,6 +480,8 @@ func _branch_color(branch: String) -> Color:
 		"tools": return Color(0.6, 0.7, 0.8)
 		"crops": return Color(0.5, 0.8, 0.4)
 		"growth": return Color(0.7, 0.55, 0.85)
+		"championship": return Color(0.9, 0.45, 0.45)
+		"capstone": return Color(0.97, 0.86, 0.45)
 	return Color(0.7, 0.7, 0.7)
 
 func _draw_knife_rows(font: Font, panel: Rect2):
