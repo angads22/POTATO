@@ -49,6 +49,8 @@ func _process(_delta):
 			_run_plow_modes()
 		31:
 			_run_cover()
+		32:
+			_run_automation()
 		34:
 			# stand by the well with an empty can for the input probe
 			SaveDataManager.farm["water"] = 0
@@ -303,6 +305,108 @@ func _is_plantable(id: String) -> bool:
 		if p["id"] == id:
 			return true
 	return false
+
+func _tab_has(nodes: Array, id: String) -> bool:
+	for n in nodes:
+		if str(n.get("id", "")) == id:
+			return true
+	return false
+
+func _planted_count() -> int:
+	var n = 0
+	for t in farm.tiles:
+		if t.state == FarmTile.TState.PLANTED:
+			n += 1
+	return n
+
+# ── automation track: tab split, per-tick field automation + purchase orders ──
+func _run_automation():
+	# the two tabs partition every node; the moved drones live on the automation tab
+	var prog = farm.research_nodes_for_tab("progression")
+	var auto = farm.research_nodes_for_tab("automation")
+	_check(auto.size() >= 8, "the automation tab holds the new track")
+	_check(prog.size() + auto.size() == farm.research_all_nodes().size(), "the tabs partition every node")
+	_check(_tab_has(auto, "tool_autoharvest") and _tab_has(auto, "tool_autoseed"),
+			"auto-harvest/seed were consolidated onto the automation tab")
+
+	SaveDataManager.farm["wallet"] = 20000
+	SaveDataManager.farm["plow_uses"] = 50
+	SaveDataManager.farm["plow_mode"] = 0   # single-tile plow for predictable setup
+	var res: Dictionary = SaveDataManager.farm["research"]
+
+	# auto-water irrigates a dry crop on the tick
+	var wt: FarmTile = farm.tile_map.get("15:7")
+	if wt == null:
+		farm.plow_cell(Vector2i(15, 7)); wt = farm.tile_map.get("15:7")
+	farm.buy_seed("russet"); farm.plant_on(wt, "russet")
+	_check(not wt.watered, "automation: a fresh crop starts dry")
+	res["auto_water"] = true
+	farm._auto_farm()
+	_check(wt.watered, "automation: Drip Irrigation auto-waters dry crops")
+
+	# auto-fertilize buys a bag (subscription) and works it into the crop
+	_check(wt.boost >= 1.0, "automation: crop starts unfertilized")
+	SaveDataManager.farm["items"] = {}
+	res["auto_fertilize"] = true
+	res["auto_buy_fertilizer"] = true
+	farm._auto_farm()
+	_check(wt.boost < 1.0, "automation: Nutrient Injector auto-fertilizes (auto-bought)")
+
+	# seed standing order: restock helper buys a seed, spends coins
+	SaveDataManager.farm["seeds"] = {}
+	var coins0 = SaveDataManager.wallet()
+	_check(farm._auto_restock_seed("russet"), "automation: the seed standing order buys a seed")
+	_check(SaveDataManager.item_count("seeds", "russet") == 1, "automation: the bought seed lands in the pouch")
+	_check(SaveDataManager.wallet() < coins0, "automation: the seed purchase order spends coins")
+
+	# auto-seed + purchase order replant an empty-pouch plot
+	SaveDataManager.farm["seeds"] = {}
+	var sc: FarmTile = farm.tile_map.get("16:7")
+	if sc == null:
+		farm.plow_cell(Vector2i(16, 7)); sc = farm.tile_map.get("16:7")
+	sc.last_potato_id = "russet"
+	res["tool_autoseed"] = true   # the node id behind the auto_seed effect
+	res["auto_buy_seeds"] = true
+	var planted_before = _planted_count()
+	var coins1 = SaveDataManager.wallet()
+	farm._auto_farm()
+	_check(_planted_count() > planted_before, "automation: auto-seed replants via the purchase order")
+	_check(SaveDataManager.wallet() < coins1, "automation: replanting auto-buys seeds")
+
+	# auto-dispatch ships the idle truck
+	SaveDataManager.add_item("spuds", "russet", 6)
+	SaveDataManager.farm["truck"] = {"status": "idle", "cargo": {}, "return_at": 0.0,
+			"pending_coins": 0, "pending_rp": 0}
+	res["auto_truck"] = true
+	farm._auto_farm()
+	_check(farm.truck_status() == "away", "automation: Auto-Dispatch loads and ships the truck")
+
+	# the tick speeds up with the auto_speed research, clamped at the floor
+	var base_iv = farm.auto_interval()
+	res["auto_speed1"] = true
+	_check(farm.auto_interval() < base_iv, "automation: auto_speed shortens the tick")
+	res["auto_speed2"] = true
+	_check(farm.auto_interval() >= 0.25, "automation: the tick is clamped at its floor")
+
+	# batched auto-harvest clears every ready crop in one tick (no one-per-tick)
+	SaveDataManager.farm["seeds"] = {}  # stop auto-seed from refilling the plots
+	res.erase("tool_autoseed")
+	res.erase("auto_buy_seeds")
+	for cell in [Vector2i(15, 9), Vector2i(16, 9), Vector2i(17, 9)]:
+		farm.plow_cell(cell)
+		var t: FarmTile = farm.tile_map.get("%d:%d" % [cell.x, cell.y])
+		farm.buy_seed("russet"); farm.plant_on(t, "russet")
+		t.planted_at -= 10000.0  # mature it now (FarmTile._process flips READY next frame)
+		_check(t.progress() >= 1.0, "automation: crop matured for harvest")
+		t.state = FarmTile.TState.READY  # force the state this frame for auto-harvest
+	res["tool_autoharvest"] = true   # the node id behind the auto_harvest effect
+	farm._auto_farm()
+	var any_ready := false
+	for cell in [Vector2i(15, 9), Vector2i(16, 9), Vector2i(17, 9)]:
+		var t2: FarmTile = farm.tile_map.get("%d:%d" % [cell.x, cell.y])
+		if t2 != null and t2.state == FarmTile.TState.READY:
+			any_ready = true
+	_check(not any_ready, "automation: auto-harvest clears all ready crops in one tick")
 
 # ── schema-2 -> schema-3 migration ──
 func _run_migration():
