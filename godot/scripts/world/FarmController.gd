@@ -493,7 +493,7 @@ func apply_enhancer(tile: FarmTile, id: String) -> bool:
 	if SaveDataManager.item_count("items", id) <= 0:
 		return false
 	var e = GameData.enhancer_by_id(id)
-	if not tile.enhance(float(e.get("boost", 1.0)), int(e.get("bonus_yield", 0))):
+	if not tile.enhance(float(e.get("grow_mult", 1.0)), int(e.get("bonus_yield", 0))):
 		_popup("Already fertilized!", Color.ORANGE_RED)
 		return false
 	SaveDataManager.add_item("items", id, -1)

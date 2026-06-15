@@ -542,11 +542,6 @@ func _draw_tool_rows(font: Font, panel: Rect2):
 			"sprinkler":
 				desc += "  ·  placed: %d · stock: %d" % [ctrl.sprinklers_placed(), ctrl.sprinkler_stock()]
 				col = Color(0.95, 0.92, 0.85)
-			_:
-				if ctrl.owns_tool(id):
-					status = "INSTALLED"
-					scol = Color.LIGHT_GREEN
-					col = Color(0.95, 0.92, 0.85)
 		draw_circle(Vector2(panel.position.x + 48, y - 7), 10.0, Color(tl.get("color", "#888")))
 		draw_string(font, Vector2(panel.position.x + 70, y), "[%d] %s" % [i, tl["name"]], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, col)
 		draw_string(font, Vector2(panel.position.x + 70, y + 18), desc, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.7, 0.65, 0.55))

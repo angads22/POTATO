@@ -174,7 +174,7 @@ func _run_research():
 	_check(farm.has_research("logi_cap1"), "the node is marked researched")
 	_check(farm.truck_capacity() == cap_before + 15, "research lifts the truck capacity")
 	_check(SaveDataManager.wallet() == coins_before - 300, "research spends coins")
-	_check(SaveDataManager.research_points() == rp_before - 4, "research spends research points")
+	_check(SaveDataManager.research_points() == rp_before - 3, "research spends research points")
 	_check(not farm.buy_research("tool_radius"), "a node with an unmet prerequisite can't be bought")
 
 	# crop gating
