@@ -9,6 +9,7 @@ const KNIVES_PATH = "res://resources/game_data/knives.json"
 const POTATOES_PATH = "res://resources/game_data/potatoes.json"
 const ITEMS_PATH = "res://resources/game_data/items.json"
 const RESEARCH_PATH = "res://resources/game_data/research.json"
+const ACHIEVEMENTS_PATH = "res://resources/game_data/achievements.json"
 
 # Crops a brand-new farm can plant before any research; the rest unlock via
 # the Research Shed (see research.json "unlock_crop" effects).
@@ -19,6 +20,7 @@ static var _potatoes: Array = []
 static var _tools: Array = []
 static var _enhancers: Array = []
 static var _research: Array = []
+static var _achievements: Array = []
 
 static func knives() -> Array:
 	if _knives.is_empty():
@@ -92,6 +94,19 @@ static func research_by_id(id: String) -> Dictionary:
 	for n in research_nodes():
 		if n.get("id", "") == id:
 			return n
+	return {}
+
+# Achievement catalogue (resources/game_data/achievements.json): {id, name,
+# desc}. Awarded at runtime via SaveDataManager.unlock_achievement(id).
+static func achievements() -> Array:
+	if _achievements.is_empty():
+		_achievements = _load_array(ACHIEVEMENTS_PATH, "achievements")
+	return _achievements
+
+static func achievement_by_id(id: String) -> Dictionary:
+	for a in achievements():
+		if a.get("id", "") == id:
+			return a
 	return {}
 
 static func _load_array(path: String, key: String) -> Array:

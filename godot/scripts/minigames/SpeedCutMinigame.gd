@@ -15,14 +15,19 @@ var dir: float = 1.0
 var speed: float = 0.9
 var has_cut: bool = false
 
+var diff: float = 1.0
+
 func start_minigame(potato: Dictionary):
 	super.start_minigame(potato)
 	has_cut = false
 	cursor = 0.0
 	dir = 1.0
+	# later stages sweep faster and shrink the sweet spot sooner
+	diff = GameManager.difficulty_scale()
+	speed = 0.9 * diff
 
 func zone_scale() -> float:
-	return lerpf(1.0, MIN_SCALE, clampf(elapsed() / SHRINK_TIME, 0.0, 1.0))
+	return lerpf(1.0, MIN_SCALE, clampf(elapsed() / (SHRINK_TIME / diff), 0.0, 1.0))
 
 func _process(delta):
 	if not is_active or has_cut:

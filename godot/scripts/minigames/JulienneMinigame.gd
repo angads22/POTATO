@@ -25,7 +25,8 @@ func start_minigame(potato: Dictionary):
 	super.start_minigame(potato)
 	cursor = 0.0
 	dir = 1.0
-	speed = 0.6
+	# later stages sweep faster
+	speed = 0.6 * GameManager.difficulty_scale()
 	first_quality = ""
 	first_cursor = -1.0
 	done = false

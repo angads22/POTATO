@@ -29,8 +29,26 @@ var settings: Dictionary = {
 	"starch": 0,
 	"lifetime_starch": 0,
 	"fps_unlocks": [],
-	"fps_skin": "classic"
+	"fps_skin": "classic",
+	# Chef career: XP earned from championship/endless runs (score / 100 each
+	# run). Drives the rank ladder (RANKS) shown on the menu and gates the
+	# top-tier knives (knives.json "unlock_xp"). Persisted here, not in `farm`.
+	"career_xp": 0
 }
+
+# Career rank ladder: {xp floor, title}. career_rank() finds the highest floor
+# the player has cleared. Mirrors the console edition's chef-rank flavour.
+const RANKS := [
+	{"floor": 0,     "name": "Dishwasher"},
+	{"floor": 100,   "name": "Prep Cook"},
+	{"floor": 300,   "name": "Line Cook"},
+	{"floor": 700,   "name": "Sous Chef"},
+	{"floor": 1500,  "name": "Chef de Partie"},
+	{"floor": 3000,  "name": "Head Chef"},
+	{"floor": 6000,  "name": "Executive Chef"},
+	{"floor": 10000, "name": "Master Chef"},
+	{"floor": 20000, "name": "Legendary Potato Master"},
+]
 
 # Farm + economy state (schema 3, free-form open grid). New games start with a
 # few russet seeds, pocket change and a fresh plow so the farming loop can
@@ -306,6 +324,39 @@ func unlock_knife(knife_id: String):
 
 func is_knife_unlocked(knife_id: String) -> bool:
 	return knife_id in unlocked_knives
+
+# ── chef career XP + ranks ──
+
+func career_xp() -> int:
+	return int(settings.get("career_xp", 0))
+
+# Adds XP and saves. Returns true when this push crossed into a new rank, so
+# the results screen can celebrate a promotion.
+func add_career_xp(amount: int) -> bool:
+	if amount <= 0:
+		return false
+	var before: int = career_rank()["index"]
+	settings["career_xp"] = career_xp() + amount
+	save_game()
+	return career_rank()["index"] > before
+
+# Highest rank whose floor the player has cleared, with the next floor for the
+# progress bar. {name, index, floor, next_floor}.
+func career_rank() -> Dictionary:
+	var xp := career_xp()
+	var idx := 0
+	for i in range(RANKS.size()):
+		if xp >= int(RANKS[i]["floor"]):
+			idx = i
+	var next_floor := int(RANKS[idx]["floor"])
+	if idx + 1 < RANKS.size():
+		next_floor = int(RANKS[idx + 1]["floor"])
+	return {
+		"name": RANKS[idx]["name"],
+		"index": idx,
+		"floor": int(RANKS[idx]["floor"]),
+		"next_floor": next_floor,
+	}
 
 func update_setting(key: String, value):
 	if key in settings:

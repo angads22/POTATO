@@ -1,0 +1,14 @@
+{
+	"achievements": [
+		{ "id": "first_cut",      "name": "First Blood",       "desc": "Land your very first cut." },
+		{ "id": "feeling_heat",   "name": "Feeling the Heat",  "desc": "Trigger FEVER mode in a run." },
+		{ "id": "combo_25",       "name": "Chain Reaction",    "desc": "Reach a x25 combo." },
+		{ "id": "combo_50",       "name": "Unstoppable",       "desc": "Reach a x50 combo." },
+		{ "id": "golden_touch",   "name": "Midas Touch",       "desc": "Finish a golden potato." },
+		{ "id": "surgical",       "name": "Surgical",          "desc": "Clear a stage with zero misses." },
+		{ "id": "five_figures",   "name": "Five-Figure Fry",   "desc": "Score 10,000+ in a single run." },
+		{ "id": "champion",       "name": "World Champion",    "desc": "Win the Championship." },
+		{ "id": "boss_slayer",    "name": "Spud Slayer",       "desc": "Defeat the Colossal Spud boss." },
+		{ "id": "knife_collector","name": "Full Block",        "desc": "Own every knife in the shop." }
+	]
+}

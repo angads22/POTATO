@@ -14,6 +14,12 @@ var show_board: bool = true
 var show_window: bool = true
 var t := 0.0
 
+# Championship stage tier (1..6). The kitchen escalates with it: the wall
+# cools from a homely cream toward a grand-arena violet, and bunting, a roaring
+# crowd and spotlights fade in as the stages climb. Tier 1 is the untouched
+# look used by the menu, farm/town and game-over screens.
+var tier: int = 1
+
 var board_rect := Rect2(400, 250, 480, 220)
 
 func _ready():
@@ -23,17 +29,27 @@ func _process(delta):
 	t += delta
 	queue_redraw()
 
+# 0 at tier 1, 1 at tier 6 — how far the kitchen has escalated.
+func _grandeur() -> float:
+	return clampf((tier - 1) / 5.0, 0.0, 1.0)
+
 func _draw():
+	var f := _grandeur()
+	var wall_base := Color(0.93, 0.87, 0.78).lerp(Color(0.5, 0.42, 0.66), f)
 	# wall — vertical gradient in horizontal bands
 	for i in range(8):
 		var t = i / 8.0
-		draw_rect(Rect2(0, t * WALL_H, SCREEN.x, WALL_H / 8.0 + 1.0), Color(0.93, 0.87, 0.78).darkened(t * 0.12))
+		draw_rect(Rect2(0, t * WALL_H, SCREEN.x, WALL_H / 8.0 + 1.0), wall_base.darkened(t * 0.12))
 
 	# tile grout lines
 	for y in range(60, int(WALL_H), 60):
 		draw_rect(Rect2(0, y, SCREEN.x, 2), Color(0.8, 0.74, 0.66, 0.5))
 	for x in range(0, int(SCREEN.x) + 1, 80):
 		draw_rect(Rect2(x, 0, 2, WALL_H), Color(0.8, 0.74, 0.66, 0.35))
+
+	# bunting + roaring crowd on the wall (faded in by tier), behind the counter
+	if f > 0.0:
+		_draw_arena_back(f)
 
 	# counter edge highlight then walnut planks
 	draw_rect(Rect2(0, WALL_H - 6, SCREEN.x, 6), Color(0.32, 0.2, 0.1))
@@ -50,6 +66,10 @@ func _draw():
 		_draw_window()
 	_draw_utensil_rail()
 	_draw_steaming_pot()
+
+	# crossing spotlights + championship sign over the whole scene (top tiers)
+	if f > 0.0:
+		_draw_arena_front(f)
 
 	# butcher-block cutting board with drop shadow
 	if show_board:
@@ -125,6 +145,69 @@ func _draw_utensil_rail():
 					draw_arc(Vector2(0, 52), spread, -PI * 0.85, -PI * 0.15, 10, steel, 2.0)
 					draw_arc(Vector2(0, 52), spread, PI * 0.15, PI * 0.85, 10, steel, 2.0)
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+# Bunting and a bobbing crowd that fade in with the tier, drawn on the wall
+# so the counter (drawn next) crops the crowd to peeking heads.
+func _draw_arena_back(f: float):
+	# bunting strung across the top (from tier 2)
+	if f >= 0.2:
+		var ba := clampf((f - 0.2) / 0.2, 0.0, 1.0)
+		var cols := [Color(0.9, 0.2, 0.2), Color(0.95, 0.78, 0.2), Color(0.95, 0.95, 0.95)]
+		var n := 16
+		var prev := Vector2(0, 8.0 + 12.0)
+		for i in range(n):
+			var x0 := SCREEN.x * i / float(n)
+			var x1 := SCREEN.x * (i + 1) / float(n)
+			var sag := 12.0 + 6.0 * sin(i * 0.7 + t * 1.2)
+			var top := 8.0 + sag
+			draw_line(prev, Vector2(x0, top), Color(0.2, 0.15, 0.1, 0.7 * ba), 2.0)
+			prev = Vector2(x1, top)
+			var c: Color = cols[i % cols.size()]
+			c.a = 0.92 * ba
+			draw_colored_polygon(PackedVector2Array([
+				Vector2(x0, top), Vector2(x1, top), Vector2((x0 + x1) * 0.5, top + 22.0)]), c)
+	# packed crowd peeking over the back counter (from tier 3)
+	if f >= 0.4:
+		var ca := clampf((f - 0.4) / 0.2, 0.0, 1.0)
+		var head_c := Color(0.15, 0.11, 0.2, 0.85 * ca)
+		for row in range(2):
+			var ry := WALL_H - 24.0 - row * 20.0
+			var off := row * 13.0
+			var idx := 0
+			var x := off
+			while x < SCREEN.x + 26.0:
+				var bob := sin(t * 3.0 + idx * 0.9 + row * 1.7) * 3.0
+				draw_rect(Rect2(x - 13, ry + bob + 6, 26, 26), head_c)
+				draw_circle(Vector2(x, ry + bob), 12.0, head_c)
+				x += 26.0
+				idx += 1
+
+# Crossing spotlights and a golden trophy for the grandest stages (tier 5+).
+func _draw_arena_front(f: float):
+	if f < 0.8:
+		return
+	var sa := clampf((f - 0.8) / 0.2, 0.0, 1.0)
+	var sweep := sin(t * 0.7) * 60.0
+	var beam := Color(1.0, 0.95, 0.7, 0.06 * sa)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(120, 0), Vector2(160, 0),
+		Vector2(660 + sweep, WALL_H), Vector2(500 + sweep, WALL_H)]), beam)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(SCREEN.x - 160, 0), Vector2(SCREEN.x - 120, 0),
+		Vector2(780 - sweep, WALL_H), Vector2(620 - sweep, WALL_H)]), beam)
+	# trophy gleaming on the left of the counter
+	var tx := 250.0
+	var ty := WALL_H + 72.0
+	var gold := Color(1.0, 0.82, 0.3, sa)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(tx - 20, ty - 44), Vector2(tx + 20, ty - 44),
+		Vector2(tx + 12, ty - 16), Vector2(tx - 12, ty - 16)]), gold)
+	draw_arc(Vector2(tx - 20, ty - 36), 9, PI * 0.5, PI * 1.5, 8, gold, 3.0)
+	draw_arc(Vector2(tx + 20, ty - 36), 9, -PI * 0.5, PI * 0.5, 8, gold, 3.0)
+	draw_rect(Rect2(tx - 4, ty - 16, 8, 12), gold)
+	draw_rect(Rect2(tx - 16, ty - 4, 32, 8), gold)
+	var g := 0.5 + 0.5 * sin(t * 3.0)
+	draw_circle(Vector2(tx - 8, ty - 34), 3.0, Color(1, 1, 1, 0.7 * sa * g))
 
 # A pot simmering on the counter, off to the right
 func _draw_steaming_pot():

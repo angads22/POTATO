@@ -7,6 +7,21 @@ class_name GameHUD
 
 var ctrl  # GameplayController
 
+const TOAST_LIFE = 3.0
+var toasts: Array = []  # {name, age}
+
+# Queue an achievement-unlocked banner (non-blocking — never pauses the tree).
+func achievement_toast(name: String):
+	toasts.append({"name": name, "age": 0.0})
+
+func _process(delta):
+	if toasts.is_empty():
+		return
+	for to in toasts:
+		to.age += delta
+	toasts = toasts.filter(func(to): return to.age < TOAST_LIFE)
+	queue_redraw()
+
 static func panel_style(bg := Color(0.18, 0.12, 0.07, 0.85)) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = bg
@@ -107,6 +122,22 @@ func _draw():
 			draw_colored_polygon(PackedVector2Array([
 				Vector2(hx - 8, 151), Vector2(hx + 8, 151), Vector2(hx, 163)
 			]), hcol)
+
+	# ── achievement toasts (top-centre, stacked, non-blocking) ──
+	for i in range(toasts.size()):
+		var to = toasts[i]
+		var frac: float = to.age / TOAST_LIFE
+		var a := 1.0
+		if frac < 0.12:
+			a = frac / 0.12          # slide/fade in
+		elif frac > 0.8:
+			a = (1.0 - frac) / 0.2    # fade out
+		var ty := 124.0 + i * 44.0
+		var title: String = "★  ACHIEVEMENT — %s" % to.name
+		var tsz := font.get_string_size(title, HORIZONTAL_ALIGNMENT_CENTER, -1, 20)
+		var chip := Rect2(640 - tsz.x / 2 - 16, ty - 26, tsz.x + 32, 36)
+		panel_style(Color(0.2, 0.14, 0.06, 0.9 * a)).draw(get_canvas_item(), chip)
+		draw_string(font, Vector2(640 - tsz.x / 2, ty), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(1.0, 0.85, 0.35, a))
 
 	# ── ESC hint ──
 	draw_string(font, Vector2(20, 706), "[ESC] Quit to menu", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.9, 0.85, 0.75, 0.5))

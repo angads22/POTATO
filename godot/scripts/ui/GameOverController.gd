@@ -82,6 +82,17 @@ func _draw():
 		var pay_size := font.get_string_size(pay_text, HORIZONTAL_ALIGNMENT_CENTER, -1, 19)
 		draw_string(font, Vector2(centre_x - pay_size.x / 2, 296), pay_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 19, Color.GOLD)
 
+	# Chef XP earned + the current rank (and a promotion shout if you ranked up)
+	var rank := SaveDataManager.career_rank()
+	var xp_text: String = "+%d Chef XP  ·  %s" % [GameManager.current_state.last_xp_gain, rank["name"]]
+	var xp_size := font.get_string_size(xp_text, HORIZONTAL_ALIGNMENT_CENTER, -1, 18)
+	draw_string(font, Vector2(centre_x - xp_size.x / 2, 326), xp_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.85, 0.7, 0.3))
+	if GameManager.current_state.ranked_up:
+		var ru: String = "★ RANK UP — %s! ★" % rank["name"]
+		var ru_size := font.get_string_size(ru, HORIZONTAL_ALIGNMENT_CENTER, -1, 22)
+		var pulse := 0.7 + 0.3 * sin(Time.get_ticks_msec() / 250.0)
+		draw_string(font, Vector2(centre_x - ru_size.x / 2, 354), ru, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(1.0, 0.85, 0.35, pulse))
+
 	if submitted:
 		var rank_text := "Banked at #%d on the leaderboard!" % (earned_rank + 1) if earned_rank >= 0 else "Score saved!"
 		var rank_size := font.get_string_size(rank_text, HORIZONTAL_ALIGNMENT_CENTER, -1, 22)

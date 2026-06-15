@@ -25,6 +25,8 @@ class GameState:
 	var is_paused: bool = false
 	var last_victory: bool = false
 	var last_payout: int = 0  # coins banked to the farm wallet by the last run
+	var last_xp_gain: int = 0  # chef XP earned by the last run
+	var ranked_up: bool = false  # did that XP cross into a new chef rank?
 
 var current_state: GameState = GameState.new()
 var game_modes = {}  # Will be populated with mode configurations
@@ -72,6 +74,8 @@ func start_game(mode: String):
 	current_state.fever_active = false
 	current_state.fever_multiplier = 1.0
 	current_state.last_payout = 0
+	current_state.last_xp_gain = 0
+	current_state.ranked_up = false
 	current_state.is_running = true
 
 	game_started.emit()
@@ -81,6 +85,14 @@ func end_game(victory: bool):
 	current_state.last_payout = current_state.coins_earned + current_state.score / 20
 	if current_state.last_payout > 0:
 		SaveDataManager.add_coins(current_state.last_payout)
+	# Chef XP from the run feeds the career rank ladder.
+	current_state.last_xp_gain = current_state.score / 100
+	current_state.ranked_up = SaveDataManager.add_career_xp(current_state.last_xp_gain)
+	# End-of-run achievements
+	if victory and current_state.mode == "championship":
+		SaveDataManager.unlock_achievement("champion")
+	if current_state.score >= 10000:
+		SaveDataManager.unlock_achievement("five_figures")
 	# Submit to global leaderboard (no-op when Supabase isn't configured)
 	var knife_id: String = SaveDataManager.farm.get("equipped_knife", "butter")
 	var player_name: String = SaveDataManager.settings.get("player_name", "Chef")
@@ -138,6 +150,12 @@ func activate_fever(duration: float = 8.0, multiplier: float = 2.0):
 func progress_stage():
 	current_state.stage += 1
 	stage_changed.emit(current_state.stage)
+
+# Difficulty ramp: minigame cursors sweep faster the deeper you climb. Stage 1
+# is exactly 1.0 so the early stages (all the smoke test reaches) are unchanged;
+# capped so the late stages stay humanly playable.
+func difficulty_scale() -> float:
+	return minf(1.5, 1.0 + (current_state.stage - 1) * 0.08)
 
 func pause_game():
 	current_state.is_paused = true

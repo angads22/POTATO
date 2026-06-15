@@ -13,8 +13,10 @@ var stage_potatoes: Array[Dictionary] = []
 var current_potato_index: int = 0
 var potato_visual: PotatoVisual
 var knife: KnifeVisual
+var kitchen: KitchenBackground
 var hud: GameHUD
 var rng := RandomNumberGenerator.new()
+var stage_misses: int = 0      # for the "Surgical" (clean-stage) achievement
 
 # feedback state
 var popups: Array = []           # {text, color, age}
@@ -25,8 +27,11 @@ var shake: float = 0.0
 func _ready():
 	GameManager.game_ended.connect(_on_game_ended)
 
-	# kitchen backdrop behind everything (z_index = -1)
-	add_child(KitchenBackground.new())
+	# kitchen backdrop behind everything (z_index = -1); its grandeur climbs
+	# with the stage, so the venue visibly escalates toward the world final
+	kitchen = KitchenBackground.new()
+	kitchen.tier = _kitchen_tier()
+	add_child(kitchen)
 
 	# Multiplayer: host chose a seed and pushed it to the client, so both
 	# sides generate the same potato sequence independently.
@@ -51,7 +56,7 @@ func _ready():
 	hud_layer.add_child(hud)
 	add_child(hud_layer)
 
-	_show_banner("STAGE %d" % GameManager.current_state.stage)
+	_show_banner(_intro_banner())
 	_load_stage_potatoes()
 	_spawn_next_potato()
 
@@ -102,6 +107,7 @@ func _load_stage_potatoes():
 		else:
 			stage_potatoes.append(pool[rng.randi() % pool.size()].duplicate())
 	current_potato_index = 0
+	stage_misses = 0
 
 func _spawn_next_potato():
 	if not GameManager.current_state.is_running:
@@ -154,12 +160,14 @@ func _on_minigame_completed(result: Dictionary):
 				Fx.splat(self, POTATO_POS)
 			GameManager.lose_life()
 			GameManager.reset_combo()
+			stage_misses += 1
 			_popup("ROTTEN!  -1 LIFE", Color.ORANGE_RED)
 			shake = 14.0
 			AudioManager.play_sfx("cut_miss")
 	elif quality == "MISS" or quality == "FAIL":
 		GameManager.lose_life()
 		GameManager.reset_combo()
+		stage_misses += 1
 		_popup("MISS", Color.ORANGE_RED)
 		shake = 10.0
 		AudioManager.play_sfx("cut_miss")
@@ -175,17 +183,26 @@ func _on_minigame_completed(result: Dictionary):
 		if quality == "PERFECT" and fx_on:
 			Fx.ring(self, POTATO_POS)
 		AudioManager.play_sfx("cut_great" if quality == "PERFECT" else "cut_good")
+		_award("first_cut")
+		# combo milestones
+		var combo = GameManager.current_state.combo
+		if combo >= 50:
+			_award("combo_50")
+		elif combo >= 25:
+			_award("combo_25")
 		if potato.get("rare", false):
 			var coins = int(potato.get("coin_bonus", 15))
 			GameManager.current_state.coins_earned += coins
 			if fx_on:
 				Fx.sparkle(self, POTATO_POS)
 			_popup("GOLDEN!  +%d coins" % coins, Color.GOLD)
+			_award("golden_touch")
 
 	if GameManager.current_state.combo >= 20 and not GameManager.current_state.fever_active:
 		GameManager.activate_fever()
 		_popup("FEVER!", Color.MAGENTA)
 		AudioManager.play_sfx("fever_start")
+		_award("feeling_heat")
 
 	# Keep opponent in sync (no-op outside of multiplayer sessions)
 	if MultiplayerManager.is_in_multiplayer:
@@ -200,10 +217,13 @@ func _on_minigame_completed(result: Dictionary):
 
 func _complete_stage():
 	var s = GameManager.current_state
+	# Clean-stage achievement for the stage we just finished
+	if stage_misses == 0:
+		_award("surgical")
 	match s.mode:
 		"championship":
 			if s.stage >= 6:
-				GameManager.end_game(true)
+				_spawn_boss()
 			else:
 				# Stage-clear bonus scales with the stage; every other
 				# stage also restores a lost life, so a stumble in stage 2
@@ -218,8 +238,9 @@ func _complete_stage():
 					clear_text += "  +1 LIFE"
 				_popup(clear_text, Color.GOLD)
 				GameManager.progress_stage()
+				kitchen.tier = _kitchen_tier()
 				AudioManager.play_sfx("level_complete")
-				_show_banner("STAGE %d" % s.stage)
+				_show_banner("%s" % _stage_name(s.stage))
 				_load_stage_potatoes()
 				_spawn_next_potato()
 		"endless":
@@ -229,6 +250,7 @@ func _complete_stage():
 			GameManager.score_changed.emit(s.score)
 			_popup("WAVE CLEAR  +%d" % bonus, Color.GOLD)
 			GameManager.progress_stage()
+			kitchen.tier = _kitchen_tier()
 			_show_banner("WAVE %d" % s.stage)
 			_load_stage_potatoes()
 			_spawn_next_potato()
@@ -263,4 +285,59 @@ func _quality_color(quality: String) -> Color:
 			return Color.WHITE
 		_:
 			return Color.ORANGE_RED
+
+# ────────────────────────────────────────────────────────
+#  Progression: themed venues, achievements, the boss
+# ────────────────────────────────────────────────────────
+
+const STAGE_NAMES = [
+	"TRAINING KITCHEN", "DINNER PARTY", "STREET FOOD STALL",
+	"RESTAURANT KITCHEN", "TV COOK-OFF", "WORLD CHAMPIONSHIP",
+]
+
+func _stage_name(stage: int) -> String:
+	if stage >= 1 and stage <= STAGE_NAMES.size():
+		return STAGE_NAMES[stage - 1]
+	return "STAGE %d" % stage
+
+func _intro_banner() -> String:
+	var s = GameManager.current_state
+	if s.mode == "endless":
+		return "WAVE %d" % s.stage
+	return _stage_name(s.stage)
+
+# Backdrop grandeur tier (1..6) from the current stage.
+func _kitchen_tier() -> int:
+	return clampi(GameManager.current_state.stage, 1, 6)
+
+# Unlock an achievement once and toast it on the HUD.
+func _award(id: String):
+	if SaveDataManager.unlock_achievement(id):
+		var a = GameData.achievement_by_id(id)
+		if hud:
+			hud.achievement_toast(a.get("name", id))
+		AudioManager.play_sfx("coin_collect")
+
+# The championship finale: a multi-hit Colossal Spud with an HP bar. Replaces
+# the old instant end_game(true). Boss handles its own swings and life loss;
+# we just react to its single completion.
+func _spawn_boss():
+	if current_minigame:
+		current_minigame.queue_free()
+	potato_visual.visible = false
+	kitchen.tier = 6
+	_show_banner("FINAL BOSS — COLOSSAL SPUD")
+	AudioManager.play_sfx("fever_start")
+	var boss := BossMinigame.new()
+	boss.ctrl = self
+	current_minigame = boss
+	add_child(boss)
+	boss.minigame_completed.connect(_on_boss_completed)
+	boss.start_minigame({"base_points": 200})
+
+func _on_boss_completed(_result: Dictionary):
+	if not GameManager.current_state.is_running:
+		return
+	_award("boss_slayer")
+	GameManager.end_game(true)
 

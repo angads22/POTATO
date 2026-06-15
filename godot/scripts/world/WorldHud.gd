@@ -307,8 +307,10 @@ func _draw_knife_rows(font: Font, panel: Rect2):
 		i += 1
 		var owned = k["id"] in owned_list
 		var cost = int(k["cost"])
+		var need_xp = int(k.get("unlock_xp", 0))
+		var rank_locked = not owned and SaveDataManager.career_xp() < need_xp
 		var col = Color(0.95, 0.92, 0.85)
-		if not owned and SaveDataManager.wallet() < cost:
+		if rank_locked or (not owned and SaveDataManager.wallet() < cost):
 			col = Color(0.55, 0.5, 0.45)
 		# little blade icon
 		draw_colored_polygon(PackedVector2Array([
@@ -324,6 +326,9 @@ func _draw_knife_rows(font: Font, panel: Rect2):
 			scol = Color.LIGHT_GREEN
 		elif owned:
 			status = "owned — equip"
+		elif rank_locked:
+			status = "needs %d XP" % need_xp
+			scol = Color(0.7, 0.55, 0.5)
 		else:
 			status = "%d c" % cost
 			scol = col

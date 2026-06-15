@@ -260,6 +260,11 @@ func buy_or_equip_knife(id: String) -> bool:
 		SaveDataManager.save_game()
 		_popup("%s equipped (×%.2f score)" % [k.get("name", id), float(k.get("damage", 1.0))], Color.LIGHT_GREEN)
 		return true
+	# top-tier knives are rank-gated: you must earn the Chef XP first
+	var need_xp := int(k.get("unlock_xp", 0))
+	if SaveDataManager.career_xp() < need_xp:
+		_popup("%s locked — reach %d Chef XP" % [k.get("name", id), need_xp], Color.ORANGE_RED)
+		return false
 	if not SaveDataManager.spend_coins(int(k.get("cost", 99999))):
 		_popup("Not enough coins!", Color.ORANGE_RED)
 		return false
@@ -269,6 +274,9 @@ func buy_or_equip_knife(id: String) -> bool:
 	SaveDataManager.save_game()
 	_popup("%s bought and equipped!" % k.get("name", id), Color.GOLD)
 	AudioManager.play_sfx("level_complete")
+	# achievement: own every knife in the block
+	if owned.size() >= GameData.knives().size() and SaveDataManager.unlock_achievement("knife_collector"):
+		_popup("Achievement: Full Block!", Color(1.0, 0.85, 0.35))
 	return true
 
 # ── tools: the wearing plow, placeable sprinklers, global gear ──

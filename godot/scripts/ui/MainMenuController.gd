@@ -16,6 +16,7 @@ var menu_items: Array[String] = [
 	"[7] Check for Updates",
 	"[8] About",
 	"[9] Spud Blaster (FPS)",
+	"[A] Achievements",
 	"[ESC] Quit"
 ]
 
@@ -116,6 +117,7 @@ func _input(event: InputEvent):
 		KEY_7: _activate(6)
 		KEY_8: _activate(7)
 		KEY_9: _activate(8)
+		KEY_A: _activate(9)
 		KEY_ESCAPE: get_tree().quit()
 
 # Maps a menu row index to its action (shared by keys, arrows and clicks).
@@ -131,7 +133,8 @@ func _activate(i: int):
 		6: _show_updates()
 		7: _show_about()
 		8: _enter_fps_lobby()
-		9: get_tree().quit()
+		9: _show_achievements()
+		10: get_tree().quit()
 
 func _move_selection(delta: int):
 	selected_menu_item = clampi(selected_menu_item + delta, 0, menu_items.size() - 1)
@@ -191,6 +194,9 @@ func _show_updates():
 func _show_about():
 	_open_submenu("about")
 
+func _show_achievements():
+	_open_submenu("achievements")
+
 func _open_submenu(name: String):
 	in_submenu = true
 	current_submenu = name
@@ -238,6 +244,9 @@ func _draw_main_menu():
 	var wallet_size = font.get_string_size(wallet, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
 	draw_string(font, Vector2(title_x - wallet_size.x / 2, 218), wallet, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.72, 0.52, 0.12))
 
+	# chef career card under the mascot, so the rank shows from the front door
+	_draw_career_card(font, 1010.0, 560.0)
+
 	# launch check found a newer release — nudge towards the updater
 	if UpdateManager.state == "available":
 		var nudge = "Update available: v%s — press [7]" % UpdateManager.latest_version
@@ -246,7 +255,7 @@ func _draw_main_menu():
 		draw_string(font, Vector2(title_x - ns.x / 2, 700), nudge, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(1.0, 0.75, 0.2, pulse))
 
 	# Menu in a walnut panel
-	var panel_rect = Rect2(title_x - 190, 236, 380, 52 + menu_items.size() * 40)
+	var panel_rect = Rect2(title_x - 190, 236, 380, 52 + menu_items.size() * 36)
 	GameHUD.panel_style().draw(get_canvas_item(), panel_rect)
 	_item_rects.clear()
 	var y_pos = panel_rect.position.y + 46
@@ -265,11 +274,56 @@ func _draw_main_menu():
 				Vector2(tx, ty), Vector2(tx, ty + 12), Vector2(tx + 9, ty + 6)]), Color.GOLD)
 		var color = Color.GOLD if active else Color(0.95, 0.9, 0.8)
 		draw_string(font, Vector2(panel_rect.position.x + 48, y_pos), menu_items[i], HORIZONTAL_ALIGNMENT_LEFT, -1, 19, color)
-		y_pos += 40
+		y_pos += 36
 
 	# clickability hint
 	draw_string(font, Vector2(panel_rect.position.x + 16, panel_rect.position.y + panel_rect.size.y + 22),
 			"Click an option, or use Up/Down + Enter", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.6, 0.55, 0.45))
+
+# Chef rank + XP-to-next-rank bar, centred on (cx, cy).
+func _draw_career_card(font: Font, cx: float, cy: float):
+	var rank = SaveDataManager.career_rank()
+	var xp = SaveDataManager.career_xp()
+	GameHUD.panel_style().draw(get_canvas_item(), Rect2(cx - 150, cy - 30, 300, 64))
+	var label = "CHEF RANK"
+	var ls = font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 12)
+	draw_string(font, Vector2(cx - ls.x / 2, cy - 12), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.7, 0.6, 0.4))
+	var rank_text = "%s · %d XP" % [rank["name"], xp]
+	var rt = font.get_string_size(rank_text, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
+	draw_string(font, Vector2(cx - rt.x / 2, cy + 8), rank_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1.0, 0.85, 0.35))
+	var bar_w = 260.0
+	var bx = cx - bar_w / 2
+	var by = cy + 18.0
+	var span = maxi(1, int(rank["next_floor"]) - int(rank["floor"]))
+	var prog = clampf(float(xp - int(rank["floor"])) / float(span), 0.0, 1.0)
+	draw_rect(Rect2(bx, by, bar_w, 7), Color(0.2, 0.15, 0.1, 0.8))
+	draw_rect(Rect2(bx, by, bar_w * prog, 7), Color(0.9, 0.72, 0.25))
+
+func _draw_achievements_screen(centre_x: float):
+	var font := ThemeDB.fallback_font
+	var all := GameData.achievements()
+	var got := 0
+	for a in all:
+		if SaveDataManager.is_achievement_unlocked(a.get("id", "")):
+			got += 1
+	draw_string(font, Vector2(centre_x - 120, 90), "ACHIEVEMENTS", HORIZONTAL_ALIGNMENT_LEFT, -1, 32, Color.GOLD)
+	var prog: String = "%d / %d unlocked" % [got, all.size()]
+	draw_string(font, Vector2(centre_x - 120, 120), prog, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.7, 0.65, 0.55))
+
+	var y := 160.0
+	for a in all:
+		var unlocked: bool = SaveDataManager.is_achievement_unlocked(a.get("id", ""))
+		var icon := "★" if unlocked else "·"
+		var name_col := Color(1.0, 0.85, 0.35) if unlocked else Color(0.55, 0.5, 0.45)
+		draw_string(font, Vector2(centre_x - 280, y), "%s  %s" % [icon, a.get("name", "?")],
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 20, name_col)
+		var desc: String = a.get("desc", "") if unlocked else "???"
+		draw_string(font, Vector2(centre_x - 40, y), desc, HORIZONTAL_ALIGNMENT_LEFT, -1, 15,
+				Color(0.8, 0.75, 0.65) if unlocked else Color(0.45, 0.4, 0.36))
+		y += 44.0
+
+	draw_string(font, Vector2(centre_x - 150, 680), "[SPACE] Back",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.GRAY)
 
 func _draw_submenu():
 	var viewport_size = get_viewport_rect().size
@@ -282,6 +336,7 @@ func _draw_submenu():
 		"settings":    _draw_settings_screen(centre_x)
 		"updates":     _draw_updates_screen(centre_x)
 		"about":       _draw_about_screen(centre_x)
+		"achievements": _draw_achievements_screen(centre_x)
 
 func _draw_leaderboard_screen(centre_x: float):
 	var font := ThemeDB.fallback_font

@@ -20,6 +20,8 @@ func start_minigame(potato: Dictionary):
 	dir = 1.0
 	# golden potatoes sweep faster — the reward is earned
 	speed = 0.85 if potato.get("rare", false) else 0.6
+	# later championship/endless stages sweep faster still
+	speed *= GameManager.difficulty_scale()
 
 func _process(delta):
 	if not is_active or has_cut:

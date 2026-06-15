@@ -61,3 +61,9 @@ jobs:
           cd godot
           ~/godot-bin/godot --headless --path . res://tests/FpsSmokeTest.tscn --quit-after 300 2>&1 | tee fps.log
           grep -q "FPS SMOKE OK" fps.log
+
+      - name: Headless boss fight smoke test
+        run: |
+          cd godot
+          ~/godot-bin/godot --headless --path . res://tests/BossSmokeTest.tscn --quit-after 600 2>&1 | tee boss.log
+          grep -q "BOSS SMOKE OK" boss.log
