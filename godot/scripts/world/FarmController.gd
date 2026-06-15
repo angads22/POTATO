@@ -29,6 +29,7 @@ var prompt_tile: FarmTile = null   # tile the current prompt refers to (or null)
 var prompt_cell := Vector2i.ZERO   # grid cell the prompt refers to
 var prompt_cell_valid := false     # true when prompt_cell is virgin grass
 var auto_t := 0.0                  # auto-farming tick accumulator
+var research_sel_id := ""          # id of the highlighted node on the research map
 
 func _ready():
 	super._ready()
@@ -300,9 +301,19 @@ func _shop_input(key: Key):
 				if idx >= 0 and idx < sellable.size():
 					truck_load(sellable[idx]["id"])
 		"research":
-			var nodes = research_menu_nodes()
-			if idx >= 0 and idx < nodes.size():
-				buy_research(nodes[idx]["id"])
+			# the node map navigates with arrows and buys the selected node
+			match key:
+				KEY_UP:
+					research_select_dir(Vector2.UP)
+				KEY_DOWN:
+					research_select_dir(Vector2.DOWN)
+				KEY_LEFT:
+					research_select_dir(Vector2.LEFT)
+				KEY_RIGHT:
+					research_select_dir(Vector2.RIGHT)
+				KEY_E, KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+					if research_sel_id != "":
+						buy_research(research_sel_id)
 		_:
 			super._shop_input(key)
 
@@ -626,6 +637,61 @@ func buy_research(id: String) -> bool:
 	AudioManager.play_sfx("level_complete")
 	return true
 
+# ── research map: the whole graph, plus node state + keyboard navigation ──
+
+# Every node, owned or not, in data order — what the node-map renderer draws.
+func research_all_nodes() -> Array:
+	return GameData.research_nodes()
+
+# A node the player can see but can't buy yet: not owned and still missing a
+# prerequisite. (research_available is the buyable frontier; this is its inverse
+# for the not-yet-owned nodes.)
+func research_locked(node: Dictionary) -> bool:
+	return not has_research(node.get("id", "")) and not research_available(node)
+
+# Grid coordinate the renderer and navigation lay the node out on.
+func _node_pos(node: Dictionary) -> Vector2:
+	var p = node.get("pos", [0, 0])
+	if p is Array and p.size() >= 2:
+		return Vector2(float(p[0]), float(p[1]))
+	return Vector2.ZERO
+
+# Land the selection on the first actionable node, falling back to the first
+# node overall once everything is researched.
+func _default_research_sel() -> String:
+	var frontier = research_menu_nodes()
+	if not frontier.is_empty():
+		return str(frontier[0].get("id", ""))
+	var all = research_all_nodes()
+	return str(all[0].get("id", "")) if not all.is_empty() else ""
+
+# Move the highlight to the nearest node in the pressed direction. Among nodes
+# on the correct side, the off-axis distance is weighted heavily so UP/DOWN
+# prefer column-aligned nodes and LEFT/RIGHT prefer row-aligned ones.
+func research_select_dir(dir: Vector2):
+	var cur = GameData.research_by_id(research_sel_id)
+	if cur.is_empty():
+		research_sel_id = _default_research_sel()
+		return
+	var cp = _node_pos(cur)
+	var best := ""
+	var best_score := INF
+	for node in research_all_nodes():
+		var nid = str(node.get("id", ""))
+		if nid == research_sel_id:
+			continue
+		var d = _node_pos(node) - cp
+		if d.dot(dir) <= 0.01:
+			continue
+		var along = absf(d.dot(dir))
+		var across = absf(d.dot(Vector2(dir.y, dir.x)))
+		var score = along + across * 3.0
+		if score < best_score:
+			best_score = score
+			best = nid
+	if best != "":
+		research_sel_id = best
+
 # ── auto-farming: sprinklers and researched gear work the land on a slow tick ──
 
 func _neighbours(tile: FarmTile) -> Array:
@@ -680,6 +746,7 @@ func _open_truck():
 
 func _open_research():
 	open_shop = "research"
+	research_sel_id = _default_research_sel()
 
 func _goto_town():
 	WorldController.travel_spawn = "from_farm"
