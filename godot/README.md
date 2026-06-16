@@ -84,13 +84,22 @@ day-night cycle, prompts, shop overlays, economy actions) and a `WorldHUD`:
   coin fee); the plow isn't refunded and there's no undo, so the cell must be
   plowed again to farm it. Progression runs on the
   **Research Shed** — a node-based skill-tree map (arrow keys navigate, [E]
-  buys the highlighted node) where coins + research points buy
-  logistics/tools/crops/growth/championship upgrades plus cross-branch
-  capstones (`resources/game_data/research.json`, incl. research-gated crops
-  and championship nodes that earn research from runs / raise golden odds),
-  and the harvest ships from the **market truck** by the top hedge (load it,
+  buys the highlighted node, [TAB] swaps the PROGRESSION / AUTOMATION tracks)
+  where coins + research points buy logistics/tools/crops/growth/science/
+  championship upgrades plus cross-branch capstones
+  (`resources/game_data/research.json`, incl. research-gated crops, science
+  nodes that lower seed costs / earn research per harvest, and championship
+  nodes that earn research from runs / raise golden odds). Upgrades come in
+  many small tiers so the tree stretches out rather than handing over big
+  jumps. The harvest ships from the **market truck** by the top hedge (load it,
   send it off, coins + research points return after a wall-clock delay). The
-  farmhouse, well and pond live here too.
+  **automation** track (drip irrigation, harvester/seeder drones, auto-dispatch,
+  standing orders) is the long, expensive apex of the tree, and its purchase
+  orders aren't free money: the **Seed Co-op** and **Supply Depot** — two yard
+  buildings that stay shuttered until the matching standing-order research is
+  bought — let the player schedule *which* crops/fertilizer the farm restocks
+  and how much to keep on hand, and every order pays a delivery premium over the
+  hands-on shop price. The farmhouse, well and pond live here too.
 - **The town** (`TownController`, `scenes/Town/TownScene.tscn`) — the seed
   shop, knife stand and tool shed around a fountain plaza, plus the
   championship kitchen (walk in to start a run). Selling moved to the farm's

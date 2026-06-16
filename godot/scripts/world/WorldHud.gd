@@ -177,6 +177,8 @@ func _draw_shop(font: Font):
 		"plant": title = "PLANT A SEED"
 		"tools": title = "TOOL SHED"
 		"enhance": title = "FERTILIZE THIS CROP"
+		"seed_order": title = "SEED CO-OP — STANDING ORDER"
+		"fertilizer_order": title = "SUPPLY DEPOT — STANDING ORDER"
 	if is_research:
 		# the research shed shows a tab strip in place of a single title
 		_draw_research_tabs(font)
@@ -214,6 +216,12 @@ func _draw_shop(font: Font):
 		"enhance":
 			_draw_enhance_rows(font, panel)
 			_draw_footer(font, panel, "[1-%d] Apply   ·   [ESC] Cancel" % maxi(ctrl.owned_enhancers().size(), 1))
+		"seed_order":
+			_draw_seed_order(font, panel)
+			_draw_footer(font, panel, "[1-%d] Toggle crop   ·   [+/-] Stock target   ·   [T] Pause/resume   ·   [ESC] Close" % ctrl.plantable_potatoes().size())
+		"fertilizer_order":
+			_draw_fertilizer_order(font, panel)
+			_draw_footer(font, panel, "[1-%d] Choose grade   ·   [+/-] Stock target   ·   [T] Pause/resume   ·   [ESC] Close" % GameData.enhancers().size())
 
 func _draw_seed_rows(font: Font, panel: Rect2, shop_mode: bool):
 	var y = 210.0
@@ -221,7 +229,7 @@ func _draw_seed_rows(font: Font, panel: Rect2, shop_mode: bool):
 	for p in ctrl.plantable_potatoes():
 		i += 1
 		var owned = SaveDataManager.item_count("seeds", p["id"])
-		var cost = int(p["seed_cost"])
+		var cost = ctrl.seed_price(p["id"])
 		var ok = SaveDataManager.wallet() >= cost if shop_mode else owned > 0
 		var col = Color(0.95, 0.92, 0.85) if ok else Color(0.55, 0.5, 0.45)
 		draw_circle(Vector2(panel.position.x + 48, y - 7), 10.0, Color(p.get("color", "#b87333")))
@@ -505,6 +513,8 @@ func _effect_summary(node: Dictionary) -> String:
 			"unlock_crop": parts.append("unlock crop: %s" % str(v))
 			"golden_luck": parts.append("+%d%% golden odds" % int(round(float(v) * 100.0)))
 			"champ_rp_per": parts.append("research from championship runs")
+			"harvest_rp": parts.append("+%d research per harvest" % int(v))
+			"seed_discount": parts.append("-%d%% seed cost" % int(round(float(v) * 100.0)))
 			_: parts.append(str(k))
 	return ", ".join(parts)
 
@@ -525,6 +535,7 @@ func _branch_color(branch: String) -> Color:
 		"championship": return Color(0.9, 0.45, 0.45)
 		"capstone": return Color(0.97, 0.86, 0.45)
 		"automation": return Color(0.4, 0.8, 0.78)
+		"science": return Color(0.45, 0.65, 0.92)
 	return Color(0.7, 0.7, 0.7)
 
 func _draw_knife_rows(font: Font, panel: Rect2):
@@ -624,6 +635,70 @@ func _draw_enhance_rows(font: Font, panel: Rect2):
 		draw_string(font, Vector2(panel.position.x + 70, y), "[%d] %s — %d charges" % [i, e["name"], n], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(0.95, 0.92, 0.85))
 		draw_string(font, Vector2(panel.position.x + 70, y + 18), e.get("desc", ""), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.7, 0.65, 0.55))
 		y += 54.0
+
+# ── standing-order depots: schedule what the farm auto-restocks ──
+
+# Shared header: a paused/active pill and the stock-target stepper.
+func _draw_order_header(font: Font, panel: Rect2, o: Dictionary, target_label: String):
+	var on: bool = bool(o.get("enabled", true))
+	var pill = "ACTIVE" if on else "PAUSED"
+	var pcol = Color.LIGHT_GREEN if on else Color(0.85, 0.5, 0.42)
+	draw_string(font, Vector2(panel.position.x + 40, 200), "Order: ", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.8, 0.76, 0.66))
+	draw_string(font, Vector2(panel.position.x + 110, 200), pill, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, pcol)
+	var st = "%s: keep %d in stock" % [target_label, int(o.get("stock_target", 0))]
+	var ss = font.get_string_size(st, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
+	draw_string(font, Vector2(panel.end.x - ss.x - 30, 200), st, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.85, 0.85, 0.6))
+
+func _draw_seed_order(font: Font, panel: Rect2):
+	var o = ctrl.seed_order()
+	_draw_order_header(font, panel, o, "Per crop")
+	var note = "Delivery premium applies. Ticked crops are restocked; none ticked = restock anything that needs replanting."
+	draw_multiline_string(font, Vector2(panel.position.x + 40, 230), note, HORIZONTAL_ALIGNMENT_LEFT, int(panel.size.x - 80), 13, 2, Color(0.7, 0.66, 0.56))
+	var crops: Array = o.get("crops", [])
+	var y = 282.0
+	var i = 0
+	for p in ctrl.plantable_potatoes():
+		i += 1
+		var on: bool = p["id"] in crops
+		var have = SaveDataManager.item_count("seeds", p["id"])
+		draw_circle(Vector2(panel.position.x + 48, y - 7), 10.0, Color(p.get("color", "#b87333")))
+		var box = Rect2(panel.position.x + 66, y - 16, 18, 18)
+		draw_rect(box, Color(0.2, 0.17, 0.12))
+		draw_rect(box, Color(0.6, 0.55, 0.45) if not on else Color.LIGHT_GREEN, false, 2.0)
+		if on:
+			_draw_check(box.get_center(), Color.LIGHT_GREEN)
+		draw_string(font, Vector2(panel.position.x + 96, y), "[%d] %s" % [i, p["name"]], HORIZONTAL_ALIGNMENT_LEFT, -1, 20,
+				Color(0.95, 0.92, 0.85) if on else Color(0.7, 0.66, 0.58))
+		var detail = "order pays %d c  ·  have %d" % [ctrl.seed_order_price(p["id"]), have]
+		var ds = font.get_string_size(detail, HORIZONTAL_ALIGNMENT_CENTER, -1, 15)
+		draw_string(font, Vector2(panel.end.x - ds.x - 30, y), detail, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.8, 0.7, 0.4))
+		y += 40.0
+
+func _draw_fertilizer_order(font: Font, panel: Rect2):
+	var o = ctrl.fertilizer_order()
+	_draw_order_header(font, panel, o, "Charges")
+	var grade: String = str(o.get("grade", ""))
+	var note = "Delivery premium applies. The chosen grade is auto-applied to fresh crops; none chosen = cheapest bag."
+	draw_multiline_string(font, Vector2(panel.position.x + 40, 230), note, HORIZONTAL_ALIGNMENT_LEFT, int(panel.size.x - 80), 13, 2, Color(0.7, 0.66, 0.56))
+	var y = 286.0
+	var i = 0
+	for e in GameData.enhancers():
+		i += 1
+		var on: bool = e["id"] == grade
+		var have = SaveDataManager.item_count("items", e["id"])
+		draw_circle(Vector2(panel.position.x + 48, y - 7), 10.0, Color(e.get("color", "#888")))
+		var dot = Vector2(panel.position.x + 74, y - 7)
+		draw_arc(dot, 9.0, 0, TAU, 16, Color.GOLD if on else Color(0.6, 0.55, 0.45), 2.0)
+		if on:
+			draw_circle(dot, 4.5, Color.GOLD)
+		draw_string(font, Vector2(panel.position.x + 96, y), "[%d] %s" % [i, e["name"]], HORIZONTAL_ALIGNMENT_LEFT, -1, 20,
+				Color(0.95, 0.92, 0.85) if on else Color(0.7, 0.66, 0.58))
+		draw_string(font, Vector2(panel.position.x + 96, y + 18), e.get("desc", ""), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.7, 0.65, 0.55))
+		var price = int(ceil(int(e.get("cost", 0)) * ctrl.ORDER_SURCHARGE))
+		var detail = "order pays %d c  ·  have %d" % [price, have]
+		var ds = font.get_string_size(detail, HORIZONTAL_ALIGNMENT_CENTER, -1, 15)
+		draw_string(font, Vector2(panel.end.x - ds.x - 30, y), detail, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.8, 0.7, 0.4))
+		y += 48.0
 
 func _draw_footer(font: Font, panel: Rect2, text: String):
 	var fs = font.get_string_size(text, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)

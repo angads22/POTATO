@@ -7,40 +7,76 @@
 			"desc": "Haul +15 spuds to market per run"
 		},
 		{
-			"id": "logi_cap2", "name": "Trailer Hitch", "branch": "logistics",
-			"pos": [1, 1], "cost_coins": 900, "cost_rp": 10, "requires": ["logi_cap1"],
-			"effect": { "truck_capacity": 25 },
-			"desc": "A towed trailer adds +25 capacity"
+			"id": "logi_cap2", "name": "Side Racks", "branch": "logistics",
+			"pos": [1, 1], "cost_coins": 700, "cost_rp": 8, "requires": ["logi_cap1"],
+			"effect": { "truck_capacity": 15 },
+			"desc": "Slatted racks add +15 capacity"
 		},
 		{
-			"id": "logi_cap3", "name": "Box Truck Fleet", "branch": "logistics",
-			"pos": [2, 1], "cost_coins": 2200, "cost_rp": 24, "requires": ["logi_cap2"],
-			"effect": { "truck_capacity": 40 },
-			"desc": "A second rig hauls +40 more per run"
+			"id": "logi_cap3", "name": "Trailer Hitch", "branch": "logistics",
+			"pos": [2, 1], "cost_coins": 1400, "cost_rp": 16, "requires": ["logi_cap2"],
+			"effect": { "truck_capacity": 20 },
+			"desc": "A towed trailer adds +20 capacity"
+		},
+		{
+			"id": "logi_cap4", "name": "Box Truck", "branch": "logistics",
+			"pos": [3, 1], "cost_coins": 2600, "cost_rp": 28, "requires": ["logi_cap3"],
+			"effect": { "truck_capacity": 25 },
+			"desc": "A boxed bed carries +25 more per run"
+		},
+		{
+			"id": "logi_cap5", "name": "Box Truck Fleet", "branch": "logistics",
+			"pos": [4, 1], "cost_coins": 4200, "cost_rp": 44, "requires": ["logi_cap4"],
+			"effect": { "truck_capacity": 30 },
+			"desc": "A second rig hauls +30 more per run"
 		},
 		{
 			"id": "logi_speed1", "name": "Faster Route", "branch": "logistics",
 			"pos": [1, 0], "cost_coins": 500, "cost_rp": 6, "requires": ["logi_cap1"],
-			"effect": { "truck_trip_delta": -30 },
-			"desc": "Shaves 30s off every market trip"
+			"effect": { "truck_trip_delta": -20 },
+			"desc": "Shaves 20s off every market trip"
 		},
 		{
 			"id": "logi_speed2", "name": "Highway Permit", "branch": "logistics",
-			"pos": [2, 0], "cost_coins": 1400, "cost_rp": 16, "requires": ["logi_speed1"],
-			"effect": { "truck_trip_delta": -30 },
-			"desc": "Shaves another 30s off the run"
+			"pos": [2, 0], "cost_coins": 1100, "cost_rp": 12, "requires": ["logi_speed1"],
+			"effect": { "truck_trip_delta": -20 },
+			"desc": "Shaves another 20s off the run"
+		},
+		{
+			"id": "logi_speed3", "name": "Night Hauls", "branch": "logistics",
+			"pos": [3, 0], "cost_coins": 2000, "cost_rp": 22, "requires": ["logi_speed2"],
+			"effect": { "truck_trip_delta": -25 },
+			"desc": "Round-the-clock runs cut 25s more"
+		},
+		{
+			"id": "logi_speed4", "name": "Refrigerated Rig", "branch": "logistics",
+			"pos": [4, 0], "cost_coins": 3200, "cost_rp": 34, "requires": ["logi_speed3"],
+			"effect": { "truck_trip_delta": -25 },
+			"desc": "No spoilage stops — 25s faster again"
 		},
 		{
 			"id": "logi_price1", "name": "Wholesale Contract", "branch": "logistics",
-			"pos": [1, 2], "cost_coins": 1200, "cost_rp": 13, "requires": ["logi_cap1"],
-			"effect": { "truck_price_mult": 0.25 },
-			"desc": "+25% on everything the truck sells"
+			"pos": [1, 2], "cost_coins": 900, "cost_rp": 10, "requires": ["logi_cap1"],
+			"effect": { "truck_price_mult": 0.10 },
+			"desc": "+10% on everything the truck sells"
 		},
 		{
-			"id": "logi_price2", "name": "Export Deal", "branch": "logistics",
-			"pos": [2, 2], "cost_coins": 2800, "cost_rp": 31, "requires": ["logi_price1"],
-			"effect": { "truck_price_mult": 0.25 },
-			"desc": "Overseas buyers pay +25% more"
+			"id": "logi_price2", "name": "Co-op Membership", "branch": "logistics",
+			"pos": [2, 2], "cost_coins": 1600, "cost_rp": 18, "requires": ["logi_price1"],
+			"effect": { "truck_price_mult": 0.10 },
+			"desc": "Pooled sales pay +10% more"
+		},
+		{
+			"id": "logi_price3", "name": "Export Deal", "branch": "logistics",
+			"pos": [3, 2], "cost_coins": 2600, "cost_rp": 28, "requires": ["logi_price2"],
+			"effect": { "truck_price_mult": 0.15 },
+			"desc": "Overseas buyers pay +15% more"
+		},
+		{
+			"id": "logi_price4", "name": "Brand Recognition", "branch": "logistics",
+			"pos": [4, 2], "cost_coins": 4000, "cost_rp": 42, "requires": ["logi_price3"],
+			"effect": { "truck_price_mult": 0.15 },
+			"desc": "A famous spud label pays +15% more"
 		},
 
 		{
@@ -51,9 +87,21 @@
 		},
 		{
 			"id": "tool_dura2", "name": "Tungsten Blade", "branch": "tools",
-			"pos": [1, 3], "cost_coins": 1300, "cost_rp": 14, "requires": ["tool_dura1"],
+			"pos": [1, 3], "cost_coins": 1100, "cost_rp": 12, "requires": ["tool_dura1"],
 			"effect": { "plow_durability": 8 },
 			"desc": "New plows last 8 more tiles still"
+		},
+		{
+			"id": "tool_dura3", "name": "Diamond Edge", "branch": "tools",
+			"pos": [2, 3], "cost_coins": 2400, "cost_rp": 26, "requires": ["tool_dura2"],
+			"effect": { "plow_durability": 10 },
+			"desc": "An industrial edge adds +10 tiles"
+		},
+		{
+			"id": "tool_dura4", "name": "Self-Honing Share", "branch": "tools",
+			"pos": [3, 3], "cost_coins": 3800, "cost_rp": 40, "requires": ["tool_dura3"],
+			"effect": { "plow_durability": 12 },
+			"desc": "A self-sharpening plow adds +12 tiles"
 		},
 		{
 			"id": "tool_radius", "name": "Wide Plow (3x3)", "branch": "tools",
@@ -63,9 +111,15 @@
 		},
 		{
 			"id": "tool_radius2", "name": "Field Plow (5x5)", "branch": "tools",
-			"pos": [2, 3], "cost_coins": 3200, "cost_rp": 36, "requires": ["tool_radius"],
+			"pos": [2, 4], "cost_coins": 3200, "cost_rp": 36, "requires": ["tool_radius"],
 			"effect": { "plow_radius": 1 },
 			"desc": "Break a whole 5x5 patch at once"
+		},
+		{
+			"id": "tool_radius3", "name": "Estate Plow (7x7)", "branch": "tools",
+			"pos": [3, 4], "cost_coins": 5500, "cost_rp": 60, "requires": ["tool_radius2"],
+			"effect": { "plow_radius": 1 },
+			"desc": "Tear open a 7x7 patch in a single pass"
 		},
 		{
 			"id": "tool_reach", "name": "Sprinkler Pressure", "branch": "tools",
@@ -80,65 +134,10 @@
 			"desc": "Sprinklers reach three tiles out"
 		},
 		{
-			"id": "auto_water", "name": "Drip Irrigation", "branch": "automation", "tab": "automation",
-			"pos": [0, 12], "cost_coins": 1200, "cost_rp": 13, "requires": [],
-			"effect": { "auto_water": true },
-			"desc": "Buried lines water every planted crop on the tick"
-		},
-		{
-			"id": "tool_autoharvest", "name": "Spud-Bot Harvester", "branch": "automation", "tab": "automation",
-			"pos": [1, 12], "cost_coins": 1800, "cost_rp": 20, "requires": [],
-			"effect": { "auto_harvest": true },
-			"desc": "A drone collects ready crops for you"
-		},
-		{
-			"id": "auto_truck", "name": "Auto-Dispatch", "branch": "automation", "tab": "automation",
-			"pos": [2, 12], "cost_coins": 2000, "cost_rp": 22, "requires": ["tool_autoharvest"],
-			"effect": { "auto_truck": true },
-			"desc": "Loads and ships the market truck the moment it's idle"
-		},
-		{
-			"id": "auto_fertilize", "name": "Nutrient Injector", "branch": "automation", "tab": "automation",
-			"pos": [0, 13], "cost_coins": 1800, "cost_rp": 20, "requires": ["auto_water"],
-			"effect": { "auto_fertilize": true },
-			"desc": "Works fertilizer into every fresh crop automatically"
-		},
-		{
-			"id": "tool_autoseed", "name": "Auto-Seeder", "branch": "automation", "tab": "automation",
-			"pos": [1, 13], "cost_coins": 2400, "cost_rp": 27, "requires": ["tool_autoharvest"],
-			"effect": { "auto_seed": true },
-			"desc": "Replants harvested soil from your pouch"
-		},
-		{
-			"id": "auto_speed1", "name": "Overclocked Drones", "branch": "automation", "tab": "automation",
-			"pos": [2, 13], "cost_coins": 1500, "cost_rp": 17, "requires": ["tool_autoharvest"],
-			"effect": { "auto_speed": 1 },
-			"desc": "The automation tick runs twice as fast"
-		},
-		{
-			"id": "auto_buy_fertilizer", "name": "Fertilizer Subscription", "branch": "automation", "tab": "automation",
-			"pos": [0, 14], "cost_coins": 2000, "cost_rp": 22, "requires": ["auto_fertilize"],
-			"effect": { "auto_buy_fertilizer": true },
-			"desc": "A standing order restocks fertilizer when the shed runs dry"
-		},
-		{
-			"id": "auto_buy_seeds", "name": "Seed Standing Order", "branch": "automation", "tab": "automation",
-			"pos": [1, 14], "cost_coins": 1600, "cost_rp": 18, "requires": ["tool_autoseed"],
-			"effect": { "auto_buy_seeds": true },
-			"desc": "Auto-buys seeds so the replanter never runs out"
-		},
-		{
-			"id": "auto_speed2", "name": "Hyperdrive Automation", "branch": "automation", "tab": "automation",
-			"pos": [2, 14], "cost_coins": 3000, "cost_rp": 34, "requires": ["auto_speed1"],
-			"effect": { "auto_speed": 1 },
-			"desc": "The automation tick runs faster still"
-		},
-		{
-			"id": "auto_master", "name": "Farmhand AI", "branch": "automation", "tab": "automation",
-			"pos": [1, 15], "cost_coins": 5000, "cost_rp": 56,
-			"requires": ["auto_buy_seeds", "auto_buy_fertilizer", "auto_truck"],
-			"effect": { "auto_buy_plow": true, "bonus_yield": 1 },
-			"desc": "A fully autonomous farm — and it auto-replaces a worn plow"
+			"id": "tool_reach3", "name": "Misting Towers", "branch": "tools",
+			"pos": [2, 5], "cost_coins": 3600, "cost_rp": 38, "requires": ["tool_reach2"],
+			"effect": { "sprinkler_reach": 1 },
+			"desc": "Sprinklers reach four tiles out"
 		},
 
 		{
@@ -173,74 +172,216 @@
 		},
 
 		{
+			"id": "sci_lab1", "name": "Field Notebook", "branch": "science",
+			"pos": [0, 7], "cost_coins": 600, "cost_rp": 4, "requires": [],
+			"effect": { "harvest_rp": 1 },
+			"desc": "Logging every dig earns +1 research point per harvest"
+		},
+		{
+			"id": "sci_lab2", "name": "Soil Sampling", "branch": "science",
+			"pos": [1, 7], "cost_coins": 1500, "cost_rp": 14, "requires": ["sci_lab1"],
+			"effect": { "harvest_rp": 2 },
+			"desc": "Careful sampling earns +2 more research per harvest"
+		},
+		{
+			"id": "sci_lab3", "name": "On-Site Lab", "branch": "science",
+			"pos": [2, 7], "cost_coins": 3200, "cost_rp": 34, "requires": ["sci_lab2"],
+			"effect": { "harvest_rp": 3 },
+			"desc": "A field lab earns +3 more research per harvest"
+		},
+		{
+			"id": "sci_seed1", "name": "Bulk Seed Orders", "branch": "science",
+			"pos": [3, 7], "cost_coins": 1000, "cost_rp": 10, "requires": ["sci_lab1"],
+			"effect": { "seed_discount": 0.10 },
+			"desc": "Seeds cost 10% less to buy"
+		},
+		{
+			"id": "sci_seed2", "name": "Seed Bank", "branch": "science",
+			"pos": [4, 7], "cost_coins": 2200, "cost_rp": 22, "requires": ["sci_seed1"],
+			"effect": { "seed_discount": 0.10 },
+			"desc": "A saved seed stock cuts seed prices another 10%"
+		},
+
+		{
 			"id": "grow_speed1", "name": "Soil Science", "branch": "growth",
-			"pos": [0, 7], "cost_coins": 600, "cost_rp": 7, "requires": [],
+			"pos": [0, 8], "cost_coins": 600, "cost_rp": 7, "requires": [],
 			"effect": { "grow_mult": 0.85 },
 			"desc": "Every crop grows 15% faster"
 		},
 		{
 			"id": "grow_speed2", "name": "Hydroponics", "branch": "growth",
-			"pos": [1, 7], "cost_coins": 1800, "cost_rp": 20, "requires": ["grow_speed1"],
+			"pos": [1, 8], "cost_coins": 1800, "cost_rp": 20, "requires": ["grow_speed1"],
 			"effect": { "grow_mult": 0.85 },
 			"desc": "Soak-fed roots grow 15% faster again"
 		},
 		{
 			"id": "grow_speed3", "name": "Gene Editing", "branch": "growth",
-			"pos": [2, 7], "cost_coins": 3500, "cost_rp": 39, "requires": ["grow_speed2"],
+			"pos": [2, 8], "cost_coins": 3000, "cost_rp": 32, "requires": ["grow_speed2"],
 			"effect": { "grow_mult": 0.90 },
 			"desc": "Spliced strains grow a further 10% faster"
 		},
 		{
+			"id": "grow_speed4", "name": "Climate Domes", "branch": "growth",
+			"pos": [3, 8], "cost_coins": 4500, "cost_rp": 48, "requires": ["grow_speed3"],
+			"effect": { "grow_mult": 0.92 },
+			"desc": "Sealed domes grow crops 8% faster still"
+		},
+		{
 			"id": "yield1", "name": "Hearty Harvest", "branch": "growth",
-			"pos": [1, 8], "cost_coins": 1000, "cost_rp": 11, "requires": ["grow_speed1"],
+			"pos": [0, 9], "cost_coins": 1000, "cost_rp": 11, "requires": ["grow_speed1"],
 			"effect": { "bonus_yield": 1 },
 			"desc": "+1 potato from every harvest"
 		},
 		{
 			"id": "yield2", "name": "Bumper Crop", "branch": "growth",
-			"pos": [2, 8], "cost_coins": 2400, "cost_rp": 27, "requires": ["yield1"],
+			"pos": [1, 9], "cost_coins": 2400, "cost_rp": 27, "requires": ["yield1"],
 			"effect": { "bonus_yield": 1 },
 			"desc": "+1 more potato from every harvest"
+		},
+		{
+			"id": "yield3", "name": "Record Yields", "branch": "growth",
+			"pos": [2, 9], "cost_coins": 4200, "cost_rp": 46, "requires": ["yield2"],
+			"effect": { "bonus_yield": 1 },
+			"desc": "+1 more potato from every harvest still"
+		},
+		{
+			"id": "grow_robust", "name": "Disease Resistance", "branch": "growth",
+			"pos": [0, 10], "cost_coins": 3500, "cost_rp": 38, "requires": ["grow_speed2"],
+			"effect": { "grow_mult": 0.93 },
+			"desc": "Hardier plants shave another 7% off grow time"
+		},
+		{
+			"id": "grow_lush", "name": "Companion Planting", "branch": "growth",
+			"pos": [1, 10], "cost_coins": 5000, "cost_rp": 54, "requires": ["yield2"],
+			"effect": { "bonus_yield": 1 },
+			"desc": "Intercropped beds add +1 to every harvest"
 		},
 
 		{
 			"id": "champ_field", "name": "Field Research", "branch": "championship",
-			"pos": [0, 9], "cost_coins": 700, "cost_rp": 8, "requires": [],
+			"pos": [0, 11], "cost_coins": 700, "cost_rp": 8, "requires": [],
 			"effect": { "champ_rp_per": 0.0004 },
 			"desc": "Championship runs earn research (~1 rp / 2500 score)"
 		},
 		{
 			"id": "champ_field2", "name": "Research Grant", "branch": "championship",
-			"pos": [1, 9], "cost_coins": 2000, "cost_rp": 22, "requires": ["champ_field"],
+			"pos": [1, 11], "cost_coins": 2000, "cost_rp": 22, "requires": ["champ_field"],
 			"effect": { "champ_rp_per": 0.0004 },
 			"desc": "Doubles the research earned per run"
 		},
 		{
+			"id": "champ_field3", "name": "University Partnership", "branch": "championship",
+			"pos": [2, 11], "cost_coins": 3600, "cost_rp": 38, "requires": ["champ_field2"],
+			"effect": { "champ_rp_per": 0.0004 },
+			"desc": "More research still from every run"
+		},
+		{
 			"id": "champ_lucky", "name": "Lucky Spuds", "branch": "championship",
-			"pos": [0, 10], "cost_coins": 1000, "cost_rp": 11, "requires": [],
+			"pos": [0, 12], "cost_coins": 1000, "cost_rp": 11, "requires": [],
 			"effect": { "golden_luck": 0.04 },
 			"desc": "+4% golden potato odds in the kitchen"
 		},
 		{
 			"id": "champ_lucky2", "name": "Four-Leaf Furrow", "branch": "championship",
-			"pos": [1, 10], "cost_coins": 2600, "cost_rp": 29, "requires": ["champ_lucky"],
+			"pos": [1, 12], "cost_coins": 2600, "cost_rp": 29, "requires": ["champ_lucky"],
 			"effect": { "golden_luck": 0.04 },
 			"desc": "+4% more golden potato odds"
+		},
+		{
+			"id": "champ_lucky3", "name": "Heirloom Seedstock", "branch": "championship",
+			"pos": [2, 12], "cost_coins": 4200, "cost_rp": 44, "requires": ["champ_lucky2"],
+			"effect": { "golden_luck": 0.03 },
+			"desc": "+3% more golden potato odds"
 		},
 
 		{
 			"id": "cap_master", "name": "Master Farmhand", "branch": "capstone",
-			"pos": [5, 4], "cost_coins": 6000, "cost_rp": 67,
-			"requires": ["logi_cap3", "tool_autoseed", "yield2"],
+			"pos": [3, 13], "cost_coins": 8000, "cost_rp": 85,
+			"requires": ["logi_cap3", "yield2", "grow_speed3"],
 			"effect": { "bonus_yield": 2, "grow_mult": 0.85, "truck_price_mult": 0.25 },
 			"desc": "Mastery of the land: +2 yield, +15% growth, +25% truck price"
 		},
 		{
 			"id": "cap_agronomy", "name": "Agronomy PhD", "branch": "capstone",
-			"pos": [4, 8], "cost_coins": 5000, "cost_rp": 56,
-			"requires": ["grow_speed3", "champ_field2"],
+			"pos": [4, 13], "cost_coins": 9000, "cost_rp": 95,
+			"requires": ["grow_speed4", "champ_field3"],
 			"effect": { "grow_mult": 0.85, "champ_rp_per": 0.0008 },
 			"desc": "+15% growth and a big research yield from every run"
+		},
+		{
+			"id": "cap_harvest", "name": "Heritage Estate", "branch": "capstone",
+			"pos": [5, 13], "cost_coins": 9000, "cost_rp": 95,
+			"requires": ["yield3", "sci_lab3"],
+			"effect": { "bonus_yield": 2, "harvest_rp": 3 },
+			"desc": "A storied estate: +2 yield and +3 research per harvest"
+		},
+
+		{
+			"id": "auto_water", "name": "Drip Irrigation", "branch": "automation", "tab": "automation",
+			"pos": [0, 20], "cost_coins": 1500, "cost_rp": 16, "requires": [],
+			"effect": { "auto_water": true },
+			"desc": "Buried lines water every planted crop on the tick"
+		},
+		{
+			"id": "tool_autoharvest", "name": "Spud-Bot Harvester", "branch": "automation", "tab": "automation",
+			"pos": [1, 20], "cost_coins": 2200, "cost_rp": 24, "requires": [],
+			"effect": { "auto_harvest": true },
+			"desc": "A drone collects ready crops for you"
+		},
+		{
+			"id": "auto_speed1", "name": "Overclocked Drones", "branch": "automation", "tab": "automation",
+			"pos": [2, 20], "cost_coins": 2000, "cost_rp": 22, "requires": ["tool_autoharvest"],
+			"effect": { "auto_speed": 1 },
+			"desc": "The automation tick runs twice as fast"
+		},
+		{
+			"id": "tool_autoseed", "name": "Auto-Seeder", "branch": "automation", "tab": "automation",
+			"pos": [0, 21], "cost_coins": 3000, "cost_rp": 32, "requires": ["tool_autoharvest"],
+			"effect": { "auto_seed": true },
+			"desc": "Replants harvested soil from your pouch"
+		},
+		{
+			"id": "auto_fertilize", "name": "Nutrient Injector", "branch": "automation", "tab": "automation",
+			"pos": [1, 21], "cost_coins": 2800, "cost_rp": 30, "requires": ["auto_water"],
+			"effect": { "auto_fertilize": true },
+			"desc": "Works fertilizer into every fresh crop automatically"
+		},
+		{
+			"id": "auto_truck", "name": "Auto-Dispatch", "branch": "automation", "tab": "automation",
+			"pos": [2, 21], "cost_coins": 3200, "cost_rp": 34, "requires": ["tool_autoharvest"],
+			"effect": { "auto_truck": true },
+			"desc": "Loads and ships the market truck the moment it's idle"
+		},
+		{
+			"id": "auto_buy_seeds", "name": "Seed Standing Order", "branch": "automation", "tab": "automation",
+			"pos": [0, 22], "cost_coins": 4000, "cost_rp": 44, "requires": ["tool_autoseed"],
+			"effect": { "auto_buy_seeds": true },
+			"desc": "Opens the Seed Co-op: schedule which crops the farm restocks (a delivery premium applies)"
+		},
+		{
+			"id": "auto_buy_fertilizer", "name": "Fertilizer Subscription", "branch": "automation", "tab": "automation",
+			"pos": [1, 22], "cost_coins": 4000, "cost_rp": 44, "requires": ["auto_fertilize"],
+			"effect": { "auto_buy_fertilizer": true },
+			"desc": "Opens the Supply Depot: schedule which fertilizer the farm restocks (a delivery premium applies)"
+		},
+		{
+			"id": "auto_speed2", "name": "Hyperdrive Automation", "branch": "automation", "tab": "automation",
+			"pos": [2, 22], "cost_coins": 4500, "cost_rp": 48, "requires": ["auto_speed1"],
+			"effect": { "auto_speed": 1 },
+			"desc": "The automation tick runs faster still"
+		},
+		{
+			"id": "auto_plow", "name": "Plow Service Contract", "branch": "automation", "tab": "automation",
+			"pos": [0, 23], "cost_coins": 3500, "cost_rp": 38, "requires": ["tool_autoseed"],
+			"effect": { "auto_buy_plow": true },
+			"desc": "A worn-out plow is auto-replaced so field work never stalls"
+		},
+		{
+			"id": "auto_master", "name": "Farmhand AI", "branch": "automation", "tab": "automation",
+			"pos": [1, 24], "cost_coins": 12000, "cost_rp": 130,
+			"requires": ["auto_buy_seeds", "auto_buy_fertilizer", "auto_truck", "auto_plow"],
+			"effect": { "bonus_yield": 2, "grow_mult": 0.9 },
+			"desc": "A fully autonomous farm — the AI squeezes +2 yield and +10% growth from the land"
 		}
 	]
 }

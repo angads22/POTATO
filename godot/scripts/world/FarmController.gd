@@ -6,7 +6,10 @@ class_name FarmController
 # out), plant and water crops, and haul the harvest to the market TRUCK by the
 # top hedge to ship it for coins. Tiles are sparse: a FarmTile exists only once
 # a cell is plowed or holds a sprinkler. Progression runs on the RESEARCH SHED
-# (research points + coins buy permanent upgrades and unlock new crops). Coins
+# (research points + coins buy permanent upgrades and unlock new crops). Two
+# order depots in the yard — the SEED CO-OP and the SUPPLY DEPOT — let the
+# player schedule the automation standing orders, but stay shuttered until the
+# matching automation research is bought. Coins
 # persist in SaveDataManager.farm and flow both ways — slicing runs bank coins,
 # the farm grows potatoes, and better knives multiply slicing scores.
 
@@ -59,6 +62,8 @@ func _build_world():
 		Rect2(FarmBackground.WELL_POS - Vector2(55, 45), Vector2(110, 90)),
 		FarmBackground.TRUCK_RECT.grow(6),
 		FarmBackground.RESEARCH_WALL.grow(6),
+		FarmBackground.SEED_DEPOT_WALL.grow(6),
+		FarmBackground.FERT_DEPOT_WALL.grow(6),
 	]
 
 	_restore_tiles()
@@ -191,6 +196,8 @@ func _scan_interactions():
 		{"pos": FarmBackground.TRUCK_POS, "r": 130.0, "act": _truck_station},
 		{"pos": FarmBackground.RESEARCH_POS, "r": 120.0,
 			"text": "[E] Open the Research Shed", "act": _open_research},
+		{"pos": FarmBackground.SEED_ORDER_POS, "r": 115.0, "act": _seed_depot_station},
+		{"pos": FarmBackground.FERT_ORDER_POS, "r": 115.0, "act": _fert_depot_station},
 		{"pos": Vector2(FarmBackground.HOUSE_WALL.get_center().x, FarmBackground.HOUSE_WALL.end.y + 25), "r": 100.0,
 			"text": "[E] Nap until morning", "act": _nap},
 		{"pos": FarmBackground.TOWN_GATE_POS, "r": 120.0,
@@ -343,6 +350,30 @@ func _shop_input(key: Key):
 						buy_research(research_sel_id)
 				KEY_TAB:
 					research_cycle_tab()
+		"seed_order":
+			match key:
+				KEY_T, KEY_SPACE:
+					toggle_order_enabled("seed_order")
+				KEY_EQUAL, KEY_KP_ADD, KEY_UP:
+					adjust_order_stock("seed_order", 1)
+				KEY_MINUS, KEY_KP_SUBTRACT, KEY_DOWN:
+					adjust_order_stock("seed_order", -1)
+				_:
+					var crops = plantable_potatoes()
+					if idx >= 0 and idx < crops.size():
+						toggle_seed_order_crop(crops[idx]["id"])
+		"fertilizer_order":
+			match key:
+				KEY_T, KEY_SPACE:
+					toggle_order_enabled("fertilizer_order")
+				KEY_EQUAL, KEY_KP_ADD, KEY_UP:
+					adjust_order_stock("fertilizer_order", 1)
+				KEY_MINUS, KEY_KP_SUBTRACT, KEY_DOWN:
+					adjust_order_stock("fertilizer_order", -1)
+				_:
+					var grades = GameData.enhancers()
+					if idx >= 0 and idx < grades.size():
+						set_fertilizer_order_grade(grades[idx]["id"])
 		_:
 			super._shop_input(key)
 
@@ -499,8 +530,10 @@ func _harvest_tile(tile: FarmTile, quiet := false):
 	var data = GameData.potato_by_id(id)
 	var n = tile.harvest(rng) + int(SaveDataManager.research_bonus("bonus_yield"))
 	SaveDataManager.add_item("spuds", id, n)
-	# harvesting yields a trickle of research points (rare crops give more)
-	SaveDataManager.add_research_points(3 if data.get("rare", false) else 1)
+	# harvesting yields a trickle of research points (rare crops give more), lifted
+	# by the science branch's harvest_rp upgrades
+	var rp = (3 if data.get("rare", false) else 1) + int(SaveDataManager.research_bonus("harvest_rp"))
+	SaveDataManager.add_research_points(rp)
 	_sync_tiles()
 	if quiet:
 		return
@@ -827,6 +860,11 @@ func _auto_farm():
 			SaveDataManager.add_item("seeds", last, -1)
 			tile.plant(last)
 			changed = true
+	# Standing orders keep scheduled supplies topped up to their target each tick
+	if SaveDataManager.research_flag("auto_buy_seeds"):
+		_process_seed_order()
+	if SaveDataManager.research_flag("auto_buy_fertilizer"):
+		_process_fertilizer_order()
 	# Auto-Dispatch: load and ship the market truck the moment it's idle
 	if SaveDataManager.research_flag("auto_truck") and truck_status() == "idle":
 		truck_load_all()
@@ -836,14 +874,22 @@ func _auto_farm():
 		_sync_tiles()
 
 # Seed standing order: buy one seed of a crop the player can grow, quietly (no
-# popup/sfx), respecting the wallet. Returns true once the seed is in the pouch.
+# popup/sfx), respecting the wallet, the order schedule and the delivery premium.
+# Returns true once the seed is in the pouch.
 func _auto_restock_seed(id: String) -> bool:
 	if not (id in SaveDataManager.unlocked_crops()) and not (id in GameData.STARTER_CROPS):
 		return false
-	if not SaveDataManager.spend_coins(int(GameData.potato_by_id(id).get("seed_cost", 9999))):
+	if not seed_order_allows(id):
+		return false
+	if not SaveDataManager.spend_coins(seed_order_price(id)):
 		return false
 	SaveDataManager.add_item("seeds", id, 1)
 	return true
+
+# What the standing order pays for one seed: the (discounted) shop price plus the
+# delivery premium. Hands-on buying at the stall skips the premium.
+func seed_order_price(id: String) -> int:
+	return int(ceil(seed_price(id) * ORDER_SURCHARGE))
 
 # Cheapest fertilizer the player already owns charges of (empty dict if none).
 func _cheapest_owned_enhancer() -> Dictionary:
@@ -854,17 +900,49 @@ func _cheapest_owned_enhancer() -> Dictionary:
 				best = e
 	return best
 
-# Fertilizer subscription: buy the cheapest fertilizer bag, quietly. Returns the
-# enhancer dict (now with charges in stock), or empty if the wallet can't cover it.
+# Fertilizer subscription: buy a bag per the standing order, quietly. The order
+# picks the grade (an empty grade falls back to the cheapest bag, the original
+# behaviour); a paused order buys nothing. The delivery premium applies. Returns
+# the enhancer dict (now with charges in stock), or empty if it can't be bought.
 func _auto_buy_cheapest_enhancer() -> Dictionary:
-	var best := {}
-	for e in GameData.enhancers():
-		if best.is_empty() or int(e.get("cost", 0)) < int(best.get("cost", 0)):
-			best = e
-	if best.is_empty() or not SaveDataManager.spend_coins(int(best.get("cost", 9999))):
+	var o = fertilizer_order()
+	if not o["enabled"]:
 		return {}
-	SaveDataManager.add_item("items", best["id"], int(best.get("charges", 1)))
-	return best
+	var pick := {}
+	if o["grade"] != "":
+		pick = GameData.enhancer_by_id(o["grade"])
+	else:
+		for e in GameData.enhancers():
+			if pick.is_empty() or int(e.get("cost", 0)) < int(pick.get("cost", 0)):
+				pick = e
+	if pick.is_empty():
+		return {}
+	var price = int(ceil(int(pick.get("cost", 9999)) * ORDER_SURCHARGE))
+	if not SaveDataManager.spend_coins(price):
+		return {}
+	SaveDataManager.add_item("items", pick["id"], int(pick.get("charges", 1)))
+	return pick
+
+# Standing seed order: keep each scheduled crop topped up to its stock target,
+# at most one seed per crop per tick (a throttle, so the order can't drain the
+# wallet at once). Only crops explicitly scheduled at the Seed Co-op are
+# pre-bought — an unrestricted order still restocks reactively as plots replant.
+func _process_seed_order():
+	var o = seed_order()
+	if not o["enabled"]:
+		return
+	for id in o["crops"]:
+		if SaveDataManager.item_count("seeds", id) < o["stock_target"]:
+			_auto_restock_seed(id)
+
+# Standing fertilizer order: keep the chosen grade topped up to its target, one
+# bag per tick. Only runs when a specific grade is scheduled at the Supply Depot.
+func _process_fertilizer_order():
+	var o = fertilizer_order()
+	if not o["enabled"] or o["grade"] == "":
+		return
+	if SaveDataManager.item_count("items", o["grade"]) < o["stock_target"]:
+		_auto_buy_cheapest_enhancer()
 
 # Apply one fertilizer charge to a fresh crop, auto-buying a bag first when the
 # subscription is researched and the shed is empty. Quiet (no popup/sfx).
@@ -890,6 +968,112 @@ func _open_research():
 	open_shop = "research"
 	research_tab = "progression"
 	research_sel_id = _default_research_sel()
+
+# ────────────────────────────────────────────────────────
+#  Standing-order depots — schedule what the farm auto-restocks
+# ────────────────────────────────────────────────────────
+#
+# Two yard buildings let the player manage the automation purchase orders the
+# Seed Standing Order / Fertilizer Subscription research unlocks. Until that
+# research is bought the depot is shuttered (the station only shows a hint).
+# Orders pay a delivery premium over the shop price, so a fully-automated farm
+# runs at a thinner margin than buying by hand — automation is convenience, not
+# free money.
+
+# Markup the standing orders pay over the shop/seed price for the convenience of
+# never visiting a stall — keeps hands-on buying the cheaper option.
+const ORDER_SURCHARGE := 1.25
+
+func _seed_depot_station():
+	if SaveDataManager.research_flag("auto_buy_seeds"):
+		prompt = "[E] Seed Co-op — manage standing seed orders"
+		prompt_action = _open_seed_order
+	else:
+		prompt = "Seed Co-op — shuttered (research the Seed Standing Order to open it)"
+		prompt_action = Callable()
+
+func _fert_depot_station():
+	if SaveDataManager.research_flag("auto_buy_fertilizer"):
+		prompt = "[E] Supply Depot — manage standing fertilizer orders"
+		prompt_action = _open_fertilizer_order
+	else:
+		prompt = "Supply Depot — shuttered (research the Fertilizer Subscription to open it)"
+		prompt_action = Callable()
+
+func _open_seed_order():
+	open_shop = "seed_order"
+
+func _open_fertilizer_order():
+	open_shop = "fertilizer_order"
+
+# The seed order with its fields defaulted. An empty/absent "crops" list means
+# "no restriction" (every plantable crop is restocked) so old saves and the
+# smoke test, which don't configure an order, keep the original auto-buy.
+func seed_order() -> Dictionary:
+	var o: Dictionary = SaveDataManager.farm.get("seed_order", {})
+	return {
+		"enabled": bool(o.get("enabled", true)),
+		"crops": o.get("crops", []),
+		"stock_target": int(o.get("stock_target", 5)),
+	}
+
+# The fertilizer order defaulted. An empty "grade" means "buy the cheapest bag"
+# (the original behaviour), so unconfigured saves keep working.
+func fertilizer_order() -> Dictionary:
+	var o: Dictionary = SaveDataManager.farm.get("fertilizer_order", {})
+	return {
+		"enabled": bool(o.get("enabled", true)),
+		"grade": str(o.get("grade", "")),
+		"stock_target": int(o.get("stock_target", 3)),
+	}
+
+# True when the seed standing order is allowed to restock this crop: enabled,
+# and either unrestricted or with the crop on its schedule.
+func seed_order_allows(id: String) -> bool:
+	var o = seed_order()
+	if not o["enabled"]:
+		return false
+	var crops: Array = o["crops"]
+	return crops.is_empty() or id in crops
+
+# ── order config mutators (driven by the depot overlays) ──
+
+func toggle_seed_order_crop(id: String):
+	var o: Dictionary = SaveDataManager.farm.get("seed_order", {}).duplicate(true)
+	var crops: Array = o.get("crops", [])
+	if id in crops:
+		crops.erase(id)
+	else:
+		crops.append(id)
+	o["crops"] = crops
+	o["enabled"] = bool(o.get("enabled", true))
+	o["stock_target"] = int(o.get("stock_target", 5))
+	SaveDataManager.farm["seed_order"] = o
+	SaveDataManager.save_game()
+
+func set_fertilizer_order_grade(id: String):
+	var o: Dictionary = SaveDataManager.farm.get("fertilizer_order", {}).duplicate(true)
+	# selecting the active grade again clears it (back to "cheapest bag")
+	o["grade"] = "" if str(o.get("grade", "")) == id else id
+	o["enabled"] = bool(o.get("enabled", true))
+	o["stock_target"] = int(o.get("stock_target", 3))
+	SaveDataManager.farm["fertilizer_order"] = o
+	SaveDataManager.save_game()
+
+func toggle_order_enabled(which: String):
+	var o: Dictionary = SaveDataManager.farm.get(which, {}).duplicate(true)
+	o["enabled"] = not bool(o.get("enabled", true))
+	SaveDataManager.farm[which] = o
+	SaveDataManager.save_game()
+	_popup("%s %s" % ["Seed order" if which == "seed_order" else "Fertilizer order",
+			"resumed" if o["enabled"] else "paused"], Color(0.8, 0.85, 0.6))
+
+func adjust_order_stock(which: String, delta: int):
+	var o: Dictionary = SaveDataManager.farm.get(which, {}).duplicate(true)
+	var cap = 30 if which == "seed_order" else 12
+	o["stock_target"] = clampi(int(o.get("stock_target", 5)) + delta, 0, cap)
+	SaveDataManager.farm[which] = o
+	SaveDataManager.save_game()
 
 func _goto_town():
 	WorldController.travel_spawn = "from_farm"

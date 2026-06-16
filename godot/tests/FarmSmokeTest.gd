@@ -51,6 +51,8 @@ func _process(_delta):
 			_run_cover()
 		32:
 			_run_automation()
+		33:
+			_run_orders()
 		34:
 			# stand by the well with an empty can for the input probe
 			SaveDataManager.farm["water"] = 0
@@ -407,6 +409,66 @@ func _run_automation():
 		if t2 != null and t2.state == FarmTile.TState.READY:
 			any_ready = true
 	_check(not any_ready, "automation: auto-harvest clears all ready crops in one tick")
+
+# ── standing-order depots: schedule what the farm auto-restocks ──
+func _run_orders():
+	SaveDataManager.farm["wallet"] = 20000
+
+	# a paused seed order blocks the standing-order restock entirely
+	SaveDataManager.farm["seeds"] = {}
+	SaveDataManager.farm["seed_order"] = {"enabled": false, "crops": ["russet"], "stock_target": 5}
+	_check(not farm._auto_restock_seed("russet"), "orders: a paused seed order blocks restock")
+
+	# resumed + scheduling russet lets it buy; an unscheduled crop is skipped
+	SaveDataManager.farm["seed_order"] = {"enabled": true, "crops": ["russet"], "stock_target": 5}
+	var wallet0 = SaveDataManager.wallet()
+	_check(farm._auto_restock_seed("russet"), "orders: a scheduled crop restocks")
+	_check(SaveDataManager.item_count("seeds", "russet") == 1, "orders: the scheduled seed lands in the pouch")
+	_check(SaveDataManager.wallet() < wallet0, "orders: the restock spends coins")
+	_check(not farm._auto_restock_seed("yukon_gold"), "orders: an unscheduled crop is skipped")
+
+	# the standing order pays a delivery premium over the hands-on shop price
+	_check(farm.seed_order_price("russet") > farm.seed_price("russet"), "orders: the standing order pays a delivery premium")
+
+	# the proactive top-up keeps a scheduled crop stocked to its target
+	SaveDataManager.farm["seeds"] = {}
+	SaveDataManager.farm["seed_order"] = {"enabled": true, "crops": ["russet"], "stock_target": 3}
+	for _i in range(4):
+		farm._process_seed_order()
+	_check(SaveDataManager.item_count("seeds", "russet") == 3, "orders: the seed order tops up to its stock target")
+
+	# the seed discount cuts both the shop price and the order price
+	var full = farm.seed_price("russet")
+	SaveDataManager.farm["research"]["sci_seed1"] = true
+	_check(farm.seed_price("russet") < full, "orders: a seed discount lowers the seed price")
+	SaveDataManager.farm["research"].erase("sci_seed1")
+
+	# fertilizer order: choosing a grade buys that grade, not the cheapest
+	SaveDataManager.farm["items"] = {}
+	SaveDataManager.farm["fertilizer_order"] = {"enabled": true, "grade": "super_grow", "stock_target": 2}
+	var bought = farm._auto_buy_cheapest_enhancer()
+	_check(str(bought.get("id", "")) == "super_grow", "orders: the fertilizer order buys the chosen grade")
+
+	# a paused fertilizer order buys nothing
+	SaveDataManager.farm["items"] = {}
+	SaveDataManager.farm["fertilizer_order"] = {"enabled": false, "grade": "compost", "stock_target": 2}
+	_check(farm._auto_buy_cheapest_enhancer().is_empty(), "orders: a paused fertilizer order buys nothing")
+
+	# the config mutators round-trip through the save
+	SaveDataManager.farm["fertilizer_order"] = {"enabled": true, "grade": "", "stock_target": 2}
+	farm.set_fertilizer_order_grade("compost")
+	_check(str(SaveDataManager.farm["fertilizer_order"].get("grade", "")) == "compost", "orders: selecting a grade saves it")
+	farm.set_fertilizer_order_grade("compost")
+	_check(str(SaveDataManager.farm["fertilizer_order"].get("grade", "")) == "", "orders: reselecting the grade clears it")
+	farm.toggle_seed_order_crop("red")
+	_check("red" in SaveDataManager.farm["seed_order"].get("crops", []), "orders: toggling a crop adds it to the schedule")
+	farm.adjust_order_stock("seed_order", 5)
+	_check(int(SaveDataManager.farm["seed_order"].get("stock_target", 0)) > 3, "orders: the stock-target stepper saves")
+
+	# clear the order config so later steps fall back to the permissive defaults
+	SaveDataManager.farm.erase("seed_order")
+	SaveDataManager.farm.erase("fertilizer_order")
+	SaveDataManager.farm["wallet"] = 20000
 
 # ── schema-2 -> schema-3 migration ──
 func _run_migration():

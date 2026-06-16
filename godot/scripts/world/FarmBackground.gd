@@ -25,6 +25,13 @@ const TRUCK_POS = Vector2(1295, 215)
 # research shed in the yard, clear of the house/well/pond
 const RESEARCH_WALL = Rect2(1620, 250, 230, 150)
 const RESEARCH_POS = Vector2(1735, 325)
+# the two order depots between the house and the well — the Seed Co-op (schedule
+# which crops the standing order restocks) and the Supply Depot (schedule which
+# fertilizer). Each stays shuttered until its automation research is bought.
+const SEED_DEPOT_WALL = Rect2(470, 240, 170, 130)
+const SEED_ORDER_POS = Vector2(555, 430)
+const FERT_DEPOT_WALL = Rect2(680, 240, 160, 130)
+const FERT_ORDER_POS = Vector2(760, 430)
 # a purely decorative fenced kitchen garden tucked beside the farmhouse (drawn
 # in the backdrop layer, below the plowable grid — cosmetic only)
 const GARDEN_RECT = Rect2(180, 380, 240, 140)
@@ -96,6 +103,8 @@ func _on_clear_ground(p: Vector2) -> bool:
 		return false
 	if TRUCK_RECT.grow(30).has_point(p) or RESEARCH_WALL.grow(40).has_point(p):
 		return false
+	if SEED_DEPOT_WALL.grow(30).has_point(p) or FERT_DEPOT_WALL.grow(30).has_point(p):
+		return false
 	if GARDEN_RECT.grow(8).has_point(p):
 		return false
 	if on_path(p):
@@ -139,6 +148,8 @@ func _draw():
 	_draw_well()
 	_draw_truck()
 	_draw_research_shed()
+	_draw_order_depot(SEED_DEPOT_WALL, "SEED CO-OP", Color(0.5, 0.72, 0.4), "seed")
+	_draw_order_depot(FERT_DEPOT_WALL, "SUPPLY DEPOT", Color(0.62, 0.5, 0.36), "fert")
 	for i in range(TREE_POSITIONS.size()):
 		_draw_tree(TREE_POSITIONS[i], 1.0 + 0.25 * sin(i * 2.4), float(i))
 	_draw_town_gate()
@@ -300,6 +311,49 @@ func _draw_research_shed():
 func _window_color() -> Color:
 	# panes go from daylight blue to a warm lit glow as night falls
 	return Color(0.65, 0.78, 0.9).lerp(Color(1.0, 0.85, 0.4), clampf(night01 * 1.5, 0.0, 1.0))
+
+# A small order depot: a shopfront-style hut with an awning and a name plate.
+# `kind` swaps the sign glyph — a seed sack for the Seed Co-op, a fertilizer bag
+# for the Supply Depot. Drawn static; the prompt conveys locked / open status.
+func _draw_order_depot(w: Rect2, label: String, accent: Color, kind: String):
+	# ground shadow
+	draw_set_transform(Vector2(w.get_center().x, w.end.y + 6), 0.0, Vector2(1.0, 0.3))
+	draw_circle(Vector2.ZERO, w.size.x * 0.5, Color(0, 0, 0, 0.16))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	# walls with plank siding
+	draw_rect(w, Color(0.74, 0.66, 0.52))
+	for x in range(int(w.position.x) + 18, int(w.end.x), 18):
+		draw_rect(Rect2(x, w.position.y, 2, w.size.y), Color(0.62, 0.54, 0.42))
+	# flat shop roof + a striped awning over the front
+	draw_rect(Rect2(w.position.x - 12, w.position.y - 16, w.size.x + 24, 18), Color(0.4, 0.34, 0.26))
+	var awn_y = w.position.y + 2
+	var stripes = int(w.size.x / 24)
+	for i in range(stripes):
+		var ax = w.position.x + i * 24
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(ax, awn_y), Vector2(ax + 24, awn_y),
+			Vector2(ax + 24, awn_y + 22), Vector2(ax, awn_y + 22)
+		]), accent if i % 2 == 0 else Color(0.95, 0.92, 0.85))
+	# door + window
+	draw_rect(Rect2(w.get_center().x - 20, w.end.y - 56, 40, 56), Color(0.34, 0.28, 0.2))
+	draw_rect(Rect2(w.position.x + 18, w.position.y + 40, 40, 34), Color(0.4, 0.36, 0.3))
+	draw_rect(Rect2(w.position.x + 22, w.position.y + 44, 32, 26), _window_color())
+	# sign glyph: a sack of seeds or a fertilizer bag
+	var sc = Vector2(w.end.x - 40, w.position.y + 56)
+	draw_colored_polygon(PackedVector2Array([
+		sc + Vector2(-12, 14), sc + Vector2(12, 14), sc + Vector2(8, -10), sc + Vector2(-8, -10)
+	]), accent.darkened(0.1))
+	draw_line(sc + Vector2(-8, -10), sc + Vector2(8, -10), accent.lightened(0.2), 3.0)  # tied neck
+	if kind == "seed":
+		for k in range(3):
+			draw_circle(sc + Vector2(-5 + k * 5, 4), 2.4, Color(0.85, 0.78, 0.5))
+	else:
+		draw_string(ThemeDB.fallback_font, sc + Vector2(-5, 8), "N", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.9, 0.95, 0.7))
+	# name plate
+	var font = ThemeDB.fallback_font
+	GameHUD.panel_style(Color(0.2, 0.18, 0.13, 0.95)).draw(get_canvas_item(), Rect2(w.get_center().x - 78, w.end.y + 6, 156, 28))
+	var ls = font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 14)
+	draw_string(font, Vector2(w.get_center().x - ls.x / 2, w.end.y + 25), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.95, 0.9, 0.75))
 
 func _draw_house():
 	var w = HOUSE_WALL

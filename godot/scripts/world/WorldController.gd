@@ -230,8 +230,15 @@ func _shop_input(key: Key):
 func plantable_potatoes() -> Array:
 	return GameData.unlocked_potatoes(SaveDataManager.unlocked_crops())
 
+# Shop price of a seed after any researched seed discount (science branch). The
+# seed shop, the plant menu and the standing order all read this.
+func seed_price(id: String) -> int:
+	var base = int(GameData.potato_by_id(id).get("seed_cost", 9999))
+	var disc = clampf(SaveDataManager.research_bonus("seed_discount"), 0.0, 0.8)
+	return maxi(1, int(round(base * (1.0 - disc))))
+
 func buy_seed(id: String) -> bool:
-	var cost = int(GameData.potato_by_id(id).get("seed_cost", 9999))
+	var cost = seed_price(id)
 	if not SaveDataManager.spend_coins(cost):
 		_popup("Not enough coins!", Color.ORANGE_RED)
 		return false

@@ -124,11 +124,16 @@ water/sprinkler → fertilize → harvest, soil stays plowed; `[C]` covers a plo
 grass for coins — 9 freebies, no plow refund, must replow) and the **town** (`TownController` —
 seed/knife/tool stalls plus the championship kitchen; the designated home for future non-farming
 content). Progression runs on the farm's **Research Shed** (`research.json` nodes bought with coins +
-research points: logistics/tools/crops/growth, incl. research-gated crops) and the **market truck**
-at the top of the farm (load spuds, send it off, coins + RP return after a wall-clock delay — selling
-no longer happens in town). Gates on the map edges travel between them. Farm state is
+research points: logistics/tools/crops/growth/science/championship, incl. research-gated crops; a
+PROGRESSION and an AUTOMATION track switched with [TAB], upgrades in many small tiers). The automation
+track's standing orders are managed at two yard buildings — the **Seed Co-op** and **Supply Depot**,
+each shuttered until its standing-order research is bought — where the player schedules which
+crops/fertilizer the farm auto-restocks and how much to keep on hand (orders pay a delivery premium,
+so a fully-automated farm runs at a thinner margin than buying by hand). The harvest ships on the
+**market truck** at the top of the farm (load spuds, send it off, coins + RP return after a wall-clock
+delay — selling no longer happens in town). Gates on the map edges travel between them. Farm state is
 `SaveDataManager.farm` schema 3 (sparse `tiles` dict keyed `"col:row"`, plus `research`/
-`research_points`/`truck`); schema-1 (`plots` array) and schema-2 (`field:row:col` + `sections_owned`)
+`research_points`/`truck`/`seed_order`/`fertilizer_order`); schema-1 (`plots` array) and schema-2 (`field:row:col` + `sections_owned`)
 saves migrate automatically through `SaveDataManager._migrate_farm()` (a 1→2→3 chain) — migration
 runs on the raw dict *before* the defaults merge. `scripts/visuals/` holds the procedural backdrops/FX.
 

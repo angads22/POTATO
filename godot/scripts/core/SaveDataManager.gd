@@ -77,7 +77,15 @@ var farm: Dictionary = {
 	"research": {},         # unlocked research node ids -> true
 	# market truck: load spuds, send it off, coins + RP arrive after a trip
 	"truck": {"status": "idle", "cargo": {}, "return_at": 0.0,
-			"pending_coins": 0, "pending_rp": 0}
+			"pending_coins": 0, "pending_rp": 0},
+	# Standing orders, configured at the farm's two order depots (each gated
+	# behind its automation research). "crops"/"grade" name what's restocked,
+	# "stock_target" how many to keep on hand. The Seed Co-op + Supply Depot
+	# unlock once auto_buy_seeds / auto_buy_fertilizer are researched. Orders
+	# pay a delivery premium over the shop price (see FarmController), so the
+	# automated farm runs at a thinner margin than hands-on buying.
+	"seed_order": {"enabled": true, "crops": ["russet", "yukon_gold"], "stock_target": 5},
+	"fertilizer_order": {"enabled": true, "grade": "compost", "stock_target": 3}
 }
 
 func _ready():
