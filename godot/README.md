@@ -275,6 +275,9 @@ CI runs these on every PR touching `godot/` (see `.github/workflows/godot.yml`).
   pass in `StyleManager` restyles the whole game, cycle with [G] in Settings
 - ✅ Game-over screen with name entry and leaderboard submission
 - ✅ Save/load persistence (JSON: leaderboard, achievements, settings, unlocks)
+- ✅ Three independent save files — create and switch between slots from Settings
+  ([1]/[2]/[3]); each slot is its own folder under `user://potato_game/slotN/`,
+  and a pre-slots save migrates into slot 1 automatically
 - ✅ Data-driven balance: knives, potatoes, items and the research tree in
   `resources/game_data/*.json`
 - ✅ Open-grid farm: the whole pasture is free-form plowable (sparse,

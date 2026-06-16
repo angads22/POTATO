@@ -102,6 +102,15 @@ func _input(event: InputEvent):
 				if current_submenu == "leaderboard":
 					show_online_tab = not show_online_tab
 					queue_redraw()
+			KEY_1, KEY_2, KEY_3:
+				if current_submenu == "settings":
+					if SaveDataManager.switch_slot(event.keycode - KEY_0):
+						# the new slot carries its own settings — resync the live
+						# systems that cache them at boot
+						AudioManager.sound_enabled = SaveDataManager.settings["sound_enabled"]
+						StyleManager.apply(StyleManager.current())
+						AudioManager.play_sfx("menu_select")
+					queue_redraw()
 		return
 
 	match event.keycode:
@@ -415,7 +424,24 @@ func _draw_settings_screen(centre_x: float):
 	draw_string(font, Vector2(centre_x - 150, 322), "Classic → Pixel Art → Hyperreal",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.55, 0.5, 0.45))
 
-	draw_string(font, Vector2(centre_x - 150, 500), "[SPACE] Back",
+	# Save files: three independent slots, the active one marked. Switching to an
+	# empty slot starts a fresh game; the previous slot is saved first.
+	draw_string(font, Vector2(centre_x - 150, 376), "SAVE FILE",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.GOLD)
+	for i in range(SaveDataManager.MAX_SLOTS):
+		var n := i + 1
+		var active: bool = n == SaveDataManager.current_slot
+		var yy := 406.0 + i * 36.0
+		var line := "[%d] Slot %d — %s" % [n, n, SaveDataManager.slot_summary(n)]
+		var col := Color.GOLD if active else Color(0.85, 0.82, 0.74)
+		if active:
+			draw_string(font, Vector2(centre_x - 168, yy), "▶", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.GOLD)
+		draw_string(font, Vector2(centre_x - 150, yy), line, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, col)
+	draw_string(font, Vector2(centre_x - 150, 406.0 + SaveDataManager.MAX_SLOTS * 36.0 + 6.0),
+			"Press [1] [2] [3] to switch save file — an empty slot starts a new game",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.55, 0.5, 0.45))
+
+	draw_string(font, Vector2(centre_x - 150, 580), "[SPACE] Back",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.GRAY)
 
 func _draw_updates_screen(centre_x: float):

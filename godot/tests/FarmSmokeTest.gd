@@ -67,6 +67,8 @@ func _process(_delta):
 			farm.queue_free()
 		48:
 			_run_migration()
+		50:
+			_run_slots()
 		54:
 			_finish()
 
@@ -520,6 +522,28 @@ func _run_migration():
 	# crops the player already owned are unlocked so gating can't hide them
 	_check(SaveDataManager.has_research("crop_red"), "a growing crop's variety is unlocked")
 	_check(SaveDataManager.has_research("crop_purple"), "an owned-spud variety is unlocked")
+
+# ── save slots: three independent save files, switchable from Settings ──
+func _run_slots():
+	_check(SaveDataManager.current_slot == 1, "slots: the game starts on slot 1")
+	SaveDataManager.save_game()             # slot 1 now holds the migrated farm
+	var w1 = SaveDataManager.wallet()
+
+	# switching to an untouched slot starts a fresh game, independent of slot 1
+	_check(SaveDataManager.switch_slot(2), "slots: switching to slot 2 succeeds")
+	_check(SaveDataManager.current_slot == 2, "slots: slot 2 is the active slot")
+	_check(SaveDataManager.wallet() == 50, "slots: an empty slot starts at the new-game default")
+	SaveDataManager.add_coins(123)          # bank something distinct in slot 2
+
+	# switching back restores slot 1 untouched
+	_check(SaveDataManager.switch_slot(1), "slots: switching back to slot 1 succeeds")
+	_check(SaveDataManager.wallet() == w1, "slots: slot 1 keeps its own progress")
+
+	# slot 2's separate balance persisted across the switch
+	_check(SaveDataManager.switch_slot(2) and SaveDataManager.wallet() == 173,
+			"slots: slot 2 kept its own separate balance")
+	_check(SaveDataManager.slot_has_data(2), "slots: a played slot reports it has data")
+	SaveDataManager.switch_slot(1)          # leave the active slot as we found it
 
 func _finish():
 	if fails.is_empty():

@@ -10,6 +10,22 @@ const SETTINGS_FILE = "settings.json"
 const UNLOCKS_FILE = "unlocks.json"
 const FARM_FILE = "farm.json"
 
+# ── save slots ──
+# The player keeps up to MAX_SLOTS fully independent save files. Each slot's
+# data lives in its own subfolder (user://potato_game/slotN/), so a slot is the
+# whole game state — leaderboard, achievements, unlocks, settings and farm. The
+# active slot is recorded in a base-folder meta file (PROFILE_FILE) that is NOT
+# per-slot, so the right slot loads on launch. A pre-slots save (files sitting
+# directly in SAVE_PATH) is migrated into slot 1 on first run so nobody loses
+# progress. Switch with switch_slot(); the menu's Settings screen drives it.
+const MAX_SLOTS := 3
+const PROFILE_FILE = "profile.json"
+const DATA_FILES := [LEADERBOARD_FILE, ACHIEVEMENTS_FILE, SETTINGS_FILE, UNLOCKS_FILE, FARM_FILE]
+
+var current_slot: int = 1
+var _default_settings: Dictionary = {}   # captured at _ready, used to reset a slot
+var _default_farm: Dictionary = {}
+
 var leaderboard: Array[Dictionary] = []
 var achievements: Dictionary = {}
 var unlocked_knives: Array[String] = []
@@ -92,7 +108,80 @@ func _ready():
 	# Ensure save directory exists
 	if not DirAccess.dir_exists_absolute(SAVE_PATH):
 		DirAccess.make_dir_recursive_absolute(SAVE_PATH)
+	# Pristine copies of the new-game defaults, so switching to an empty slot
+	# starts a clean game instead of inheriting the previous slot's state.
+	_default_settings = settings.duplicate(true)
+	_default_farm = farm.duplicate(true)
+	# Pick the active slot (migrating a pre-slots save into slot 1 the first time).
+	if FileAccess.file_exists(SAVE_PATH + PROFILE_FILE):
+		var meta = _load_json_at(SAVE_PATH + PROFILE_FILE)
+		current_slot = clampi(int(meta.get("slot", 1)), 1, MAX_SLOTS)
+	else:
+		_migrate_legacy_to_slot1()
+		current_slot = 1
+		_save_meta()
+	DirAccess.make_dir_recursive_absolute(_slot_dir())
 	load_game()
+
+# ── save-slot plumbing ──
+
+func _slot_dir() -> String:
+	return SAVE_PATH + "slot%d/" % current_slot
+
+func _save_meta():
+	var file = FileAccess.open(SAVE_PATH + PROFILE_FILE, FileAccess.WRITE)
+	if file:
+		file.store_string(JSON.stringify({"slot": current_slot}, "\t"))
+		file.close()
+
+# One-time move of a pre-slots save (files sitting in SAVE_PATH) into slot 1.
+func _migrate_legacy_to_slot1():
+	var dst_dir := SAVE_PATH + "slot1/"
+	DirAccess.make_dir_recursive_absolute(dst_dir)
+	for fn in DATA_FILES:
+		var src: String = SAVE_PATH + fn
+		var dst: String = dst_dir + fn
+		if FileAccess.file_exists(src) and not FileAccess.file_exists(dst):
+			DirAccess.copy_absolute(src, dst)
+			DirAccess.remove_absolute(src)
+
+# Wipe the in-memory state back to new-game defaults, used before loading a slot
+# so an empty slot doesn't keep the previous slot's progress.
+func _reset_state_to_defaults():
+	leaderboard.clear()
+	achievements.clear()
+	unlocked_knives.clear()
+	settings = _default_settings.duplicate(true)
+	farm = _default_farm.duplicate(true)
+
+# Persist the current slot, switch to slot n (1..MAX_SLOTS), and load it — an
+# empty slot loads the defaults, i.e. a fresh game. Returns true if the slot
+# actually changed.
+func switch_slot(n: int) -> bool:
+	n = clampi(n, 1, MAX_SLOTS)
+	if n == current_slot:
+		return false
+	save_game()
+	current_slot = n
+	_save_meta()
+	DirAccess.make_dir_recursive_absolute(_slot_dir())
+	_reset_state_to_defaults()
+	load_game()
+	return true
+
+# True once a slot holds a started game (its farm save exists).
+func slot_has_data(n: int) -> bool:
+	return FileAccess.file_exists(SAVE_PATH + "slot%d/" % clampi(n, 1, MAX_SLOTS) + FARM_FILE)
+
+# A short one-line summary of a slot for the menu (without switching to it).
+func slot_summary(n: int) -> String:
+	n = clampi(n, 1, MAX_SLOTS)
+	if not slot_has_data(n):
+		return "Empty — new game"
+	var dir := SAVE_PATH + "slot%d/" % n
+	var farm_d = _load_json_at(dir + FARM_FILE)
+	var set_d = _load_json_at(dir + SETTINGS_FILE)
+	return "%d coins · %d Chef XP" % [int(farm_d.get("wallet", 0)), int(set_d.get("career_xp", 0))]
 
 func load_game():
 	# Load leaderboard
@@ -508,13 +597,17 @@ func equipped_knife() -> Dictionary:
 	return preload("res://scripts/utils/GameData.gd").knife_by_id(farm.get("equipped_knife", "butter"))
 
 func _save_json(filename: String, data) -> void:
-	var file = FileAccess.open(SAVE_PATH + filename, FileAccess.WRITE)
+	var file = FileAccess.open(_slot_dir() + filename, FileAccess.WRITE)
 	if file:
 		file.store_string(JSON.stringify(data, "\t"))
 		file.close()
 
 func _load_json(filename: String) -> Dictionary:
-	var path = SAVE_PATH + filename
+	return _load_json_at(_slot_dir() + filename)
+
+# Parse a JSON dict at an absolute user:// path (empty dict if missing/invalid).
+# Used for the active slot, the meta file and peeking at other slots' summaries.
+func _load_json_at(path: String) -> Dictionary:
 	if not FileAccess.file_exists(path):
 		return {}
 	var file = FileAccess.open(path, FileAccess.READ)
