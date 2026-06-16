@@ -18,6 +18,10 @@ const GRID_ORIGIN := Vector2(70, 70)   # world position of cell (0,0)'s centre
 const FARM_MARGIN := Vector2(110, 120)
 # coins charged to cover a plowed plot back over once the free covers run out
 const COVER_COST := 25
+# base seconds between auto-farming ticks; the auto_speed research shortens it
+const AUTO_BASE_INTERVAL := 1.0
+# research shed overlay tabs: the full progression tree and the automation track
+const RESEARCH_TABS := ["progression", "automation"]
 
 var bg: FarmBackground
 var fireflies: CPUParticles2D
@@ -30,6 +34,7 @@ var prompt_cell := Vector2i.ZERO   # grid cell the prompt refers to
 var prompt_cell_valid := false     # true when prompt_cell is virgin grass
 var auto_t := 0.0                  # auto-farming tick accumulator
 var research_sel_id := ""          # id of the highlighted node on the research map
+var research_tab := "progression"  # active research shed tab (see RESEARCH_TABS)
 
 func _ready():
 	super._ready()
@@ -154,9 +159,9 @@ func _drop_tile(tile: FarmTile):
 func _tick(delta):
 	fireflies.emitting = night01 > 0.5
 	truck_tick()
-	# auto-farming gear works the land every couple of seconds
+	# auto-farming gear works the land on a tick the auto_speed research shortens
 	auto_t += delta
-	if auto_t >= 2.0:
+	if auto_t >= auto_interval():
 		auto_t = 0.0
 		_auto_farm()
 
@@ -336,6 +341,8 @@ func _shop_input(key: Key):
 				KEY_E, KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
 					if research_sel_id != "":
 						buy_research(research_sel_id)
+				KEY_TAB:
+					research_cycle_tab()
 		_:
 			super._shop_input(key)
 
@@ -375,6 +382,9 @@ func plow_cell(c: Vector2i) -> bool:
 	return any
 
 func plow_tile(tile: FarmTile) -> bool:
+	# Farmhand AI: a worn-out plow is auto-replaced so field work never stalls
+	if plow_uses() <= 0 and SaveDataManager.research_flag("auto_buy_plow"):
+		buy_plow()
 	if plow_uses() <= 0:
 		_popup("The plow is broken — the town tool shed sells new ones", Color.ORANGE_RED)
 		return false
@@ -482,7 +492,9 @@ func _water_tile(tile: FarmTile):
 	_sync_tiles()
 	_popup("Watered — growing fast!", Color(0.5, 0.8, 1.0))
 
-func _harvest_tile(tile: FarmTile):
+# quiet=true (the auto-harvest drone) skips the popup/SFX/particles so a fast
+# tick clearing a whole field doesn't spam feedback.
+func _harvest_tile(tile: FarmTile, quiet := false):
 	var id = tile.potato_id
 	var data = GameData.potato_by_id(id)
 	var n = tile.harvest(rng) + int(SaveDataManager.research_bonus("bonus_yield"))
@@ -490,6 +502,8 @@ func _harvest_tile(tile: FarmTile):
 	# harvesting yields a trickle of research points (rare crops give more)
 	SaveDataManager.add_research_points(3 if data.get("rare", false) else 1)
 	_sync_tiles()
+	if quiet:
+		return
 	_popup("+%d %s!" % [n, data.get("name", id)], Color.GOLD if data.get("rare", false) else Color.LIGHT_GREEN)
 	if SaveDataManager.settings.get("particle_effects", true):
 		if data.get("rare", false):
@@ -691,6 +705,15 @@ func buy_research(id: String) -> bool:
 func research_all_nodes() -> Array:
 	return GameData.research_nodes()
 
+# The nodes on one research shed tab (defaults missing "tab" to "progression").
+func research_nodes_for_tab(tab: String) -> Array:
+	return research_all_nodes().filter(func(n): return str(n.get("tab", "progression")) == tab)
+
+# Flip to the next tab and re-home the selection on its first actionable node.
+func research_cycle_tab():
+	research_tab = RESEARCH_TABS[(RESEARCH_TABS.find(research_tab) + 1) % RESEARCH_TABS.size()]
+	research_sel_id = _default_research_sel()
+
 # A node the player can see but can't buy yet: not owned and still missing a
 # prerequisite. (research_available is the buyable frontier; this is its inverse
 # for the not-yet-owned nodes.)
@@ -704,14 +727,14 @@ func _node_pos(node: Dictionary) -> Vector2:
 		return Vector2(float(p[0]), float(p[1]))
 	return Vector2.ZERO
 
-# Land the selection on the first actionable node, falling back to the first
-# node overall once everything is researched.
+# Land the selection on the active tab's first actionable node, falling back to
+# its first node once everything on the tab is researched.
 func _default_research_sel() -> String:
-	var frontier = research_menu_nodes()
+	var nodes = research_nodes_for_tab(research_tab)
+	var frontier = nodes.filter(research_available)
 	if not frontier.is_empty():
 		return str(frontier[0].get("id", ""))
-	var all = research_all_nodes()
-	return str(all[0].get("id", "")) if not all.is_empty() else ""
+	return str(nodes[0].get("id", "")) if not nodes.is_empty() else ""
 
 # Move the highlight to the nearest node in the pressed direction. Among nodes
 # on the correct side, the off-axis distance is weighted heavily so UP/DOWN
@@ -724,7 +747,7 @@ func research_select_dir(dir: Vector2):
 	var cp = _node_pos(cur)
 	var best := ""
 	var best_score := INF
-	for node in research_all_nodes():
+	for node in research_nodes_for_tab(research_tab):
 		var nid = str(node.get("id", ""))
 		if nid == research_sel_id:
 			continue
@@ -740,7 +763,12 @@ func research_select_dir(dir: Vector2):
 	if best != "":
 		research_sel_id = best
 
-# ── auto-farming: sprinklers and researched gear work the land on a slow tick ──
+# ── auto-farming: sprinklers and researched gear work the land on a tick ──
+
+# Seconds between auto-farming ticks: each auto_speed research tier halves it,
+# down to a floor so a fully-upgraded farm stays snappy without thrashing.
+func auto_interval() -> float:
+	return maxf(0.25, AUTO_BASE_INTERVAL * pow(0.5, SaveDataManager.research_bonus("auto_speed")))
 
 func _neighbours(tile: FarmTile) -> Array:
 	var out: Array = []
@@ -764,26 +792,92 @@ func _auto_farm():
 			if n.state == FarmTile.TState.PLANTED and not n.watered:
 				n.water()
 				changed = true
+	# Drip Irrigation: water every dry crop, farm-wide (quiet, like a sprinkler)
+	if SaveDataManager.research_flag("auto_water"):
+		for tile in tiles:
+			if tile.state == FarmTile.TState.PLANTED and not tile.watered:
+				tile.water()
+				changed = true
+	# Nutrient Injector: fertilize every fresh crop (auto-buying a bag if needed)
+	if SaveDataManager.research_flag("auto_fertilize"):
+		for tile in tiles:
+			if tile.state == FarmTile.TState.PLANTED and tile.boost >= 1.0:
+				if _auto_fertilize_tile(tile):
+					changed = true
+	# Spud-Bot Harvester: collect all ready crops this tick (quiet, no popup spam)
 	if SaveDataManager.research_flag("auto_harvest"):
 		for tile in tiles:
 			if tile.state == FarmTile.TState.READY:
-				_harvest_tile(tile)  # syncs the save itself
-				break  # one per tick, so popups stay readable
+				_harvest_tile(tile, true)  # syncs the save itself
+	# Auto-Seeder: replant every plowed plot that remembers its crop, restocking
+	# seeds via the standing order when the pouch runs dry
 	if SaveDataManager.research_flag("auto_seed"):
+		var buy_seeds = SaveDataManager.research_flag("auto_buy_seeds")
 		for tile in tiles:
 			if tile.has_sprinkler or tile.state != FarmTile.TState.PLOWED:
 				continue
 			var last = tile.last_potato_id
-			if last == "" or SaveDataManager.item_count("seeds", last) <= 0:
+			if last == "":
 				continue
 			if not (last in SaveDataManager.unlocked_crops()) and not (last in GameData.STARTER_CROPS):
 				continue
+			if SaveDataManager.item_count("seeds", last) <= 0:
+				if not (buy_seeds and _auto_restock_seed(last)):
+					continue
 			SaveDataManager.add_item("seeds", last, -1)
 			tile.plant(last)
 			changed = true
-			break  # one per tick
+	# Auto-Dispatch: load and ship the market truck the moment it's idle
+	if SaveDataManager.research_flag("auto_truck") and truck_status() == "idle":
+		truck_load_all()
+		if truck_cargo_count() > 0:
+			truck_send()
 	if changed:
 		_sync_tiles()
+
+# Seed standing order: buy one seed of a crop the player can grow, quietly (no
+# popup/sfx), respecting the wallet. Returns true once the seed is in the pouch.
+func _auto_restock_seed(id: String) -> bool:
+	if not (id in SaveDataManager.unlocked_crops()) and not (id in GameData.STARTER_CROPS):
+		return false
+	if not SaveDataManager.spend_coins(int(GameData.potato_by_id(id).get("seed_cost", 9999))):
+		return false
+	SaveDataManager.add_item("seeds", id, 1)
+	return true
+
+# Cheapest fertilizer the player already owns charges of (empty dict if none).
+func _cheapest_owned_enhancer() -> Dictionary:
+	var best := {}
+	for e in GameData.enhancers():
+		if SaveDataManager.item_count("items", e["id"]) > 0:
+			if best.is_empty() or int(e.get("cost", 0)) < int(best.get("cost", 0)):
+				best = e
+	return best
+
+# Fertilizer subscription: buy the cheapest fertilizer bag, quietly. Returns the
+# enhancer dict (now with charges in stock), or empty if the wallet can't cover it.
+func _auto_buy_cheapest_enhancer() -> Dictionary:
+	var best := {}
+	for e in GameData.enhancers():
+		if best.is_empty() or int(e.get("cost", 0)) < int(best.get("cost", 0)):
+			best = e
+	if best.is_empty() or not SaveDataManager.spend_coins(int(best.get("cost", 9999))):
+		return {}
+	SaveDataManager.add_item("items", best["id"], int(best.get("charges", 1)))
+	return best
+
+# Apply one fertilizer charge to a fresh crop, auto-buying a bag first when the
+# subscription is researched and the shed is empty. Quiet (no popup/sfx).
+func _auto_fertilize_tile(tile: FarmTile) -> bool:
+	var e := _cheapest_owned_enhancer()
+	if e.is_empty() and SaveDataManager.research_flag("auto_buy_fertilizer"):
+		e = _auto_buy_cheapest_enhancer()
+	if e.is_empty():
+		return false
+	if not tile.enhance(float(e.get("grow_mult", 1.0)), int(e.get("bonus_yield", 0))):
+		return false
+	SaveDataManager.add_item("items", e["id"], -1)
+	return true
 
 func _open_plant_menu(tile: FarmTile):
 	plant_target = tile
@@ -794,6 +888,7 @@ func _open_truck():
 
 func _open_research():
 	open_shop = "research"
+	research_tab = "progression"
 	research_sel_id = _default_research_sel()
 
 func _goto_town():

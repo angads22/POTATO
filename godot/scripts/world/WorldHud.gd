@@ -177,8 +177,12 @@ func _draw_shop(font: Font):
 		"plant": title = "PLANT A SEED"
 		"tools": title = "TOOL SHED"
 		"enhance": title = "FERTILIZE THIS CROP"
-	var ts = font.get_string_size(title, HORIZONTAL_ALIGNMENT_CENTER, -1, 30)
-	draw_string(font, Vector2(640 - ts.x / 2, 160), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, Color.GOLD)
+	if is_research:
+		# the research shed shows a tab strip in place of a single title
+		_draw_research_tabs(font)
+	else:
+		var ts = font.get_string_size(title, HORIZONTAL_ALIGNMENT_CENTER, -1, 30)
+		draw_string(font, Vector2(640 - ts.x / 2, 160), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, Color.GOLD)
 
 	# wallet, top-right of the panel (the research map draws its own balances)
 	if not is_research:
@@ -333,7 +337,7 @@ func _edge_color(child: Dictionary, parent: Dictionary) -> Color:
 	return Color(0.45, 0.42, 0.4, 0.55)            # still locked
 
 func _draw_research_map(font: Font):
-	var nodes: Array = ctrl.research_all_nodes()
+	var nodes: Array = ctrl.research_nodes_for_tab(ctrl.research_tab)
 	draw_string(font, Vector2(RES_MAP.position.x + 4, 150),
 			"Coins: %d        Research points: %d" % [SaveDataManager.wallet(), SaveDataManager.research_points()],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.6, 0.85, 0.95))
@@ -341,10 +345,17 @@ func _draw_research_map(font: Font):
 		return
 	var origin = _research_origin(nodes)
 
+	# the ids visible on this tab — so cross-tab prereq edges aren't drawn dangling
+	var visible := {}
+	for node in nodes:
+		visible[str(node.get("id", ""))] = true
+
 	# 1. connector lines for every prerequisite edge (under the nodes)
 	for node in nodes:
 		var cc = _node_center(node, origin)
 		for req_id in node.get("requires", []):
+			if not visible.has(str(req_id)):
+				continue
 			var parent = GameData.research_by_id(req_id)
 			if parent.is_empty():
 				continue
@@ -394,9 +405,29 @@ func _draw_research_map(font: Font):
 
 	# 4. details sidebar + footer
 	_draw_research_details(font, sel)
-	var hint = "[Arrows] Move   ·   [E] Research   ·   [ESC] Close"
+	var hint = "[Arrows] Move   ·   [E] Research   ·   [TAB] Switch track   ·   [ESC] Close"
 	var hs = font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 16)
 	draw_string(font, Vector2(RES_MAP.get_center().x - hs.x / 2.0, 700), hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.78, 0.73, 0.64))
+
+# A two-chip tab strip across the top of the shed, active tab highlighted.
+func _draw_research_tabs(font: Font):
+	var labels := {"progression": "PROGRESSION", "automation": "AUTOMATION"}
+	var tabs: Array = ctrl.RESEARCH_TABS
+	var chip := Vector2(220, 34)
+	var gap := 12.0
+	var total = tabs.size() * chip.x + (tabs.size() - 1) * gap
+	var x = 640.0 - total / 2.0
+	for tab in tabs:
+		var active: bool = ctrl.research_tab == tab
+		var r = Rect2(x, 138, chip.x, chip.y)
+		GameHUD.panel_style(Color(0.28, 0.22, 0.1, 0.97) if active else Color(0.12, 0.1, 0.07, 0.9)).draw(get_canvas_item(), r)
+		if active:
+			draw_rect(Rect2(r.position.x, r.end.y - 3, r.size.x, 3), Color.GOLD)
+		var lbl = str(labels.get(tab, tab))
+		var lsz = font.get_string_size(lbl, HORIZONTAL_ALIGNMENT_CENTER, -1, 18)
+		draw_string(font, Vector2(r.get_center().x - lsz.x / 2.0, r.get_center().y + 6), lbl,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.GOLD if active else Color(0.7, 0.66, 0.58))
+		x += chip.x + gap
 
 func _draw_research_details(font: Font, node: Dictionary):
 	GameHUD.panel_style(Color(0.12, 0.09, 0.05, 0.97)).draw(get_canvas_item(), RES_SIDE)
@@ -464,6 +495,13 @@ func _effect_summary(node: Dictionary) -> String:
 			"bonus_yield": parts.append("+%d harvest yield" % int(v))
 			"auto_harvest": parts.append("auto-harvest")
 			"auto_seed": parts.append("auto-replant")
+			"auto_water": parts.append("auto-water crops")
+			"auto_fertilize": parts.append("auto-fertilize crops")
+			"auto_buy_seeds": parts.append("auto-buys seeds")
+			"auto_buy_fertilizer": parts.append("auto-buys fertilizer")
+			"auto_truck": parts.append("auto-ships the truck")
+			"auto_buy_plow": parts.append("auto-replaces the plow")
+			"auto_speed": parts.append("faster automation")
 			"unlock_crop": parts.append("unlock crop: %s" % str(v))
 			"golden_luck": parts.append("+%d%% golden odds" % int(round(float(v) * 100.0)))
 			"champ_rp_per": parts.append("research from championship runs")
@@ -486,6 +524,7 @@ func _branch_color(branch: String) -> Color:
 		"growth": return Color(0.7, 0.55, 0.85)
 		"championship": return Color(0.9, 0.45, 0.45)
 		"capstone": return Color(0.97, 0.86, 0.45)
+		"automation": return Color(0.4, 0.8, 0.78)
 	return Color(0.7, 0.7, 0.7)
 
 func _draw_knife_rows(font: Font, panel: Rect2):

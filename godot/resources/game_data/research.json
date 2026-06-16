@@ -80,16 +80,65 @@
 			"desc": "Sprinklers reach three tiles out"
 		},
 		{
-			"id": "tool_autoharvest", "name": "Spud-Bot Harvester", "branch": "tools",
-			"pos": [2, 4], "cost_coins": 1800, "cost_rp": 20, "requires": ["tool_radius"],
+			"id": "auto_water", "name": "Drip Irrigation", "branch": "automation", "tab": "automation",
+			"pos": [0, 12], "cost_coins": 1200, "cost_rp": 13, "requires": [],
+			"effect": { "auto_water": true },
+			"desc": "Buried lines water every planted crop on the tick"
+		},
+		{
+			"id": "tool_autoharvest", "name": "Spud-Bot Harvester", "branch": "automation", "tab": "automation",
+			"pos": [1, 12], "cost_coins": 1800, "cost_rp": 20, "requires": [],
 			"effect": { "auto_harvest": true },
 			"desc": "A drone collects ready crops for you"
 		},
 		{
-			"id": "tool_autoseed", "name": "Auto-Seeder", "branch": "tools",
-			"pos": [3, 4], "cost_coins": 2400, "cost_rp": 27, "requires": ["tool_autoharvest"],
+			"id": "auto_truck", "name": "Auto-Dispatch", "branch": "automation", "tab": "automation",
+			"pos": [2, 12], "cost_coins": 2000, "cost_rp": 22, "requires": ["tool_autoharvest"],
+			"effect": { "auto_truck": true },
+			"desc": "Loads and ships the market truck the moment it's idle"
+		},
+		{
+			"id": "auto_fertilize", "name": "Nutrient Injector", "branch": "automation", "tab": "automation",
+			"pos": [0, 13], "cost_coins": 1800, "cost_rp": 20, "requires": ["auto_water"],
+			"effect": { "auto_fertilize": true },
+			"desc": "Works fertilizer into every fresh crop automatically"
+		},
+		{
+			"id": "tool_autoseed", "name": "Auto-Seeder", "branch": "automation", "tab": "automation",
+			"pos": [1, 13], "cost_coins": 2400, "cost_rp": 27, "requires": ["tool_autoharvest"],
 			"effect": { "auto_seed": true },
 			"desc": "Replants harvested soil from your pouch"
+		},
+		{
+			"id": "auto_speed1", "name": "Overclocked Drones", "branch": "automation", "tab": "automation",
+			"pos": [2, 13], "cost_coins": 1500, "cost_rp": 17, "requires": ["tool_autoharvest"],
+			"effect": { "auto_speed": 1 },
+			"desc": "The automation tick runs twice as fast"
+		},
+		{
+			"id": "auto_buy_fertilizer", "name": "Fertilizer Subscription", "branch": "automation", "tab": "automation",
+			"pos": [0, 14], "cost_coins": 2000, "cost_rp": 22, "requires": ["auto_fertilize"],
+			"effect": { "auto_buy_fertilizer": true },
+			"desc": "A standing order restocks fertilizer when the shed runs dry"
+		},
+		{
+			"id": "auto_buy_seeds", "name": "Seed Standing Order", "branch": "automation", "tab": "automation",
+			"pos": [1, 14], "cost_coins": 1600, "cost_rp": 18, "requires": ["tool_autoseed"],
+			"effect": { "auto_buy_seeds": true },
+			"desc": "Auto-buys seeds so the replanter never runs out"
+		},
+		{
+			"id": "auto_speed2", "name": "Hyperdrive Automation", "branch": "automation", "tab": "automation",
+			"pos": [2, 14], "cost_coins": 3000, "cost_rp": 34, "requires": ["auto_speed1"],
+			"effect": { "auto_speed": 1 },
+			"desc": "The automation tick runs faster still"
+		},
+		{
+			"id": "auto_master", "name": "Farmhand AI", "branch": "automation", "tab": "automation",
+			"pos": [1, 15], "cost_coins": 5000, "cost_rp": 56,
+			"requires": ["auto_buy_seeds", "auto_buy_fertilizer", "auto_truck"],
+			"effect": { "auto_buy_plow": true, "bonus_yield": 1 },
+			"desc": "A fully autonomous farm — and it auto-replaces a worn plow"
 		},
 
 		{
