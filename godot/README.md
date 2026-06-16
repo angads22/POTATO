@@ -85,13 +85,14 @@ day-night cycle, prompts, shop overlays, economy actions) and a `WorldHUD`:
   plowed again to farm it. Progression runs on the
   **Research Shed** — a node-based skill-tree map (arrow keys navigate, [E]
   buys the highlighted node, [TAB] swaps the PROGRESSION / AUTOMATION tracks)
-  where coins + research points buy logistics/tools/crops/growth/science/
-  championship upgrades plus cross-branch capstones
-  (`resources/game_data/research.json`, incl. research-gated crops, science
-  nodes that lower seed costs / earn research per harvest, and championship
-  nodes that earn research from runs / raise golden odds). Upgrades come in
-  many small tiers so the tree stretches out rather than handing over big
-  jumps. The harvest ships from the **market truck** by the top hedge (load it,
+  where coins + research points buy logistics/tools/crops/growth/science/water/
+  soil/championship upgrades plus cross-branch capstones
+  (`resources/game_data/research.json`, ~80+ nodes, incl. research-gated crops,
+  science nodes that lower seed costs / earn research per harvest, a water line
+  that grows the watering can and a soil line that speeds growth, and
+  championship nodes that earn research from runs / raise golden odds). Upgrades
+  come in many small tiers so the tree stretches out rather than handing over
+  big jumps. The harvest ships from the **market truck** by the top hedge (load it,
   send it off, coins + research points return after a wall-clock delay). The
   **automation** track (drip irrigation, harvester/seeder drones, auto-dispatch,
   standing orders) is the long, expensive apex of the tree, and its purchase

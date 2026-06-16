@@ -63,15 +63,17 @@ func _draw_wallet_panel(font: Font):
 	draw_arc(Vector2(38, 34), 14.0, 0, TAU, 20, Color(0.7, 0.52, 0.1), 2.5)
 	draw_arc(Vector2(38, 34), 8.0, 0, TAU, 16, Color(0.8, 0.62, 0.15), 2.0)
 	draw_string(font, Vector2(60, 43), "%d" % SaveDataManager.wallet(), HORIZONTAL_ALIGNMENT_LEFT, -1, 24, Color.GOLD)
-	# watering can charges as droplets
+	# watering can: a single droplet glyph + a numeric n/capacity readout, so a
+	# researched bigger can fits the slot without colliding with the plow icon
 	var water: int = int(SaveDataManager.farm.get("water", 0))
-	for i in range(4):
-		var cx = 152.0 + i * 18.0
-		var col = Color(0.4, 0.7, 0.95) if i < water else Color(0.35, 0.32, 0.3)
-		draw_circle(Vector2(cx, 38), 5.5, col)
-		draw_colored_polygon(PackedVector2Array([
-			Vector2(cx - 4.5, 35), Vector2(cx + 4.5, 35), Vector2(cx, 25)
-		]), col)
+	var cap: int = 4 + int(SaveDataManager.research_bonus("water_capacity"))
+	var wcol = Color(0.4, 0.7, 0.95) if water > 0 else Color(0.4, 0.4, 0.42)
+	draw_circle(Vector2(158, 38), 5.5, wcol)
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(153.5, 35), Vector2(162.5, 35), Vector2(158, 25)
+	]), wcol)
+	draw_string(font, Vector2(170, 43), "%d/%d" % [water, cap], HORIZONTAL_ALIGNMENT_LEFT, -1, 17,
+			Color(0.95, 0.92, 0.85) if water > 0 else Color(0.6, 0.55, 0.5))
 	# plow durability
 	var uses: int = int(SaveDataManager.farm.get("plow_uses", 0))
 	var pcol = Color(0.85, 0.66, 0.4) if uses > 0 else Color(0.45, 0.4, 0.36)
@@ -515,6 +517,7 @@ func _effect_summary(node: Dictionary) -> String:
 			"champ_rp_per": parts.append("research from championship runs")
 			"harvest_rp": parts.append("+%d research per harvest" % int(v))
 			"seed_discount": parts.append("-%d%% seed cost" % int(round(float(v) * 100.0)))
+			"water_capacity": parts.append("+%d watering-can charges" % int(v))
 			_: parts.append(str(k))
 	return ", ".join(parts)
 
@@ -536,6 +539,8 @@ func _branch_color(branch: String) -> Color:
 		"capstone": return Color(0.97, 0.86, 0.45)
 		"automation": return Color(0.4, 0.8, 0.78)
 		"science": return Color(0.45, 0.65, 0.92)
+		"water": return Color(0.4, 0.78, 0.95)
+		"soil": return Color(0.66, 0.5, 0.32)
 	return Color(0.7, 0.7, 0.7)
 
 func _draw_knife_rows(font: Font, panel: Rect2):

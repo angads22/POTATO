@@ -510,9 +510,13 @@ func plant_on(tile: FarmTile, id: String) -> bool:
 	return true
 
 func fill_water():
-	SaveDataManager.farm["water"] = 4
+	SaveDataManager.farm["water"] = water_capacity()
 	SaveDataManager.save_game()
 	_popup("Watering can filled!", Color(0.5, 0.8, 1.0))
+
+# Charges a full watering can holds: the base 4 plus any researched water branch.
+func water_capacity() -> int:
+	return 4 + int(SaveDataManager.research_bonus("water_capacity"))
 
 func _water_tile(tile: FarmTile):
 	var water = int(SaveDataManager.farm.get("water", 0))

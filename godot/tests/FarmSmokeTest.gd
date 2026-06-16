@@ -246,6 +246,16 @@ func _run_research_map():
 	_check(farm.buy_research("champ_field"), "Field Research buys")
 	_check(SaveDataManager.research_bonus("champ_rp_per") > 0.0, "Field Research grants champ_rp_per")
 
+	# water branch: the new wired numeric effect lifts the watering-can capacity
+	_check(farm.water_capacity() == 4, "the can holds the base 4 charges before research")
+	_check(farm.buy_research("water_can1"), "a water-branch node buys")
+	_check(SaveDataManager.research_bonus("water_capacity") >= 2.0, "water research raises can capacity")
+	_check(farm.water_capacity() >= 6, "the researched can holds more than the base 4")
+	farm.fill_water()
+	_check(int(SaveDataManager.farm.get("water", 0)) == farm.water_capacity(), "filling the can tops it to capacity")
+	# undo the water node so the later well refill test stays at the base 4
+	SaveDataManager.farm["research"].erase("water_can1")
+
 # ── plow modes: research a wider plow, switch sizes, plow a single tile ──
 func _run_plow_modes():
 	SaveDataManager.farm["wallet"] = 20000
