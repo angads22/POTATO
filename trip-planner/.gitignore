@@ -1,0 +1,9 @@
+# Dependencies
+node_modules/
+
+# Runtime data: your accounts, trips, sessions, secrets — never commit these
+data/
+
+# Logs / env
+*.log
+.env
