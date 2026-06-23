@@ -51,6 +51,15 @@ var _spud_mat: StandardMaterial3D
 var _splat_mat: StandardMaterial3D
 var _last_dmg := {}      # pid -> last-damage msec (regen gate)
 var _regen_accum := {}   # pid -> fractional hp accumulator
+
+# Per-peer rate limiters for the gameplay RPCs (OWASP API4 — flood protection).
+# Capacities are generous enough for legitimate play (a peer sends ~1 state/
+# frame and fires within its weapon's fire rate) but cap a malicious peer that
+# spams damage/heal/state packets to grief or lag the host. Keyed by sender id.
+var _state_limiter := Security.new_rate_limiter(180, 120.0)  # transform updates
+var _shot_limiter := Security.new_rate_limiter(40, 30.0)     # muzzle/tracer fx
+var _damage_limiter := Security.new_rate_limiter(60, 40.0)   # damage requests
+var _heal_limiter := Security.new_rate_limiter(10, 4.0)      # pickup heals
 var _return_timer := 0.0
 var _leaving := false
 var hud
@@ -291,6 +300,16 @@ func _is_headshot(col, point: Vector3) -> bool:
 
 @rpc("any_peer", "call_remote", "unreliable")
 func _recv_shot(from: Vector3, to: Vector3, shooter_pid: int) -> void:
+	# Cosmetic-only (tracer + muzzle flash), but still validate and rate-limit:
+	# reject NaN/out-of-bounds endpoints, and only render a shot attributed to
+	# the peer that actually sent it (no spoofing another player's shooter id).
+	var sender := multiplayer.get_remote_sender_id()
+	if not _shot_limiter.allow(sender):
+		return
+	if shooter_pid != sender:
+		return
+	if not Security.valid_position(from) or not Security.valid_position(to):
+		return
 	_spawn_spud(from, to)
 	var p = players.get(shooter_pid)
 	if p and is_instance_valid(p):
@@ -374,6 +393,12 @@ func _spawn_explosion(point: Vector3, radius: float) -> void:
 @rpc("any_peer", "call_remote", "unreliable_ordered")
 func _recv_state(pos: Vector3, yaw: float) -> void:
 	var pid := multiplayer.get_remote_sender_id()
+	# Throttle and validate: drop floods, reject NaN/inf or out-of-arena
+	# transforms so a peer can't teleport, hide, or feed garbage to physics.
+	if not _state_limiter.allow(pid):
+		return
+	if not Security.valid_position(pos) or not is_finite(yaw):
+		return
 	var p = players.get(pid)
 	if p and is_instance_valid(p):
 		p.set_remote_state(pos, yaw)
@@ -390,7 +415,16 @@ func resolve_hit(target_pid: int, dmg: int) -> void:
 func _req_damage(target_pid: int, dmg: int) -> void:
 	if not _auth():
 		return
-	_apply_damage(target_pid, dmg, multiplayer.get_remote_sender_id())
+	var sender := multiplayer.get_remote_sender_id()
+	# Rate-limit, clamp the claimed damage into a sane range, and require the
+	# target to be a known live player. The authority confirms the hit; a peer
+	# cannot one-shot or rapid-fire arbitrary damage past these bounds.
+	if not _damage_limiter.allow(sender):
+		return
+	var safe_dmg := Security.clamp_int(dmg, 0, Security.MAX_DAMAGE)
+	if safe_dmg <= 0 or not players.has(target_pid):
+		return
+	_apply_damage(target_pid, safe_dmg, sender)
 
 func _apply_damage(target_pid: int, dmg: int, shooter_pid: int) -> void:
 	if match_over:
@@ -471,10 +505,17 @@ func notify_health(pid: int, hp: int) -> void:
 func _req_heal(pid: int, hp: int) -> void:
 	if not _auth():
 		return
+	var sender := multiplayer.get_remote_sender_id()
+	# A peer may only heal its OWN avatar, the value is clamped to the legal
+	# health range, and the call is rate-limited. set_health never reduces here
+	# (maxi), so a heal request can't be abused to damage another player.
+	if not _heal_limiter.allow(sender) or pid != sender:
+		return
+	var safe_hp := Security.clamp_int(hp, 0, FpsPlayer.MAX_HEALTH)
 	var p = players.get(pid)
 	if p and is_instance_valid(p):
-		p.set_health(maxi(p.health, hp))
-		_mirror_health.rpc(pid, hp)
+		p.set_health(maxi(p.health, safe_hp))
+		_mirror_health.rpc(pid, safe_hp)
 
 @rpc("authority", "call_remote", "reliable")
 func _mirror_health(pid: int, hp: int) -> void:

@@ -50,8 +50,14 @@ var upnp_status := "idle"        # idle | working | done | unavailable
 var _upnp_thread: Thread = null
 var _signals_bound := false
 
+# Per-peer rate limiter for the host's lobby RPCs (register / re-register).
+# A peer that floods registrations is throttled rather than allowed to churn
+# the roster for everyone. Keyed by remote sender id.
+var _register_limiter
+
 func _ready() -> void:
 	lan_ip = _detect_lan_ip()
+	_register_limiter = Security.new_rate_limiter(3, 1.0)
 
 # ── queries ─────────────────────────────────────────────────────────────────
 
@@ -161,6 +167,7 @@ func _on_peer_disconnected(id: int) -> void:
 	if mode != "host":
 		return
 	players.erase(id)
+	_register_limiter.forget(id)
 	_sync_roster.rpc(players)
 	roster_changed.emit()
 
@@ -183,24 +190,49 @@ func _on_server_disconnected() -> void:
 
 @rpc("any_peer", "call_remote", "reliable")
 func _register(name: String) -> void:
+	# Only the host accepts registrations, and only from a real remote peer.
 	if mode != "host":
 		return
 	var id := multiplayer.get_remote_sender_id()
-	players[id] = _new_player(name)
+	if id <= 0:
+		return
+	# Rate-limit so a peer can't churn the roster by re-registering in a loop.
+	if not _register_limiter.allow(id):
+		return
+	# Reject once the lobby is full instead of letting an extra peer in.
+	if not players.has(id) and players.size() >= MAX_PLAYERS:
+		return
+	# Sanitise the attacker-controlled name (length cap, strip control chars).
+	players[id] = _new_player(Security.sanitize_name(name, "Chef"))
 	_sync_roster.rpc(players)
 	roster_changed.emit()
 
 @rpc("authority", "call_remote", "reliable")
 func _sync_roster(roster: Dictionary) -> void:
-	players = roster
+	# Only the authority (peer 1) can call this (enforced by Godot), but still
+	# sanitise the names we'll render and ignore a malformed payload.
+	if typeof(roster) != TYPE_DICTIONARY:
+		return
+	var clean := {}
+	for pid in roster.keys():
+		var entry = roster[pid]
+		var nm := "Chef"
+		# Accept only the known {"name"} shape — drop entries carrying unexpected
+		# fields rather than copying them through (mass-assignment guard).
+		if Security.keys_within(entry, ["name"]):
+			nm = Security.sanitize_name(str(entry.get("name", "Chef")), "Chef")
+		clean[pid] = {"name": nm}
+	players = clean
 	roster_changed.emit()
 
 @rpc("authority", "call_local", "reliable")
 func _begin_match(seed_val: int, fl: int, tl: float, map: String) -> void:
-	match_seed = seed_val
-	frag_limit = fl
-	time_limit = tl
-	map_id = map
+	# Clamp match parameters and allow-list the map id so a tampered host can't
+	# push out-of-range limits or an unknown scene path to every peer.
+	match_seed = int(seed_val)
+	frag_limit = Security.clamp_int(fl, 1, Security.MAX_FRAGS)
+	time_limit = clampf(float(tl), 10.0, 3600.0)
+	map_id = FpsMapsData.resolve(str(map))
 	match_starting.emit()
 
 # ── networking helpers ───────────────────────────────────────────────────────

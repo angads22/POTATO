@@ -379,9 +379,11 @@ func _migrate_2_to_3(raw: Dictionary) -> Dictionary:
 	return out
 
 func add_to_leaderboard(name: String, score: int, mode: String):
+	# Sanitise/clamp before persisting so a crafted name or score can't corrupt
+	# the local save or, later, the online submission (defence in depth).
 	var entry = {
-		"name": name,
-		"score": score,
+		"name": Security.sanitize_name(name, "CHEF"),
+		"score": Security.clamp_int(score, 0, Security.MAX_SCORE),
 		"mode": mode,
 		"date": Time.get_ticks_msec(),
 		"timestamp": Time.get_datetime_string_from_system()
