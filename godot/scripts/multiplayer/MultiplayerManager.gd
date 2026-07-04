@@ -20,6 +20,14 @@ var session_seed := 0
 var opponent_score := 0
 var opponent_lives := 3
 
+# Rate-limit inbound opponent score updates (OWASP API4). Legitimate play sends
+# a handful per second; this caps a peer that spams the unreliable channel.
+# Keyed by remote sender id.
+var _score_limiter
+
+func _ready():
+	_score_limiter = Security.new_rate_limiter(30, 20.0)
+
 func host_game() -> Error:
 	var peer := ENetMultiplayerPeer.new()
 	var err := peer.create_server(PORT, MAX_CLIENTS)
@@ -80,5 +88,9 @@ func _push_seed(seed_val: int):
 
 @rpc("any_peer", "call_remote", "unreliable_ordered")
 func _recv_score(score: int, lives: int):
-	opponent_score = score
-	opponent_lives = lives
+	# Validate and rate-limit the opponent's reported state before trusting it
+	# for display: clamp into legal ranges and drop floods.
+	if not _score_limiter.allow(multiplayer.get_remote_sender_id()):
+		return
+	opponent_score = Security.clamp_int(score, 0, Security.MAX_SCORE)
+	opponent_lives = Security.clamp_int(lives, 0, 99)

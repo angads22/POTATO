@@ -115,9 +115,27 @@ The online leaderboard is opt-in and free to self-host on [Supabase](https://sup
    create policy "anyone can read"   on sliceit_scores for select to anon using (true);
    ```
 2. Copy your **Project URL** and **anon public key** from Settings → API.
-3. Paste them into `SUPABASE_URL` and `SUPABASE_KEY` in `godot/scripts/online/OnlineLeaderboard.gd`.
+3. Provide them to the game **without editing source** (keys are never committed),
+   either via environment variables:
+   ```sh
+   export SLICEIT_SUPABASE_URL="https://xxxx.supabase.co"
+   export SLICEIT_SUPABASE_KEY="<anon key>"
+   ```
+   or a git-ignored local config file at `user://supabase.cfg` (next to your save data):
+   ```ini
+   [supabase]
+   url="https://xxxx.supabase.co"
+   key="<anon key>"
+   ```
 
-The game works fully without this — scores stay local when the constants are left as placeholders.
+The game works fully without this — scores stay local when no credentials are provided.
+
+> **Security notes.** The anon key is safe to ship in a client *only* because Row Level
+> Security gates what it can do — keep the policies least-privilege and **never** use a
+> `service_role` key here. Because credentials load from the environment/config rather than
+> source, you can rotate the key in the Supabase dashboard with no rebuild. The client
+> validates and rate-limits every submission, but a client can always be bypassed, so add a
+> server-side `CHECK` constraint and per-IP insert limit for defence in depth.
 
 ## LAN Multiplayer
 

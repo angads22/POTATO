@@ -1,3 +1,9 @@
 bin/
 obj/
 dist/
+
+# Local secrets — never commit credentials (see OnlineLeaderboard.gd).
+# Supabase URL/key are provided via env vars or a git-ignored local config.
+supabase.cfg
+*.env
+.env
