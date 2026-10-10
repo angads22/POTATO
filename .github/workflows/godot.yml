@@ -3,9 +3,9 @@ name: Godot Check
 on:
   push:
     branches: [main]
-    paths: ['godot/**']
+    paths: ['godot/**', 'web/core.js', 'web/tools/**']
   pull_request:
-    paths: ['godot/**']
+    paths: ['godot/**', 'web/core.js', 'web/tools/**']
 
 env:
   GODOT_VERSION: 4.2.2
@@ -73,3 +73,11 @@ jobs:
           cd godot
           ~/godot-bin/godot --headless --path . res://tests/ConcertSmokeTest.tscn --quit-after 6000 2>&1 | tee concert.log
           grep -q "CONCERT SMOKE OK" concert.log
+
+      # The web edition ports SongComposer + ConcertChart to JavaScript; the
+      # Daily Song must be the same song (and chart) on both editions.
+      - name: Web edition parity (same seed -> same song and chart)
+        run: |
+          node web/tools/dump_web.js /tmp/web.json
+          ~/godot-bin/godot --headless --path godot -s "$PWD/web/tools/dump_godot.gd" -- /tmp/godot.json
+          python3 web/tools/check_parity.py /tmp/godot.json /tmp/web.json

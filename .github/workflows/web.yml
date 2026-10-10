@@ -1,0 +1,61 @@
+name: Web Edition
+
+# The browser edition (web/): plays a whole song in headless Chromium, in
+# landscape and portrait, and fails on any page error. Deploys to GitHub
+# Pages when Pages is enabled for the repo (Settings -> Pages -> Source:
+# GitHub Actions) and the repository variable PAGES_ENABLED is "true" — or
+# on demand from the Actions tab.
+
+on:
+  push:
+    branches: [main]
+    paths: ['web/**', '.github/workflows/web.yml']
+  pull_request:
+    paths: ['web/**', '.github/workflows/web.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Bundle the single-file build
+        run: python3 web/build.py
+      - name: Install Playwright + Chromium
+        run: |
+          npm install --no-save playwright@1.48.2
+          npx playwright install --with-deps chromium
+      - name: Headless browser smoke test
+        run: |
+          node web/tools/smoke.js web/dist/SliceIt-Web.html | tee web-smoke.log
+          grep -q "WEB SMOKE OK" web-smoke.log
+
+  pages:
+    needs: smoke
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && vars.PAGES_ENABLED == 'true')
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble the site
+        run: |
+          python3 web/build.py
+          mkdir -p site
+          cp web/index.html web/core.js web/audio.js site/
+          cp web/dist/SliceIt-Web.html site/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

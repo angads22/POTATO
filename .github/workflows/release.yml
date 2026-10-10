@@ -102,6 +102,13 @@ jobs:
           (cd dist/linux && zip -q ../../out/SliceIt-Visual-linux-x64.zip SliceIt.x86_64)
           cp dist/mac/SliceIt.zip out/SliceIt-Visual-mac.zip
 
+      # ── Web edition: one self-contained HTML file (play offline) ──
+      - name: Bundle the web edition
+        if: hashFiles('web/build.py') != ''
+        run: |
+          python3 web/build.py
+          cp web/dist/SliceIt-Web.html out/SliceIt-Web.html
+
       - name: Create release
         if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
         uses: softprops/action-gh-release@v2
@@ -116,6 +123,7 @@ jobs:
             out/SliceIt-Visual-win-x64.zip
             out/SliceIt-Visual-linux-x64.zip
             out/SliceIt-Visual-mac.zip
+            out/SliceIt-Web.html
 
       - name: Upload artifacts (manual run)
         if: ${{ !startsWith(github.ref, 'refs/tags/') && inputs.tag == '' }}
