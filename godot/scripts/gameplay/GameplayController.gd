@@ -4,9 +4,24 @@ class_name GameplayController
 # Main gameplay orchestrator: builds each stage's potato sequence from the
 # data tables, runs the matching minigame, and draws the HUD, quality
 # popups, stage banners, fever overlay and screen shake on top.
+#
+# The kitchen runs on the music. Each stage has its own procedurally
+# composed song (AudioManager / SongComposer) whose tempo climbs with the
+# stage; potatoes land on bar lines, the cut cursor crosses the centre on
+# beat 3 (the snare), FEVER fades in an extra layer of the song, and the
+# boss strikes on the kick and snare. The beat clock keeps running with the
+# sound off, so the game plays the same either way.
 
 const POTATO_POS = Vector2(640, 330)
 const POPUP_LIFE = 1.2
+const BASE_BPM = 132.0
+const FALL_SEC = 0.3          # PotatoVisual's drop-in before it lands
+const MIN_GAP_BEATS = 0.75    # breathing room after a cut before the next landing
+const INTRO_BEATS = 4.0       # a bar of music before a stage's first potato
+const FEVER_BEATS = 16.0      # FEVER lasts four bars
+
+# one musical style per championship venue (Endless cycles through them)
+const STAGE_STYLES = ["lofi", "jazz", "funky", "disco", "gameshow", "epic"]
 
 var current_minigame: MinigameBase
 var stage_potatoes: Array[Dictionary] = []
@@ -18,6 +33,11 @@ var hud: GameHUD
 var rng := RandomNumberGenerator.new()
 var stage_misses: int = 0      # for the "Surgical" (clean-stage) achievement
 
+# beat scheduling: the next thing that happens, on which beat of the song
+var pending_action: String = ""   # "", "spawn", "stage_clear"
+var pending_beat: float = 0.0
+var pause_overlay: PauseOverlay
+
 # feedback state
 var popups: Array = []           # {text, color, age}
 var banner_text: String = ""
@@ -26,11 +46,13 @@ var shake: float = 0.0
 
 func _ready():
 	GameManager.game_ended.connect(_on_game_ended)
+	GameManager.fever_deactivated.connect(_on_fever_end)
 
 	# kitchen backdrop behind everything (z_index = -1); its grandeur climbs
 	# with the stage, so the venue visibly escalates toward the world final
 	kitchen = KitchenBackground.new()
 	kitchen.tier = _kitchen_tier()
+	kitchen.beat_sync = true
 	add_child(kitchen)
 
 	# Multiplayer: host chose a seed and pushed it to the client, so both
@@ -42,10 +64,12 @@ func _ready():
 
 	potato_visual = PotatoVisual.new()
 	potato_visual.position = POTATO_POS
+	potato_visual.beat_sync = true
 	add_child(potato_visual)
 
 	knife = KnifeVisual.new()
 	knife.position = POTATO_POS
+	knife.beat_sync = true
 	add_child(knife)
 
 	# HUD on its own CanvasLayer: above everything, immune to screen shake
@@ -56,15 +80,28 @@ func _ready():
 	hud_layer.add_child(hud)
 	add_child(hud_layer)
 
+	_start_stage_music()
 	_show_banner(_intro_banner())
 	_load_stage_potatoes()
-	_spawn_next_potato()
+	_schedule("spawn", INTRO_BEATS)
+
+func _exit_tree():
+	if get_tree():
+		get_tree().paused = false
+	AudioManager.resume_music()
 
 func _input(event: InputEvent):
-	# ESC abandons the run and returns to the menu
-	if event.is_action_pressed("ui_cancel"):
-		GameManager.current_state.is_running = false
-		get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
+	# ESC opens the pause menu (the run is only abandoned from there)
+	if event.is_action_pressed("ui_cancel") and pause_overlay == null:
+		_open_pause()
+		get_viewport().set_input_as_handled()
+
+func _notification(what):
+	# a rhythm game shouldn't keep playing while you're in another window
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT and pause_overlay == null \
+			and GameManager.current_state.is_running and not MultiplayerManager.is_in_multiplayer \
+			and DisplayServer.get_name() != "headless":
+		_open_pause()
 
 func _process(delta):
 	# screen shake decay — shaking this node moves the whole playfield
@@ -74,12 +111,69 @@ func _process(delta):
 	else:
 		position = Vector2.ZERO
 
+	_run_schedule()
+
 	banner_age += delta
 	for p in popups:
 		p.age += delta
 	popups = popups.filter(func(p): return p.age < POPUP_LIFE)
 
 	hud.queue_redraw()
+
+func add_shake(amount: float):
+	if SaveDataManager.settings.get("screen_shake", true):
+		shake = maxf(shake, amount)
+
+# ────────────────────────────────────────────────────────
+#  Music + beat scheduling
+# ────────────────────────────────────────────────────────
+
+func stage_bpm(stage: int = -1) -> float:
+	if stage < 0:
+		stage = GameManager.current_state.stage
+	return snappedf(BASE_BPM * minf(1.5, 1.0 + (stage - 1) * 0.08), 0.5)
+
+func stage_song(stage: int = -1) -> Dictionary:
+	if stage < 0:
+		stage = GameManager.current_state.stage
+	return {"style": STAGE_STYLES[(stage - 1) % STAGE_STYLES.size()], "bpm": stage_bpm(stage), "seed": 100 + stage}
+
+func boss_song() -> Dictionary:
+	return {"style": "boss", "bpm": stage_bpm(), "seed": 666}
+
+func _start_stage_music():
+	var s = GameManager.current_state
+	AudioManager.play_song(stage_song(), 0.6)
+	if s.fever_active:
+		AudioManager.set_layer("fever", true, 0.1)
+	# get what comes next rendering in the background
+	AudioManager.prefetch(stage_song(s.stage + 1))
+	if s.mode == "championship" and s.stage >= 5:
+		AudioManager.prefetch(boss_song())
+
+func _fall_beats() -> float:
+	return FALL_SEC / AudioManager.beat_sec()
+
+# Queue the next potato/stage-clear on the first bar line at least
+# `min_gap` beats from now.
+func _schedule(action: String, min_gap: float = MIN_GAP_BEATS):
+	pending_action = action
+	pending_beat = AudioManager.next_bar(AudioManager.music_beat() + min_gap)
+
+func _run_schedule():
+	if pending_action == "" or not GameManager.current_state.is_running:
+		return
+	var now := AudioManager.music_beat()
+	match pending_action:
+		"spawn":
+			# start the drop-in early so the potato lands right on the bar line
+			if now >= pending_beat - _fall_beats():
+				pending_action = ""
+				_spawn_next_potato(pending_beat)
+		"stage_clear":
+			if now >= pending_beat:
+				pending_action = ""
+				_complete_stage()
 
 # ────────────────────────────────────────────────────────
 #  Stage construction and potato flow
@@ -111,7 +205,7 @@ func _load_stage_potatoes():
 	current_potato_index = 0
 	stage_misses = 0
 
-func _spawn_next_potato():
+func _spawn_next_potato(land_beat: float = -1.0e9):
 	if not GameManager.current_state.is_running:
 		return
 	if current_potato_index >= stage_potatoes.size():
@@ -121,9 +215,12 @@ func _spawn_next_potato():
 	var potato = stage_potatoes[current_potato_index]
 	current_potato_index += 1
 	potato_visual.setup(potato)
-	_create_minigame(potato)
+	AudioManager.play_sfx("potato_drop", -4.0)
+	if potato.get("rare", false):
+		AudioManager.play_sfx("golden", -3.0)
+	_create_minigame(potato, land_beat)
 
-func _create_minigame(potato: Dictionary):
+func _create_minigame(potato: Dictionary, land_beat: float = -1.0e9):
 	if current_minigame:
 		current_minigame.queue_free()
 
@@ -141,7 +238,7 @@ func _create_minigame(potato: Dictionary):
 
 	add_child(current_minigame)
 	current_minigame.minigame_completed.connect(_on_minigame_completed)
-	current_minigame.start_minigame(potato)
+	current_minigame.start_minigame(potato, land_beat)
 
 func _on_minigame_completed(result: Dictionary):
 	var quality: String = result["quality"]
@@ -153,8 +250,9 @@ func _on_minigame_completed(result: Dictionary):
 		if quality == "PERFECT":
 			potato_visual.bin()
 			GameManager.add_combo()
+			GameManager.record_cut("PERFECT")
 			_popup("BINNED!", Color.LIGHT_GREEN)
-			AudioManager.play_sfx("cut_great")
+			AudioManager.play_sfx("bin")
 		else:
 			knife.chop()
 			potato_visual.split()
@@ -162,16 +260,19 @@ func _on_minigame_completed(result: Dictionary):
 				Fx.splat(self, POTATO_POS)
 			GameManager.lose_life()
 			GameManager.reset_combo()
+			GameManager.record_cut("FAIL")
 			stage_misses += 1
 			_popup("ROTTEN!  -1 LIFE", Color.ORANGE_RED)
-			shake = 14.0
-			AudioManager.play_sfx("cut_miss")
+			add_shake(14.0)
+			AudioManager.play_sfx("splat")
+			AudioManager.play_sfx("cut_miss", -6.0)
 	elif quality == "MISS" or quality == "FAIL":
 		GameManager.lose_life()
 		GameManager.reset_combo()
+		GameManager.record_cut(quality)
 		stage_misses += 1
 		_popup("MISS", Color.ORANGE_RED)
-		shake = 10.0
+		add_shake(10.0)
 		AudioManager.play_sfx("cut_miss")
 	else:
 		knife.chop()
@@ -181,10 +282,11 @@ func _on_minigame_completed(result: Dictionary):
 		var base = int(potato.get("base_points", 100) * result["multiplier"])
 		var points = GameManager.add_score(base, quality)
 		GameManager.add_combo()
+		GameManager.record_cut(quality)
 		_popup("%s  +%d" % [quality, points], _quality_color(quality))
 		if quality == "PERFECT" and fx_on:
 			Fx.ring(self, POTATO_POS)
-		AudioManager.play_sfx("cut_great" if quality == "PERFECT" else "cut_good")
+		AudioManager.play_sfx_varied("cut_great" if quality == "PERFECT" else "cut_good", 0.04)
 		_award("first_cut")
 		# combo milestones
 		var combo = GameManager.current_state.combo
@@ -192,16 +294,20 @@ func _on_minigame_completed(result: Dictionary):
 			_award("combo_50")
 		elif combo >= 25:
 			_award("combo_25")
+		if combo > 0 and combo % 10 == 0:
+			AudioManager.play_sfx("combo_up")
 		if potato.get("rare", false):
 			var coins = int(potato.get("coin_bonus", 15))
 			GameManager.current_state.coins_earned += coins
 			if fx_on:
 				Fx.sparkle(self, POTATO_POS)
 			_popup("GOLDEN!  +%d coins" % coins, Color.GOLD)
+			AudioManager.play_sfx("coin_collect")
 			_award("golden_touch")
 
 	if GameManager.current_state.combo >= 20 and not GameManager.current_state.fever_active:
-		GameManager.activate_fever()
+		GameManager.activate_fever(FEVER_BEATS * AudioManager.beat_sec())
+		AudioManager.set_layer("fever", true, 0.25)
 		_popup("FEVER!", Color.MAGENTA)
 		AudioManager.play_sfx("fever_start")
 		_award("feeling_heat")
@@ -213,9 +319,15 @@ func _on_minigame_completed(result: Dictionary):
 			GameManager.current_state.lives
 		)
 
-	await get_tree().create_timer(1.0).timeout
-	if GameManager.current_state.is_running:
-		_spawn_next_potato()
+	if not GameManager.current_state.is_running:
+		return
+	if current_potato_index >= stage_potatoes.size():
+		_schedule("stage_clear", 1.5)
+	else:
+		_schedule("spawn")
+
+func _on_fever_end():
+	AudioManager.set_layer("fever", false, 1.0)
 
 func _complete_stage():
 	var s = GameManager.current_state
@@ -243,8 +355,7 @@ func _complete_stage():
 				kitchen.tier = _kitchen_tier()
 				AudioManager.play_sfx("level_complete")
 				_show_banner("%s" % _stage_name(s.stage))
-				_load_stage_potatoes()
-				_spawn_next_potato()
+				_next_stage()
 		"endless":
 			# Wave bonus grows the deeper you go — survival pays
 			var bonus = s.stage * 50
@@ -253,18 +364,66 @@ func _complete_stage():
 			_popup("WAVE CLEAR  +%d" % bonus, Color.GOLD)
 			GameManager.progress_stage()
 			kitchen.tier = _kitchen_tier()
+			AudioManager.play_sfx("level_complete")
 			_show_banner("WAVE %d" % s.stage)
-			_load_stage_potatoes()
-			_spawn_next_potato()
+			_next_stage()
 		_:
 			GameManager.end_game(true)
 
+# New stage: new venue, new song (faster), a bar of intro, then potatoes.
+func _next_stage():
+	_start_stage_music()
+	_load_stage_potatoes()
+	_schedule("spawn", INTRO_BEATS)
+
 func _on_game_ended(_final_score: int, victory: bool):
 	GameManager.current_state.last_victory = victory
+	pending_action = ""
 	_show_banner("VICTORY!" if victory else "GAME OVER")
-	AudioManager.play_sfx("level_complete" if victory else "game_over")
-	await get_tree().create_timer(1.5).timeout
+	AudioManager.stop_music(1.2)
+	AudioManager.play_sfx("victory" if victory else "game_over")
+	await get_tree().create_timer(2.0).timeout
 	get_tree().change_scene_to_file("res://scenes/GameOver.tscn")
+
+# ────────────────────────────────────────────────────────
+#  Pause menu
+# ────────────────────────────────────────────────────────
+
+func _open_pause():
+	if not GameManager.current_state.is_running:
+		return
+	pause_overlay = PauseOverlay.new()
+	pause_overlay.freeze_tree = not MultiplayerManager.is_in_multiplayer
+	if MultiplayerManager.is_in_multiplayer:
+		pause_overlay.subtitle = "The match keeps going for your opponent!"
+	pause_overlay.options = [
+		{"id": "resume", "label": "Resume  [ESC]", "key": KEY_ESCAPE},
+		{"id": "restart", "label": "Restart run  [R]", "key": KEY_R},
+		{"id": "end", "label": "End run & bank coins  [E]", "key": KEY_E},
+		{"id": "quit", "label": "Quit to menu  [Q]", "key": KEY_Q},
+	]
+	if MultiplayerManager.is_in_multiplayer:
+		pause_overlay.options.remove_at(1)  # no restarts mid-duel
+	pause_overlay.chosen.connect(_on_pause_choice)
+	add_child(pause_overlay)
+
+func _on_pause_choice(id: String):
+	var overlay := pause_overlay
+	pause_overlay = null
+	overlay.close()
+	match id:
+		"restart":
+			var mode: String = GameManager.current_state.mode
+			GameManager.current_state.is_running = false
+			GameManager.start_game(mode)
+			get_tree().reload_current_scene()
+		"end":
+			# finish the run properly: the results screen banks the coins
+			GameManager.end_game(false)
+		"quit":
+			GameManager.current_state.is_running = false
+			AudioManager.stop_music(0.4)
+			get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
 
 # ────────────────────────────────────────────────────────
 #  Feedback helpers
@@ -318,28 +477,32 @@ func _award(id: String):
 		var a = GameData.achievement_by_id(id)
 		if hud:
 			hud.achievement_toast(a.get("name", id))
-		AudioManager.play_sfx("coin_collect")
+		AudioManager.play_sfx("achievement")
 
 # The championship finale: a multi-hit Colossal Spud with an HP bar. Replaces
 # the old instant end_game(true). Boss handles its own swings and life loss;
-# we just react to its single completion.
+# we just react to its single completion. It gets its own theme at the final
+# stage's tempo, a bar of growling intro, then strikes on the kick and snare.
 func _spawn_boss():
 	if current_minigame:
 		current_minigame.queue_free()
+	pending_action = ""
 	potato_visual.visible = false
 	kitchen.tier = 6
 	_show_banner("FINAL BOSS — COLOSSAL SPUD")
-	AudioManager.play_sfx("fever_start")
+	AudioManager.play_song(boss_song(), 0.3)
+	if GameManager.current_state.fever_active:
+		AudioManager.set_layer("fever", true, 0.1)
+	AudioManager.play_sfx("boss_roar")
 	var boss := BossMinigame.new()
 	boss.ctrl = self
 	current_minigame = boss
 	add_child(boss)
 	boss.minigame_completed.connect(_on_boss_completed)
-	boss.start_minigame({"base_points": 200})
+	boss.start_minigame({"base_points": 200}, INTRO_BEATS)
 
 func _on_boss_completed(_result: Dictionary):
 	if not GameManager.current_state.is_running:
 		return
 	_award("boss_slayer")
 	GameManager.end_game(true)
-

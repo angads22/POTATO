@@ -140,4 +140,4 @@ func _draw():
 		draw_string(font, Vector2(640 - tsz.x / 2, ty), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(1.0, 0.85, 0.35, a))
 
 	# ── ESC hint ──
-	draw_string(font, Vector2(20, 706), "[ESC] Quit to menu", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.9, 0.85, 0.75, 0.5))
+	draw_string(font, Vector2(20, 706), "[ESC] Pause", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.9, 0.85, 0.75, 0.5))

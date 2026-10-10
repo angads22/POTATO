@@ -27,6 +27,15 @@ class GameState:
 	var last_payout: int = 0  # coins banked to the farm wallet by the last run
 	var last_xp_gain: int = 0  # chef XP earned by the last run
 	var ranked_up: bool = false  # did that XP cross into a new chef rank?
+	# run stats for the results screen
+	var perfect: int = 0
+	var great: int = 0
+	var good: int = 0
+	var miss: int = 0
+	var max_combo: int = 0
+	var prev_best: int = 0      # best score in this mode before the run
+	var song_title: String = "" # Concert mode: the song that was played
+	var difficulty: String = "" # Concert mode: easy / normal / hard
 
 var current_state: GameState = GameState.new()
 var game_modes = {}  # Will be populated with mode configurations
@@ -79,6 +88,14 @@ func start_game(mode: String):
 	current_state.last_payout = 0
 	current_state.last_xp_gain = 0
 	current_state.ranked_up = false
+	current_state.perfect = 0
+	current_state.great = 0
+	current_state.good = 0
+	current_state.miss = 0
+	current_state.max_combo = 0
+	current_state.song_title = ""
+	current_state.difficulty = ""
+	current_state.prev_best = best_score(mode)
 	current_state.is_running = true
 
 	game_started.emit()
@@ -131,7 +148,51 @@ func add_score(amount: int, cut_quality: String = "NORMAL"):
 
 func add_combo():
 	current_state.combo += 1
+	current_state.max_combo = maxi(current_state.max_combo, current_state.combo)
 	combo_changed.emit(current_state.combo)
+
+# Tally one judged cut for the results screen (MISS and FAIL count as misses).
+func record_cut(quality: String):
+	match quality:
+		"PERFECT": current_state.perfect += 1
+		"GREAT": current_state.great += 1
+		"GOOD": current_state.good += 1
+		_: current_state.miss += 1
+
+func cuts_judged() -> int:
+	var s := current_state
+	return s.perfect + s.great + s.good + s.miss
+
+# Weighted accuracy 0..1: PERFECT 100%, GREAT 70%, GOOD 40%, MISS 0%.
+func accuracy() -> float:
+	var n := cuts_judged()
+	if n == 0:
+		return 0.0
+	var s := current_state
+	return (s.perfect * 1.0 + s.great * 0.7 + s.good * 0.4) / float(n)
+
+# Letter grade for the run: accuracy first, with S reserved for no misses.
+func grade() -> String:
+	var acc := accuracy()
+	if cuts_judged() == 0:
+		return "D"
+	if acc >= 0.95 and current_state.miss == 0:
+		return "S"
+	if acc >= 0.85:
+		return "A"
+	if acc >= 0.7:
+		return "B"
+	if acc >= 0.5:
+		return "C"
+	return "D"
+
+# Best leaderboard score so far in a mode (0 if none).
+func best_score(mode: String) -> int:
+	var best := 0
+	for e in SaveDataManager.leaderboard:
+		if e.get("mode", "") == mode:
+			best = maxi(best, int(e.get("score", 0)))
+	return best
 
 func reset_combo():
 	current_state.combo = 0
@@ -150,7 +211,8 @@ func activate_fever(duration: float = 8.0, multiplier: float = 2.0):
 	current_state.fever_multiplier = multiplier
 	fever_activated.emit()
 
-	await get_tree().create_timer(duration).timeout
+	# process_always=false: FEVER doesn't drain while the game is paused
+	await get_tree().create_timer(duration, false).timeout
 	current_state.fever_active = false
 	fever_deactivated.emit()
 

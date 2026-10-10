@@ -19,6 +19,8 @@ var t := 0.0
 # crowd and spotlights fade in as the stages climb. Tier 1 is the untouched
 # look used by the menu, farm/town and game-over screens.
 var tier: int = 1
+# when true the utensils swing in time with the music instead of idly
+var beat_sync: bool = false
 
 var board_rect := Rect2(400, 250, 480, 220)
 
@@ -127,7 +129,11 @@ func _draw_utensil_rail():
 	for i in range(3):
 		var hx = 630.0 + i * 120.0
 		draw_circle(Vector2(hx, 33), 4.0, Color(0.22, 0.15, 0.09))
-		draw_set_transform(Vector2(hx, 36), sin(t * 1.3 + i * 2.1) * 0.07, Vector2.ONE)
+		var swing := sin(t * 1.3 + i * 2.1) * 0.07
+		if beat_sync and AudioManager.music_beat() >= 0.0:
+			# one full swing every two beats, alternating utensils
+			swing = sin(AudioManager.music_beat() * PI + i * PI) * 0.09
+		draw_set_transform(Vector2(hx, 36), swing, Vector2.ONE)
 		match i:
 			0:  # spatula
 				draw_rect(Rect2(-3, 0, 6, 52), wood)

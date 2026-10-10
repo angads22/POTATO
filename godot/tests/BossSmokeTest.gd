@@ -5,14 +5,20 @@ extends Node
 # the cursor is centred until the boss falls. Prints BOSS SMOKE OK and exits 0
 # once end_game reports victory; exits 1 if the boss isn't down in time.
 #
-#   godot --headless res://tests/BossSmokeTest.tscn --quit-after 600
+#   godot --headless res://tests/BossSmokeTest.tscn --quit-after 2000
+#
+# The boss fight is beat-locked (strikes on beats 1 and 3); the headless beat
+# clock runs 3x fast so the fight resolves in a couple of seconds.
 
 var frames := 0
+var t0 := 0
 var gameplay
 var started := false
 var won := false
 
 func _ready():
+	AudioManager.debug_time_scale = 3.0
+	t0 = Time.get_ticks_msec()
 	GameManager.start_game("championship")
 	GameManager.current_state.stage = 6
 	GameManager.current_state.lives = 99
@@ -38,7 +44,7 @@ func _process(_delta):
 			GameManager.current_state.lives, GameManager.current_state.score])
 		get_tree().quit(0)
 
-	if frames >= 560:
+	if Time.get_ticks_msec() - t0 > 15000:
 		print("BOSS SMOKE FAIL — defeated=%s lives=%d" % [won, GameManager.current_state.lives])
 		get_tree().quit(1)
 

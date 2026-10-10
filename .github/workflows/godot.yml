@@ -41,7 +41,7 @@ jobs:
       - name: Headless gameplay smoke test
         run: |
           cd godot
-          ~/godot-bin/godot --headless --path . res://tests/SmokeTest.tscn --quit-after 900 2>&1 | tee smoke.log
+          ~/godot-bin/godot --headless --path . res://tests/SmokeTest.tscn --quit-after 4000 2>&1 | tee smoke.log
           grep -q "SMOKE OK" smoke.log
 
       - name: Headless farm smoke test
@@ -65,5 +65,5 @@ jobs:
       - name: Headless boss fight smoke test
         run: |
           cd godot
-          ~/godot-bin/godot --headless --path . res://tests/BossSmokeTest.tscn --quit-after 600 2>&1 | tee boss.log
+          ~/godot-bin/godot --headless --path . res://tests/BossSmokeTest.tscn --quit-after 2000 2>&1 | tee boss.log
           grep -q "BOSS SMOKE OK" boss.log

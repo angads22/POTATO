@@ -20,6 +20,8 @@ var anim_t: float = 0.0
 var bob_t: float = 0.0
 var spawn_t: float = 99.0
 var spots: Array = []
+# when true the idle bob hops on every beat of the music
+var beat_sync: bool = false
 
 func setup(potato: Dictionary):
 	body_color = Color(potato.get("color", "#b87333"))
@@ -75,6 +77,11 @@ func _draw():
 			# drop in from above, squash on landing, then settle into the bob
 			var off = Vector2(0, sin(bob_t * 2.2) * 5.0)
 			var sc = Vector2.ONE
+			if beat_sync and AudioManager.music_beat() >= 0.0:
+				var bt := AudioManager.music_beat()
+				off = Vector2(0, -absf(sin(bt * PI)) * 7.0)
+				var thump := exp(-fposmod(bt, 1.0) * 9.0)
+				sc = Vector2(1.0 + 0.05 * thump, 1.0 - 0.05 * thump)
 			if spawn_t < SPAWN_LEN:
 				if spawn_t < 0.3:
 					var f = spawn_t / 0.3

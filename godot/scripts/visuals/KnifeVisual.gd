@@ -10,6 +10,7 @@ const CHOP_LEN = 0.16   # seconds down; the upswing takes the same again
 
 var bob_t := 0.0
 var chop_t := -1.0      # -1 = idle, otherwise progress through the swing
+var beat_sync := false  # hover in time with the music
 
 func _process(delta):
 	bob_t += delta
@@ -25,6 +26,8 @@ func chop():
 func _draw():
 	# hover in counter-phase to the potato bob; swing through on chop
 	var lift = HOVER_LIFT + sin(bob_t * 2.2 + PI) * 6.0
+	if beat_sync and AudioManager.music_beat() >= 0.0:
+		lift = HOVER_LIFT - absf(sin(AudioManager.music_beat() * PI + 0.6)) * 8.0
 	var ang = -0.1
 	if chop_t >= 0.0:
 		var ph = chop_t / CHOP_LEN

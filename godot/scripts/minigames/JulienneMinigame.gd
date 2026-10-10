@@ -1,52 +1,44 @@
 extends MinigameBase
 class_name JulienneMinigame
 
-# Julienne — land two quick cuts on the same track; scored as the worse.
-# After the first cut the cursor speeds up and a second must land within
-# the follow-up window.
+# Julienne — land two cuts on the same track; scored as the worse.
+# After the first cut the sweep doubles in speed (phase-continuous, so the
+# cursor never jumps): an on-beat first cut lines the second up exactly two
+# beats later, on the next downbeat — chop on 3, chop on 1.
 
 const PERFECT_W = 0.025
 const GREAT_W = 0.06
 const GOOD_W = 0.12
-const SECOND_CUT_WINDOW = 1.2
-const TIMEOUT = 6.0
+const SWEEP_BEATS = 4.0
+const FAST_SWEEP_BEATS = 2.0
+const SECOND_CUT_BEATS = 3.0
+const TIMEOUT_BEATS = 12.0
 
 const QUALITY_ORDER = ["PERFECT", "GREAT", "GOOD", "MISS"]
 
 var cursor: float = 0.0
-var dir: float = 1.0
-var speed: float = 0.6
 var first_quality: String = ""
 var first_cursor: float = -1.0
-var second_deadline: float = 0.0
+var second_deadline: float = 0.0   # in beats since landing
 var done: bool = false
 
-func start_minigame(potato: Dictionary):
-	super.start_minigame(potato)
+func start_minigame(potato: Dictionary, origin_beat: float = -1.0e9):
+	super.start_minigame(potato, origin_beat)
 	cursor = 0.0
-	dir = 1.0
-	# later stages sweep faster
-	speed = 0.6 * GameManager.difficulty_scale()
+	set_sweep(SWEEP_BEATS)
 	first_quality = ""
 	first_cursor = -1.0
 	done = false
 
-func _process(delta):
+func _process(_delta):
 	if not is_active or done:
 		return
-	cursor += dir * speed * delta
-	if cursor >= 1.0:
-		cursor = 1.0
-		dir = -1.0
-	elif cursor <= 0.0:
-		cursor = 0.0
-		dir = 1.0
-
-	if first_quality != "" and elapsed() > second_deadline:
+	cursor = sweep_cursor()
+	if first_quality != "" and beats() > second_deadline:
 		done = true
 		cut_result.quality = "MISS"
 		end_minigame()
-	elif first_quality == "" and elapsed() > TIMEOUT:
+	elif first_quality == "" and beats() > TIMEOUT_BEATS:
 		done = true
 		cut_result.quality = "MISS"
 		end_minigame()
@@ -55,14 +47,16 @@ func _process(delta):
 func _on_primary_input():
 	if done:
 		return
+	cursor = sweep_cursor()
 	var q = judge(abs(cursor - 0.5), PERFECT_W, GREAT_W, GOOD_W)
 
 	if first_quality == "":
-		# First cut: remember it, speed up, start the follow-up clock
+		# First cut: remember it, speed up, start the follow-up window
 		first_quality = q
 		first_cursor = cursor
-		speed *= 1.35
-		second_deadline = elapsed() + SECOND_CUT_WINDOW
+		change_sweep(FAST_SWEEP_BEATS)
+		second_deadline = maxf(0.0, beats()) + SECOND_CUT_BEATS
+		AudioManager.play_sfx_varied("cut_good", 0.05, -6.0)
 	else:
 		# Second cut: score as the worse of the two
 		done = true
@@ -81,10 +75,10 @@ func _draw():
 	if first_cursor >= 0.0:
 		var px = TRACK_X + first_cursor * TRACK_W
 		draw_colored_polygon(PackedVector2Array([
-			Vector2(px - 6, TRACK_Y + TRACK_H + 14), Vector2(px + 6, TRACK_Y + TRACK_H + 14), Vector2(px, TRACK_Y + TRACK_H + 3)
+			Vector2(px - 6, TRACK_Y - 18), Vector2(px + 6, TRACK_Y - 18), Vector2(px, TRACK_Y - 7)
 		]), Color.CYAN)
 
 	if first_quality == "":
-		draw_hint("[SPACE] Julienne — two cuts! Land the first...")
+		draw_hint("[SPACE] Julienne — two cuts! Land the first on beat 3...")
 	else:
-		draw_hint("[SPACE] Now the second — quick! (scored as the worse)")
+		draw_hint("[SPACE] ...and the second on the downbeat! (scored as the worse)")

@@ -38,6 +38,10 @@ const TRACKS := {
 }
 
 var sound_enabled: bool = true
+# Headless tests only: runs the (silent) beat clock this many times faster
+# than real time so a smoke test can play several stages in a few seconds.
+# Ignored whenever audio is live.
+var debug_time_scale: float = 1.0
 # false on the headless server: nothing is rendered or played, but the beat
 # clock and composed song data still work, so tests drive the real game logic
 var audio_live: bool = true
@@ -286,7 +290,8 @@ func music_live() -> bool:
 # ────────────────────────────────────────────────────────
 
 func _now() -> float:
-	return Time.get_ticks_usec() / 1000000.0
+	var t := Time.get_ticks_usec() / 1000000.0
+	return t if audio_live else t * debug_time_scale
 
 # Seconds since beat 0 of the current song, as the player hears it.
 func music_time() -> float:
