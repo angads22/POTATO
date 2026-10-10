@@ -280,6 +280,7 @@ function newPlay(spec, diff, entry) {
 }
 
 async function startSong(spec, diff) {
+  if (state === "loading") return;   // already composing this one
   state = "loading";
   sfx("menu_select");
   const entry = await getSong(spec);
