@@ -101,6 +101,9 @@ func _play_again():
 	var mode: String = GameManager.current_state.mode
 	AudioManager.play_sfx("menu_select")
 	if mode == "concert":
+		var s = GameManager.current_state
+		if not s.concert_spec.is_empty():
+			ConcertController.replay = {"spec": s.concert_spec, "difficulty": s.difficulty}
 		get_tree().change_scene_to_file("res://scenes/Concert/ConcertScene.tscn")
 		return
 	GameManager.start_game(mode)
@@ -108,7 +111,12 @@ func _play_again():
 
 func _return_to_menu():
 	AudioManager.play_sfx("menu_back")
-	get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
+	var dest := "res://scenes/MainMenu.tscn"
+	if GameManager.current_state.mode == "concert":
+		# a concert started at the town's Concert Hall walks you back out there
+		dest = ConcertController.return_scene
+		ConcertController.return_scene = "res://scenes/MainMenu.tscn"
+	get_tree().change_scene_to_file(dest)
 
 # ────────────────────────────────────────────────────────
 #  Drawing

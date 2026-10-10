@@ -3,8 +3,8 @@ class_name TownBackground
 
 # The town backdrop: a cobbled plaza with a fountain at its heart, the
 # championship kitchen at the head of the square, the seed/knife/tool stalls
-# around it, a couple of cottages for dressing and a boarded lot waiting
-# for whatever comes next. (Selling moved to the farm's market truck, so
+# around it, a couple of cottages for dressing and the Concert Hall
+# bandstand on the south side. (Selling moved to the farm's market truck, so
 # there's no market stall here.) All procedural, like the rest of the game.
 # Geometry constants here are the single source of truth; TownController
 # reads them for collision and interaction points. A gate in the west
@@ -19,7 +19,7 @@ const TOOL_STAND = Rect2(330, 760, 150, 115)
 const FOUNTAIN_C = Vector2(960, 580)
 const COTTAGE_A = Rect2(120, 150, 220, 140)
 const COTTAGE_B = Rect2(1560, 140, 220, 140)
-const FUTURE_LOT = Rect2(800, 880, 320, 140)
+const CONCERT_HALL = Rect2(800, 880, 320, 140)  # was the boarded "coming soon" lot
 const FARM_GATE_POS = Vector2(110, 560)  # hedge gap on the west edge
 
 const STREETS = [
@@ -66,7 +66,7 @@ func _ready():
 func _on_clear_ground(p: Vector2) -> bool:
 	for r in [KITCHEN_WALL.grow(50), SEED_STAND.grow(25), KNIFE_STAND.grow(25),
 			TOOL_STAND.grow(25), COTTAGE_A.grow(40), COTTAGE_B.grow(40),
-			FUTURE_LOT.grow(20)]:
+			CONCERT_HALL.grow(20)]:
 		if r.has_point(p):
 			return false
 	return p.distance_to(FOUNTAIN_C) > 240.0
@@ -88,7 +88,7 @@ func _draw():
 	_draw_fountain()
 	for lp in LAMP_POSTS:
 		_draw_lamp(lp)
-	_draw_future_lot()
+	_draw_concert_hall()
 	for i in range(TREE_POSITIONS.size()):
 		_draw_tree(TREE_POSITIONS[i], 1.0 + 0.2 * sin(i * 2.1), float(i))
 	_draw_farm_gate()
@@ -258,22 +258,76 @@ func _draw_stall(r: Rect2, stripe: Color, label: String):
 	var ls = font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 15)
 	draw_string(font, Vector2(r.get_center().x - ls.x / 2, r.end.y - 14), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.95, 0.9, 0.8))
 
-func _draw_future_lot():
-	var r = FUTURE_LOT
-	draw_rect(r, Color(0.56, 0.48, 0.34))
-	draw_rect(r.grow(-6), Color(0.62, 0.54, 0.38))
-	# boarded planks
-	for i in range(4):
-		var x = r.position.x + 24 + i * (r.size.x - 48) / 3.0
-		draw_rect(Rect2(x - 5, r.position.y + 14, 10, r.size.y - 28), Color(0.5, 0.38, 0.22))
-	draw_line(r.position + Vector2(14, 18), r.end - Vector2(14, 18), Color(0.45, 0.34, 0.2), 8.0)
-	draw_line(Vector2(r.position.x + 14, r.end.y - 18), Vector2(r.end.x - 14, r.position.y + 18), Color(0.45, 0.34, 0.2), 8.0)
+# The Concert Hall: a bandstand on the plaza's south side where Concert mode
+# lives. The marquee bulbs chase and the potato band bobs in time with the
+# town's music (the beat clock), and the bulbs glow brighter after dark.
+func _draw_concert_hall():
+	var r: Rect2 = CONCERT_HALL
+	var beat := AudioManager.music_beat()
+	var on_beat := beat >= 0.0
+	var pulse := exp(-fposmod(beat, 1.0) * 5.0) if on_beat else 0.0
+	# backdrop + stage platform
+	draw_rect(Rect2(r.position.x, r.position.y + 20, r.size.x, r.size.y - 20), Color(0.28, 0.16, 0.3))
+	draw_rect(Rect2(r.position.x + 8, r.position.y + 28, r.size.x - 16, r.size.y - 60), Color(0.36, 0.2, 0.38))
+	draw_rect(Rect2(r.position.x - 6, r.end.y - 34, r.size.x + 12, 34), Color(0.55, 0.36, 0.2))
+	draw_rect(Rect2(r.position.x - 6, r.end.y - 34, r.size.x + 12, 6), Color(0.7, 0.5, 0.3))
+	for i in range(7):
+		var x := r.position.x + i * (r.size.x + 12) / 7.0 - 6
+		draw_line(Vector2(x, r.end.y - 28), Vector2(x, r.end.y), Color(0.45, 0.28, 0.15), 2.0)
+	# speaker stacks either side, cones thumping on the beat
+	for sx: float in [r.position.x + 22, r.end.x - 22]:
+		draw_rect(Rect2(sx - 18, r.position.y + 50, 36, 56), Color(0.12, 0.1, 0.12))
+		draw_circle(Vector2(sx, r.position.y + 66), 9.0 + pulse * 2.0, Color(0.3, 0.28, 0.32))
+		draw_circle(Vector2(sx, r.position.y + 92), 6.0 + pulse * 1.5, Color(0.3, 0.28, 0.32))
+	# the potato band: drummer, guitarist, singer — hopping on the beat
+	var band = [[r.position.x + 95, Color(0.78, 0.55, 0.3), 0.0], [r.get_center().x, Color(0.86, 0.72, 0.42), 0.5],
+			[r.end.x - 95, Color(0.66, 0.4, 0.55), 0.25]]
+	for m in band:
+		var hop: float = absf(sin((beat + float(m[2])) * PI)) * 7.0 if on_beat else 0.0
+		var c := Vector2(float(m[0]), r.end.y - 52 - hop)
+		var mc: Color = m[1]
+		draw_set_transform(c, 0.0, Vector2(1.0, 0.85))
+		draw_circle(Vector2.ZERO, 16.0, mc)
+		draw_arc(Vector2.ZERO, 16.0, 0.0, TAU, 20, mc.darkened(0.45), 2.0)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		draw_circle(c + Vector2(-5, -3), 2.2, Color(0.15, 0.1, 0.05))
+		draw_circle(c + Vector2(5, -3), 2.2, Color(0.15, 0.1, 0.05))
+	# drum kit + mic stand props
+	draw_circle(Vector2(r.position.x + 95, r.end.y - 34), 11.0, Color(0.85, 0.85, 0.9))
+	draw_line(Vector2(r.end.x - 75, r.end.y - 34), Vector2(r.end.x - 75, r.end.y - 72), Color(0.3, 0.3, 0.32), 2.0)
+	# scalloped awning, like the market stalls but in show colours
+	var aw := Rect2(r.position.x - 10, r.position.y, r.size.x + 20, 26)
+	for i in range(8):
+		var sw := aw.size.x / 8.0
+		var col := Color(0.55, 0.2, 0.5) if i % 2 == 0 else Color(0.95, 0.78, 0.3)
+		draw_rect(Rect2(aw.position.x + i * sw, aw.position.y, sw, aw.size.y), col)
+		draw_circle(Vector2(aw.position.x + i * sw + sw / 2, aw.end.y), sw / 2, col)
+	# marquee sign with chasing bulbs
 	var font = ThemeDB.fallback_font
-	var label = "COMING SOON"
-	var ls = font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
-	GameHUD.panel_style(Color(0.25, 0.16, 0.09, 0.9)).draw(get_canvas_item(),
-			Rect2(r.get_center().x - ls.x / 2 - 14, r.get_center().y - 16, ls.x + 28, 32))
-	draw_string(font, Vector2(r.get_center().x - ls.x / 2, r.get_center().y + 6), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.9, 0.85, 0.7))
+	var label = "CONCERT HALL"
+	var ls = font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 18)
+	var sign_r := Rect2(r.get_center().x - ls.x / 2 - 18, r.position.y - 34, ls.x + 36, 34)
+	draw_rect(sign_r, Color(0.2, 0.1, 0.12))
+	draw_rect(sign_r, Color(0.95, 0.78, 0.3), false, 2.0)
+	draw_string(font, Vector2(sign_r.get_center().x - ls.x / 2, sign_r.end.y - 10), label,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(1.0, 0.86, 0.4))
+	var bulbs := 14
+	var lit := posmod(floori(beat * 2.0), bulbs) if on_beat else -1
+	for i in bulbs:
+		var u := float(i) / (bulbs - 1)
+		var bp := Vector2(sign_r.position.x + u * sign_r.size.x, sign_r.position.y - 4)
+		var glow := 0.35 + 0.65 * night01
+		var on := lit >= 0 and (i % 3 == lit % 3)
+		var col := Color(1.0, 0.85, 0.4, 0.95) if on else Color(0.6, 0.45, 0.25, 0.6)
+		if on and night01 > 0.2:
+			draw_circle(bp, 7.0, Color(1.0, 0.8, 0.35, 0.25 * glow))
+		draw_circle(bp, 3.0, col)
+	# a note drifting up from the stage now and then
+	if on_beat:
+		var ph := fposmod(beat / 4.0, 1.0)
+		var nx := r.get_center().x + sin(beat) * 40.0
+		draw_string(font, Vector2(nx, r.position.y + 20 - ph * 60.0), "♪", HORIZONTAL_ALIGNMENT_LEFT, -1, 20,
+				Color(1.0, 0.9, 0.6, 1.0 - ph))
 
 func _draw_tree(pos: Vector2, s: float, ph: float):
 	var sway = sin(t * 0.8 + ph) * 3.0 * s

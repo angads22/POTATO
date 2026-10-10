@@ -36,6 +36,7 @@ class GameState:
 	var prev_best: int = 0      # best score in this mode before the run
 	var song_title: String = "" # Concert mode: the song that was played
 	var difficulty: String = "" # Concert mode: easy / normal / hard
+	var concert_spec: Dictionary = {}  # Concert mode: the song played (for "play again")
 
 var current_state: GameState = GameState.new()
 var game_modes = {}  # Will be populated with mode configurations
@@ -113,6 +114,7 @@ func start_game(mode: String):
 	current_state.max_combo = 0
 	current_state.song_title = ""
 	current_state.difficulty = ""
+	current_state.concert_spec = {}
 	current_state.prev_best = best_score(mode)
 	current_state.is_running = true
 

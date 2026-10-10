@@ -193,8 +193,8 @@ the **farm** (`FarmController` — the whole pasture is one free-form plowable g
 sparse, created on demand only once a cell is plowed or holds a sprinkler; plow → plant →
 water/sprinkler → fertilize → harvest, soil stays plowed; `[C]` covers a plowed plot back to
 grass for coins — 9 freebies, no plow refund, must replow) and the **town** (`TownController` —
-seed/knife/tool stalls plus the championship kitchen; the designated home for future non-farming
-content). Progression runs on the farm's **Research Shed** (`research.json` nodes bought with coins +
+seed/knife/tool stalls, the championship kitchen and the Concert Hall bandstand that enters Concert
+mode; the designated home for future non-farming content). Progression runs on the farm's **Research Shed** (`research.json` nodes bought with coins +
 research points: logistics/tools/crops/growth/science/water/soil/championship, incl. research-gated
 crops; a PROGRESSION and an AUTOMATION track switched with [TAB], upgrades in many small tiers). The automation
 track's standing orders are managed at two yard buildings — the **Seed Co-op** and **Supply Depot**,

@@ -24,6 +24,9 @@ func _spawn_point() -> Vector2:
 	if WorldController.travel_spawn == "from_farm":
 		WorldController.travel_spawn = ""
 		return Vector2(130, 560)
+	if WorldController.travel_spawn == "from_concert":
+		WorldController.travel_spawn = ""
+		return Vector2(TownBackground.CONCERT_HALL.get_center().x, TownBackground.CONCERT_HALL.position.y - 70)
 	return Vector2(960, 760)
 
 func _build_world():
@@ -38,7 +41,7 @@ func _build_world():
 		TownBackground.TOOL_STAND.grow(4),
 		TownBackground.COTTAGE_A.grow(6),
 		TownBackground.COTTAGE_B.grow(6),
-		TownBackground.FUTURE_LOT.grow(4),
+		TownBackground.CONCERT_HALL.grow(4),
 		Rect2(TownBackground.FOUNTAIN_C - Vector2(60, 52), Vector2(120, 104)),
 	]
 
@@ -57,6 +60,8 @@ func _scan_interactions():
 			"text": "[E] Browse the tool shed", "act": func(): open_shop = "tools"},
 		{"pos": Vector2(TownBackground.KITCHEN_WALL.get_center().x, TownBackground.KITCHEN_WALL.end.y + 30), "r": 120.0,
 			"text": "[E] Enter the championship kitchen", "act": _enter_kitchen},
+		{"pos": Vector2(TownBackground.CONCERT_HALL.get_center().x, TownBackground.CONCERT_HALL.position.y - 50), "r": 120.0,
+			"text": "[E] Take the stage — play a CONCERT", "act": _enter_concert},
 		{"pos": TownBackground.FARM_GATE_POS, "r": 110.0,
 			"text": "[E] Take the road back to the farm", "act": _goto_farm},
 	]
@@ -70,6 +75,13 @@ func _enter_kitchen():
 	GameManager.start_game("championship")
 	AudioManager.play_sfx("menu_select")
 	get_tree().change_scene_to_file("res://scenes/Gameplay/GameplayScene.tscn")
+
+func _enter_concert():
+	AudioManager.play_sfx("menu_select")
+	ConcertController.return_scene = "res://scenes/Town/TownScene.tscn"
+	WorldController.travel_spawn = "from_concert"
+	WorldController.carry_day_t = day_t
+	get_tree().change_scene_to_file("res://scenes/Concert/ConcertScene.tscn")
 
 func _goto_farm():
 	WorldController.travel_spawn = "from_town"

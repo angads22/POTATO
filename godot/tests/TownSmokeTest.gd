@@ -60,6 +60,10 @@ func _process(_delta):
 			town.player.position = TownBackground.FARM_GATE_POS
 		28:
 			_check(town.prompt == "[E] Take the road back to the farm", "farm gate prompt appears")
+			town.player.position = Vector2(TownBackground.CONCERT_HALL.get_center().x,
+					TownBackground.CONCERT_HALL.position.y - 50)
+		30:
+			_check(town.prompt == "[E] Take the stage — play a CONCERT", "concert hall prompt appears")
 		34:
 			_finish()
 
@@ -89,7 +93,7 @@ func _run_stalls():
 
 func _finish():
 	if fails.is_empty():
-		print("TOWN SMOKE OK — stalls trade, kitchen and farm gate in place")
+		print("TOWN SMOKE OK — stalls trade, kitchen, concert hall and farm gate in place")
 		get_tree().quit(0)
 	else:
 		print("TOWN SMOKE FAIL:")

@@ -148,7 +148,9 @@ day-night cycle, prompts, shop overlays, economy actions) and a `WorldHUD`:
   shop, knife stand and tool shed around a fountain plaza, plus the
   championship kitchen (walk in to start a run). Selling moved to the farm's
   truck, so there's no market stall here. Future non-farming content belongs
-  here (there's a boarded "coming soon" lot on the plaza).
+  here. The **Concert Hall** bandstand on the plaza's south side (its marquee
+  bulbs and potato band move with the town's music) is the walk-up entrance
+  to Concert mode, and you walk back out onto the plaza afterwards.
 - Gates on the farm's east hedge and the town's west hedge travel between the
   two; the time of day carries across.
 
@@ -371,8 +373,8 @@ CI runs these on every PR touching `godot/` (see `.github/workflows/godot.yml`).
 ## Next Steps
 
 1. **Town content** — New buildings/activities belong on the town map (the
-   boarded plaza lot in `TownBackground` is the placeholder) — a Concert
-   stage there would tie the new mode into the overworld
+   Concert Hall shows the pattern: geometry in `TownBackground`, a station
+   in `TownController._scan_interactions`)
 2. **Concert** — an online Daily Song leaderboard (the seed is already shared
    with the web edition), longer song forms (verse/chorus variations)
 3. **Farm ambience** — day/night variations of the farm theme, rain

@@ -152,7 +152,9 @@ func _activate(i: int):
 	AudioManager.play_sfx("menu_select")
 	match action:
 		"championship", "endless": _start_game(action)
-		"concert": get_tree().change_scene_to_file("res://scenes/Concert/ConcertScene.tscn")
+		"concert":
+			ConcertController.return_scene = "res://scenes/MainMenu.tscn"
+			get_tree().change_scene_to_file("res://scenes/Concert/ConcertScene.tscn")
 		"farm": get_tree().change_scene_to_file("res://scenes/Farm/FarmScene.tscn")
 		"lobby": get_tree().change_scene_to_file("res://scenes/Multiplayer/LobbyScene.tscn")
 		"fps": get_tree().change_scene_to_file("res://scenes/Fps/FpsLobby.tscn")

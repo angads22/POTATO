@@ -89,8 +89,9 @@ change the note grid, the density and the belt speed.
   (crops keep growing while the game is closed), ship the harvest on the market truck,
   and buy upgrades in the Research Shed's node tree. Automation research unlocks
   standing orders at the Seed Co-op and the Supply Depot.
-- **Town:** seed, knife and tool stalls around a fountain plaza, plus the championship
-  kitchen. Knives you buy multiply your slicing score.
+- **Town:** seed, knife and tool stalls around a fountain plaza, the championship kitchen,
+  and the Concert Hall bandstand, which is a walk-up way into Concert mode. Knives you buy
+  multiply your slicing score.
 - **SPUD BLASTER:** a 3D first-person potato deathmatch. Practice against bots, host on
   your LAN, or host over the internet (automatic UPnP).
 - **LAN duel:** two players cut the same potato sequence side by side.

@@ -84,8 +84,9 @@ procedural-first rules, sunnier palette:
 - **TownBackground** — 1920×1080 plaza: cobbled circle with an animated
   fountain, the championship kitchen at the head of the square, the seed/knife/
   tool stalls with scalloped awnings (selling moved to the farm truck, so no
-  market stall), lamp posts that glow at night, two cottages, a boarded
-  "coming soon" lot for future content, and the farm gate in the west hedge.
+  market stall), lamp posts that glow at night, two cottages, the Concert
+  Hall bandstand (marquee bulbs chasing and a potato band bobbing in time
+  with the town's music), and the farm gate in the west hedge.
 - **Day-night cycle** — `WorldController.day_t` drives a tint overlay
   (CanvasLayer between world and HUD), building windows and lamps that warm
   up at dusk, and fireflies by the farm pond at night. The HUD has a
@@ -119,7 +120,7 @@ procedural-first rules, sunnier palette:
 
 - Weather on the farm (rain that waters every tile).
 - Decorate-your-farm unlocks (scarecrow, gnome, fancy fences).
-- Build out the town's boarded lot (the hook for whatever comes next).
+- More town buildings (the Concert Hall is the template).
 
 ## Phase 5 — asset swap (optional)
 

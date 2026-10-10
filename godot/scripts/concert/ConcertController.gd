@@ -16,6 +16,12 @@ class_name ConcertController
 
 enum Phase { SELECT, LOADING, PLAY, DONE }
 
+# Where ESC on song select (and "quit" from the pause menu) goes back to —
+# the town's Concert Hall sets this so you walk back out onto the plaza.
+static var return_scene := "res://scenes/MainMenu.tscn"
+# Set by the results screen's "play again": start this song straight away.
+static var replay := {}
+
 const CHOP_X := 300.0
 const BELT_Y := 476.0
 const POTATO_Y := 452.0
@@ -87,6 +93,18 @@ func _ready():
 	random_seed = randi_range(1000, 999999)
 	songs.append({"spec": ConcertChart.spec_for_seed(random_seed), "label": "RANDOM JAM"})
 	_preview_at = 0.2
+	if not replay.is_empty():
+		var again: Dictionary = replay
+		replay = {}
+		diff_i = maxi(0, ConcertChart.DIFFICULTIES.find(again["difficulty"]))
+		sel = songs.size() - 1
+		for i in songs.size():
+			if int(songs[i]["spec"]["seed"]) == int(again["spec"]["seed"]):
+				sel = i
+		if int(songs[sel]["spec"]["seed"]) != int(again["spec"]["seed"]):
+			songs[sel] = {"spec": again["spec"], "label": "RANDOM JAM"}
+		_preview_at = -2.0
+		_request_song.call_deferred()
 
 # ────────────────────────────────────────────────────────
 #  Song select
@@ -125,7 +143,7 @@ func _select_input(event: InputEventKey):
 			_request_song()
 		KEY_ESCAPE:
 			AudioManager.play_sfx("menu_back")
-			get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
+			_leave()
 
 # From the select screen: wait for the song's render (a fresh Random Jam may
 # still be composing) so the count-in never starts over silence.
@@ -164,6 +182,11 @@ func _select_mouse(event: InputEvent):
 				_preview_at = 0.2
 				AudioManager.play_sfx("menu_move")
 			return
+
+func _leave():
+	var dest := return_scene
+	return_scene = "res://scenes/MainMenu.tscn"
+	get_tree().change_scene_to_file(dest)
 
 # Begin playing a song. Public so the smoke test can start one directly.
 func start_song(s: Dictionary, diff: String):
@@ -480,6 +503,8 @@ func _finish(victory: bool):
 	if s.score > int(bests.get(key, {}).get("score", 0)):
 		bests[key] = {"score": s.score, "grade": grade if victory else "-"}
 		SaveDataManager.update_setting("concert_bests", bests)
+	# so "play again" on the results screen replays this exact song
+	GameManager.current_state.concert_spec = spec
 	if victory:
 		_award("encore")
 		if int(spec["seed"]) == ConcertChart.daily_seed():
@@ -532,7 +557,7 @@ func _on_pause_choice(id: String):
 		"quit":
 			GameManager.current_state.is_running = false
 			AudioManager.stop_music(0.4)
-			get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
+			_leave()
 
 # ────────────────────────────────────────────────────────
 #  Feedback
