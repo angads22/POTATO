@@ -19,6 +19,7 @@ var won := false
 func _ready():
 	AudioManager.debug_time_scale = 3.0
 	t0 = Time.get_ticks_msec()
+	SaveDataManager.settings["seen_kitchen_tutorial"] = true  # skip the first-run coach card
 	GameManager.start_game("championship")
 	GameManager.current_state.stage = 6
 	GameManager.current_state.lives = 99

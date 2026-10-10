@@ -41,6 +41,7 @@ var settings: Dictionary = {
 	# game thinks (Bluetooth headphones), so judging shifts to match
 	"audio_offset_ms": 0,
 	"player_name": "",
+	"seen_kitchen_tutorial": false,  # the one-time "cut on the beat" coach card
 	"best_scores": {},          # mode -> best score
 	"concert_bests": {},        # "<seed>:<difficulty>" -> {score, grade}
 	"graphics_style": "classic",  # classic | pixel | hyperreal (see StyleManager)

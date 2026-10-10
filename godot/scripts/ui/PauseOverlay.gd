@@ -16,6 +16,7 @@ signal chosen(id: String)
 
 var title := "PAUSED"
 var subtitle := ""
+var body := ""                 # optional multi-line text under the subtitle
 var options: Array = []        # [{id, label, key}]
 var freeze_tree := true        # false in LAN multiplayer: the match keeps going
 var selected := 0
@@ -83,8 +84,11 @@ func _draw_menu():
 	var font := ThemeDB.fallback_font
 	var vp := _canvas.get_viewport_rect().size
 	_canvas.draw_rect(Rect2(Vector2.ZERO, vp), Color(0.03, 0.02, 0.01, 0.62))
-	var w := 420.0
-	var h := 120.0 + options.size() * 48.0 + (24.0 if subtitle != "" else 0.0)
+	var w: float = 420.0
+	var body_lines := body.split("\n") if body != "" else PackedStringArray()
+	var h := 120.0 + options.size() * 48.0 + (24.0 if subtitle != "" else 0.0) + body_lines.size() * 26.0
+	if body != "":
+		w = 640.0
 	var panel := Rect2(vp.x / 2 - w / 2, vp.y / 2 - h / 2, w, h)
 	GameHUD.panel_style(Color(0.16, 0.1, 0.06, 0.96)).draw(_canvas.get_canvas_item(), panel)
 	var ts := font.get_string_size(title, HORIZONTAL_ALIGNMENT_CENTER, -1, 38)
@@ -96,6 +100,13 @@ func _draw_menu():
 		_canvas.draw_string(font, Vector2(vp.x / 2 - ss.x / 2, y + 4), subtitle,
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.75, 0.68, 0.55))
 		y += 24.0
+	for line in body_lines:
+		var bs := font.get_string_size(line, HORIZONTAL_ALIGNMENT_CENTER, -1, 17)
+		_canvas.draw_string(font, Vector2(vp.x / 2 - bs.x / 2, y + 26), line,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color(0.95, 0.9, 0.8))
+		y += 26.0
+	if body != "":
+		y += 8.0
 	_rects.clear()
 	for i in options.size():
 		var r := Rect2(panel.position.x + 30, y + 6, w - 60, 40)

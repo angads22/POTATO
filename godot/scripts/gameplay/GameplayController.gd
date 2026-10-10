@@ -83,7 +83,10 @@ func _ready():
 	_start_stage_music()
 	_show_banner(_intro_banner())
 	_load_stage_potatoes()
-	_schedule("spawn", INTRO_BEATS)
+	if _needs_coaching():
+		_show_coach_card()
+	else:
+		_schedule("spawn", INTRO_BEATS)
 
 func _exit_tree():
 	if get_tree():
@@ -386,11 +389,38 @@ func _on_game_ended(_final_score: int, victory: bool):
 	get_tree().change_scene_to_file("res://scenes/GameOver.tscn")
 
 # ────────────────────────────────────────────────────────
+#  First-run coaching
+# ────────────────────────────────────────────────────────
+
+# One card before the very first potato a player ever cuts: the beat is the
+# whole game now, so say so. The music keeps playing underneath.
+func _needs_coaching() -> bool:
+	return not SaveDataManager.settings.get("seen_kitchen_tutorial", false) \
+			and not MultiplayerManager.is_in_multiplayer
+
+func _show_coach_card():
+	var card := PauseOverlay.new()
+	card.freeze_tree = false
+	card.title = "CUT ON THE BEAT"
+	card.subtitle = "The kitchen runs on the music"
+	card.body = ("Each potato drops in on the first beat of a bar.\n" +
+		"Cut on beat 3 — when the cursor reaches the centre, right on the snare.\n" +
+		"The four lamps under the track count the bar; the gold one is your cue.\n" +
+		"Rotten (green) potatoes: press X to bin them. Never cut one!\n" +
+		"Mouse works too: left-click cuts, right-click bins.  ESC pauses.")
+	card.options = [{"id": "go", "label": "Let's cook!  [SPACE]", "key": KEY_SPACE}]
+	card.chosen.connect(func(_id):
+		SaveDataManager.update_setting("seen_kitchen_tutorial", true)
+		card.close()
+		_schedule("spawn", 2.0))
+	add_child(card)
+
+# ────────────────────────────────────────────────────────
 #  Pause menu
 # ────────────────────────────────────────────────────────
 
 func _open_pause():
-	if not GameManager.current_state.is_running:
+	if not GameManager.current_state.is_running or pending_action == "" and current_minigame == null:
 		return
 	pause_overlay = PauseOverlay.new()
 	pause_overlay.freeze_tree = not MultiplayerManager.is_in_multiplayer

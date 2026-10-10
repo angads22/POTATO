@@ -21,6 +21,7 @@ var max_combo := 0
 
 func _ready():
 	AudioManager.debug_time_scale = TIME_SCALE
+	SaveDataManager.settings["seen_kitchen_tutorial"] = true  # skip the first-run coach card
 	GameManager.start_game("championship")
 	GameManager.current_state.lives = 99
 	gameplay = load("res://scenes/Gameplay/GameplayScene.tscn").instantiate()
