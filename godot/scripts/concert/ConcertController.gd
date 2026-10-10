@@ -14,7 +14,7 @@ class_name ConcertController
 # fades a sparkle layer into the song. Songs and charts come from
 # ConcertChart + SongComposer, so a seed is the same song for everyone.
 
-enum Phase { SELECT, PLAY, DONE }
+enum Phase { SELECT, LOADING, PLAY, DONE }
 
 const CHOP_X := 300.0
 const BELT_Y := 476.0
@@ -35,6 +35,9 @@ var diff_i: int = 1
 var random_seed: int = 0
 var _preview_at: float = 0.0
 var _preview_key := ""
+var _loading_left := 0.0
+var _row_rects: Array[Rect2] = []
+var _diff_rects: Array[Rect2] = []
 
 # ── play ──
 var spec: Dictionary = {}
@@ -119,10 +122,48 @@ func _select_input(event: InputEventKey):
 			_preview_at = 0.35
 			AudioManager.play_sfx("menu_select")
 		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
-			start_song(songs[sel]["spec"], _difficulty())
+			_request_song()
 		KEY_ESCAPE:
 			AudioManager.play_sfx("menu_back")
 			get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
+
+# From the select screen: wait for the song's render (a fresh Random Jam may
+# still be composing) so the count-in never starts over silence.
+func _request_song():
+	var s: Dictionary = songs[sel]["spec"]
+	AudioManager.play_sfx("menu_select")
+	if AudioManager.song_ready(s):
+		start_song(s, _difficulty())
+		return
+	AudioManager.prefetch(s)
+	phase = Phase.LOADING
+	_loading_left = 8.0
+
+func _select_mouse(event: InputEvent):
+	var p := get_global_mouse_position()
+	if event is InputEventMouseMotion:
+		for i in _row_rects.size():
+			if _row_rects[i].has_point(p) and i != sel:
+				sel = i
+				_preview_at = 0.35
+				AudioManager.play_sfx("menu_move")
+		return
+	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
+		return
+	for i in _diff_rects.size():
+		if _diff_rects[i].has_point(p):
+			diff_i = i
+			AudioManager.play_sfx("menu_move")
+			return
+	for i in _row_rects.size():
+		if _row_rects[i].has_point(p):
+			if i == sel:
+				_request_song()
+			else:
+				sel = i
+				_preview_at = 0.2
+				AudioManager.play_sfx("menu_move")
+			return
 
 # Begin playing a song. Public so the smoke test can start one directly.
 func start_song(s: Dictionary, diff: String):
@@ -169,6 +210,12 @@ func _input(event: InputEvent):
 	if phase == Phase.SELECT:
 		if event is InputEventKey and event.pressed and not event.echo:
 			_select_input(event)
+		elif event is InputEventMouse:
+			_select_mouse(event)
+		return
+	if phase == Phase.LOADING:
+		if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+			phase = Phase.SELECT
 		return
 	if phase != Phase.PLAY:
 		return
@@ -346,6 +393,13 @@ func _process(delta):
 		p.age += delta
 	popups = popups.filter(func(p): return p.age < 1.0)
 
+	if phase == Phase.LOADING:
+		_loading_left -= delta
+		var s: Dictionary = songs[sel]["spec"]
+		if AudioManager.song_ready(s) or _loading_left <= 0.0:
+			start_song(s, _difficulty())
+		queue_redraw()
+		return
 	if phase == Phase.SELECT:
 		_preview_at -= delta
 		if _preview_at <= 0.0 and _preview_at > -1.0:
@@ -516,8 +570,12 @@ func _text(s: String, cx: float, y: float, size: int, col: Color):
 	draw_string(font, Vector2(cx - w / 2, y), s, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
 
 func _draw():
-	if phase == Phase.SELECT:
+	if phase == Phase.SELECT or phase == Phase.LOADING:
 		_draw_select()
+		if phase == Phase.LOADING:
+			draw_rect(Rect2(0, 0, 1280, 720), Color(0, 0, 0, 0.55))
+			_text("♪ composing \"%s\"…" % songs[sel]["spec"]["title"], 640, 360, 36, Color.GOLD)
+			_text("[ESC] back", 640, 404, 16, Color(0.75, 0.7, 0.62))
 	else:
 		_draw_stage()
 
@@ -530,10 +588,13 @@ func _draw_select():
 	var panel := Rect2(140, 140, 1000, 64 + songs.size() * 50)
 	GameHUD.panel_style(Color(0.12, 0.07, 0.12, 0.92)).draw(get_canvas_item(), panel)
 	var y := panel.position.y + 46.0
+	_row_rects.clear()
+	_diff_rects.clear()
 	for i in songs.size():
 		var s: Dictionary = songs[i]["spec"]
 		var active := i == sel
 		var r := Rect2(panel.position.x + 14, y - 32, panel.size.x - 28, 46)
+		_row_rects.append(r)
 		if active:
 			draw_rect(r, Color(0.95, 0.7, 0.3, 0.16 + 0.05 * bounce))
 			draw_rect(Rect2(r.position, Vector2(4, r.size.y)), Color(1.0, 0.8, 0.3))
@@ -561,13 +622,14 @@ func _draw_select():
 		var dx := 640.0 + (i - 1) * 170.0
 		var on := i == diff_i
 		var box := Rect2(dx - 70, dy - 28, 140, 40)
+		_diff_rects.append(box)
 		GameHUD.panel_style(Color(0.35, 0.22, 0.08, 0.95) if on else Color(0.12, 0.08, 0.06, 0.8)).draw(get_canvas_item(), box)
 		_text(d.to_upper(), dx, dy, 20, Color.GOLD if on else Color(0.7, 0.65, 0.58))
 	var preview := ""
 	if AudioManager.track == AudioManager.song_key(songs[sel]["spec"]) and not AudioManager.music_live() \
 			and SaveDataManager.settings.get("sound_enabled", true):
 		preview = "♪ composing preview…   "
-	_text(preview + "↑↓ song · ←→ difficulty · ENTER play · R new random jam · ESC back", 640, 700, 15,
+	_text(preview + "↑↓ / click a song · ←→ difficulty · ENTER or click again to play · R new random jam · ESC back", 640, 700, 15,
 			Color(0.75, 0.7, 0.62))
 
 func _draw_stage():

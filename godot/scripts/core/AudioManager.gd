@@ -237,6 +237,10 @@ func prefetch(spec: Dictionary):
 	var s := SongComposer.compose(spec.get("style", "menu"), int(spec.get("seed", 1)), float(spec.get("bpm", 120.0)))
 	_start_render(key, s)
 
+# True once a song's audio is rendered (always true when audio isn't live).
+func song_ready(spec: Dictionary) -> bool:
+	return not audio_live or _cache.has(song_key(spec))
+
 func _start_render(key: String, s: Dictionary):
 	if not audio_live:
 		return
@@ -364,6 +368,7 @@ func _evict():
 
 func _start_deck():
 	var res: Dictionary = _cache[track]
+	loop_sec = res["loop_sec"]  # the rendered loop's exact length (sample-rounded)
 	var latency := AudioServer.get_time_to_next_mix() + AudioServer.get_output_latency()
 	var raw := _now() - _origin  # heard-time, before the user offset
 	var start_at := raw + latency
