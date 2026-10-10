@@ -45,6 +45,19 @@ func _ready():
 	_init_game_modes()
 	SaveDataManager.load_game()
 	_apply_window_icon()
+	apply_fullscreen()
+
+# F11 toggles fullscreen anywhere in the game.
+func _unhandled_input(event: InputEvent):
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F11:
+		SaveDataManager.update_setting("fullscreen", not SaveDataManager.settings.get("fullscreen", false))
+		apply_fullscreen()
+
+func apply_fullscreen():
+	if DisplayServer.get_name() == "headless":
+		return
+	var full: bool = SaveDataManager.settings.get("fullscreen", false)
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if full else DisplayServer.WINDOW_MODE_WINDOWED)
 
 func _apply_window_icon():
 	# Use the potato as the window / taskbar icon (no-op on the headless CI
@@ -73,6 +86,11 @@ func _init_game_modes():
 			"stages": -1,  # infinite
 			"boss_every": 5,
 			"description": "Infinite waves with rising stakes and golden odds"
+		},
+		"concert": {
+			"name": "Concert",
+			"stages": 1,
+			"description": "Play a procedurally composed song on the conveyor"
 		}
 	}
 
@@ -101,7 +119,14 @@ func start_game(mode: String):
 	game_started.emit()
 
 func end_game(victory: bool):
+	if not current_state.is_running:
+		return  # already ended (e.g. a death landing on the same frame as the last cut)
 	current_state.is_running = false
+	# personal best per mode, kept even if the player skips the leaderboard
+	var bests: Dictionary = SaveDataManager.settings.get("best_scores", {})
+	if current_state.score > int(bests.get(current_state.mode, 0)):
+		bests[current_state.mode] = current_state.score
+		SaveDataManager.update_setting("best_scores", bests)
 	current_state.last_payout = current_state.coins_earned + current_state.score / 20
 	if current_state.last_payout > 0:
 		SaveDataManager.add_coins(current_state.last_payout)
@@ -119,7 +144,9 @@ func end_game(victory: bool):
 		SaveDataManager.add_research_points(champ_rp)
 	# Submit to global leaderboard (no-op when Supabase isn't configured)
 	var knife_id: String = SaveDataManager.farm.get("equipped_knife", "butter")
-	var player_name: String = SaveDataManager.settings.get("player_name", "Chef")
+	var player_name: String = str(SaveDataManager.settings.get("player_name", "")).strip_edges()
+	if player_name == "":
+		player_name = "Chef"
 	OnlineLeaderboard.submit_score(player_name, current_state.score, current_state.mode, knife_id)
 	game_ended.emit(current_state.score, victory)
 
@@ -186,9 +213,10 @@ func grade() -> String:
 		return "C"
 	return "D"
 
-# Best leaderboard score so far in a mode (0 if none).
+# Best score so far in a mode (0 if none): the saved personal best, or the
+# local leaderboard for saves that predate it.
 func best_score(mode: String) -> int:
-	var best := 0
+	var best := int(SaveDataManager.settings.get("best_scores", {}).get(mode, 0))
 	for e in SaveDataManager.leaderboard:
 		if e.get("mode", "") == mode:
 			best = maxi(best, int(e.get("score", 0)))

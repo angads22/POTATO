@@ -203,9 +203,9 @@ static func song_key(spec: Dictionary) -> String:
 # Start a song. The beat clock restarts now (+ lead_in_beats of count-in,
 # during which music_time() is negative); the audio joins as soon as the
 # render is ready, at whatever offset the clock has reached.
-func play_song(spec: Dictionary, fade_in: float = 0.8, lead_in_beats: float = 0.0):
+func play_song(spec: Dictionary, fade_in: float = 0.8, lead_in_beats: float = 0.0, restart: bool = false):
 	var key := song_key(spec)
-	if key == track and _paused_at < 0.0:
+	if key == track and _paused_at < 0.0 and not restart:
 		return
 	_fade_out_deck(_deck, 0.6)
 	_deck = 1 - _deck

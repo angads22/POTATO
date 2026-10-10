@@ -67,3 +67,9 @@ jobs:
           cd godot
           ~/godot-bin/godot --headless --path . res://tests/BossSmokeTest.tscn --quit-after 2000 2>&1 | tee boss.log
           grep -q "BOSS SMOKE OK" boss.log
+
+      - name: Headless concert (rhythm mode) smoke test
+        run: |
+          cd godot
+          ~/godot-bin/godot --headless --path . res://tests/ConcertSmokeTest.tscn --quit-after 6000 2>&1 | tee concert.log
+          grep -q "CONCERT SMOKE OK" concert.log

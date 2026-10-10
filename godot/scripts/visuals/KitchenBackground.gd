@@ -12,6 +12,7 @@ const SCREEN = Vector2(1280, 720)
 # Where the cutting board sits (under the gameplay potato at 640,330)
 var show_board: bool = true
 var show_window: bool = true
+var show_pot: bool = true
 var t := 0.0
 
 # Championship stage tier (1..6). The kitchen escalates with it: the wall
@@ -67,7 +68,8 @@ func _draw():
 	if show_window:
 		_draw_window()
 	_draw_utensil_rail()
-	_draw_steaming_pot()
+	if show_pot:
+		_draw_steaming_pot()
 
 	# crossing spotlights + championship sign over the whole scene (top tiers)
 	if f > 0.0:

@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://c0concert0spud"]
+
+[ext_resource type="Script" path="res://scripts/concert/ConcertController.gd" id="1_concert"]
+
+[node name="ConcertScene" type="Node2D"]
+script = ExtResource("1_concert")

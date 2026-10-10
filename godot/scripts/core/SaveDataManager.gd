@@ -40,6 +40,9 @@ var settings: Dictionary = {
 	# rhythm calibration: positive = your audio reaches you later than the
 	# game thinks (Bluetooth headphones), so judging shifts to match
 	"audio_offset_ms": 0,
+	"player_name": "",
+	"best_scores": {},          # mode -> best score
+	"concert_bests": {},        # "<seed>:<difficulty>" -> {score, grade}
 	"graphics_style": "classic",  # classic | pixel | hyperreal (see StyleManager)
 	# SPUD BLASTER economy: "starch" is the premium currency, earned only by
 	# winning a match and spent at the lobby Starch Exchange. "lifetime_starch"

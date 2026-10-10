@@ -269,14 +269,16 @@ class Rng:
 		x ^= (x << 5) & 0xFFFFFFFF
 		s = x & 0xFFFFFFFF
 		return s
-	func randf() -> float:
+	# NB: not called randf() — an unqualified randf() inside this class would
+	# resolve to Godot's global (non-deterministic) builtin instead
+	func unit() -> float:
 		return float(next_u32()) / 4294967296.0
 	func range_i(lo: int, hi: int) -> int:  # inclusive
-		return lo + int(randf() * float(hi - lo + 1))
+		return lo + int(unit() * float(hi - lo + 1))
 	func pick(arr: Array):
-		return arr[int(randf() * arr.size())]
+		return arr[int(unit() * arr.size())]
 	func chance(p: float) -> bool:
-		return randf() < p
+		return unit() < p
 
 static func song_title(seed_v: int) -> String:
 	var r := Rng.new(seed_v ^ 0x5bd1e995)
@@ -355,7 +357,7 @@ static func _compose_drums(song: Dictionary, st: Dictionary, rng: Rng):
 				if v > 0.0:
 					# a touch of velocity humanisation on the hats
 					if kind in ["hat", "shaker"]:
-						v *= 0.85 + 0.3 * rng.randf()
+						v *= 0.85 + 0.3 * rng.unit()
 					song["drums"].append([bar * STEPS + step, kind, v])
 		# fill into the loop point: a snare roll over the last beat
 		if bar == BARS - 1 and pat.has("snare") and not st.get("half", false):
@@ -485,7 +487,7 @@ static func _phrase_degrees(rng: Rng, rhythm: Array, contour: String, center: in
 			var dir := signi(int(round(target)) - prev)
 			if dir == 0:
 				dir = 1 if rng.chance(0.5) else -1
-			var r := rng.randf()
+			var r := rng.unit()
 			if r < 0.62:
 				deg = prev + dir
 			elif r < 0.82:

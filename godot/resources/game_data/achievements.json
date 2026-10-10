@@ -9,6 +9,10 @@
 		{ "id": "five_figures",   "name": "Five-Figure Fry",   "desc": "Score 10,000+ in a single run." },
 		{ "id": "champion",       "name": "World Champion",    "desc": "Win the Championship." },
 		{ "id": "boss_slayer",    "name": "Spud Slayer",       "desc": "Defeat the Colossal Spud boss." },
-		{ "id": "knife_collector","name": "Full Block",        "desc": "Own every knife in the shop." }
+		{ "id": "knife_collector","name": "Full Block",        "desc": "Own every knife in the shop." },
+		{ "id": "encore",         "name": "Encore!",           "desc": "Clear a song in Concert mode." },
+		{ "id": "daily_chef",     "name": "Daily Special",     "desc": "Clear the Daily Song." },
+		{ "id": "perfect_pitch",  "name": "Perfect Pitch",     "desc": "Earn an S on a Hard concert." },
+		{ "id": "full_combo",     "name": "Full Combo",        "desc": "Finish a concert without a single miss." }
 	]
 }
