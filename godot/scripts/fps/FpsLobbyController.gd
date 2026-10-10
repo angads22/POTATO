@@ -19,6 +19,7 @@ var blink := 0.0
 
 func _ready() -> void:
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	AudioManager.play_music("lobby")
 	FpsNetwork.roster_changed.connect(_on_roster_changed)
 	FpsNetwork.server_started.connect(queue_redraw)
 	FpsNetwork.public_address_resolved.connect(queue_redraw)

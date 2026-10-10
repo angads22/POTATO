@@ -120,7 +120,7 @@ func _on_body_entered(body: Node) -> void:
 		return
 	if not _apply(player):
 		return
-	AudioManager.play_sfx("coin")
+	AudioManager.play_sfx("fps_pickup")
 	if arena != null and arena.hud != null:
 		arena.hud.notify(_pickup_label())
 	_active = false

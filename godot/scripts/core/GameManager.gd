@@ -46,7 +46,10 @@ func _apply_window_icon():
 	if tex is Texture2D:
 		var img: Image = tex.get_image()
 		if img:
-			get_window().set_icon(img)
+			# Window has no set_icon in Godot 4.2 — the icon lives on the
+			# display server (calling it on Window raised a SCRIPT ERROR on
+			# every desktop launch).
+			DisplayServer.set_icon(img)
 
 func _init_game_modes():
 	game_modes = {

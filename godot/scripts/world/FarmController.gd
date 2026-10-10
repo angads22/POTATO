@@ -423,6 +423,7 @@ func plow_tile(tile: FarmTile) -> bool:
 		return false
 	SaveDataManager.farm["plow_uses"] = plow_uses() - 1
 	_sync_tiles()
+	AudioManager.play_sfx_varied("plow", 0.08)
 	if plow_uses() <= 0:
 		_popup("CRACK! The plow gave out on that one", Color.ORANGE_RED)
 	else:
@@ -465,6 +466,7 @@ func cover_tile(tile: FarmTile) -> bool:
 		_popup("Plot covered over — %d free %s left" % [free - 1, ("cover" if free - 1 == 1 else "covers")], Color(0.72, 0.62, 0.48))
 	else:
 		_popup("Plot covered over for %d coins" % COVER_COST, Color(0.72, 0.62, 0.48))
+	AudioManager.play_sfx("cover")
 	if SaveDataManager.settings.get("particle_effects", true):
 		Fx.burst(self, pos, Color(0.5, 0.46, 0.28), 10, 150.0)
 	return true
@@ -484,6 +486,7 @@ func place_sprinkler(tile: FarmTile) -> bool:
 	SaveDataManager.farm["sprinkler_stock"] = sprinkler_stock() - 1
 	_sync_tiles()
 	_popup("Sprinkler placed — it waters the tiles around it", Color(0.5, 0.8, 1.0))
+	AudioManager.play_sfx("sprinkler")
 	return true
 
 func pickup_sprinkler(tile: FarmTile) -> bool:
@@ -492,6 +495,7 @@ func pickup_sprinkler(tile: FarmTile) -> bool:
 	tile.has_sprinkler = false
 	SaveDataManager.farm["sprinkler_stock"] = sprinkler_stock() + 1
 	_popup("Sprinkler packed up", Color(0.5, 0.8, 1.0))
+	AudioManager.play_sfx("menu_back")
 	# if it sat on never-plowed ground, the cell goes back to plain grass
 	_drop_tile(tile)
 	_sync_tiles()
@@ -507,12 +511,14 @@ func plant_on(tile: FarmTile, id: String) -> bool:
 	SaveDataManager.add_item("seeds", id, -1)
 	_sync_tiles()
 	_popup("Planted %s" % GameData.potato_by_id(id).get("name", id), Color.LIGHT_GREEN)
+	AudioManager.play_sfx_varied("plant", 0.1)
 	return true
 
 func fill_water():
 	SaveDataManager.farm["water"] = water_capacity()
 	SaveDataManager.save_game()
 	_popup("Watering can filled!", Color(0.5, 0.8, 1.0))
+	AudioManager.play_sfx("water", -3.0, 0.8)
 
 # Charges a full watering can holds: the base 4 plus any researched water branch.
 func water_capacity() -> int:
@@ -526,6 +532,7 @@ func _water_tile(tile: FarmTile):
 	tile.water()
 	_sync_tiles()
 	_popup("Watered — growing fast!", Color(0.5, 0.8, 1.0))
+	AudioManager.play_sfx_varied("water", 0.08)
 
 # quiet=true (the auto-harvest drone) skips the popup/SFX/particles so a fast
 # tick clearing a whole field doesn't spam feedback.
@@ -547,7 +554,9 @@ func _harvest_tile(tile: FarmTile, quiet := false):
 			Fx.sparkle(self, tile.position)
 		else:
 			Fx.burst(self, tile.position + Vector2(0, -10), Color(data.get("color", "#b87333")), 12, 180.0)
-	AudioManager.play_sfx("coin_collect")
+	AudioManager.play_sfx_varied("harvest", 0.08)
+	if data.get("rare", false):
+		AudioManager.play_sfx("golden")
 
 # Spends one fertilizer charge on a planted tile; one application per crop
 func apply_enhancer(tile: FarmTile, id: String) -> bool:
@@ -560,6 +569,7 @@ func apply_enhancer(tile: FarmTile, id: String) -> bool:
 	SaveDataManager.add_item("items", id, -1)
 	_sync_tiles()
 	_popup("%s worked into the soil! (%d charges left)" % [e.get("name", id), SaveDataManager.item_count("items", id)], Color(0.55, 0.95, 0.4))
+	AudioManager.play_sfx("fertilize")
 	if SaveDataManager.settings.get("particle_effects", true):
 		Fx.sparkle(self, tile.position)
 	return true
@@ -632,7 +642,7 @@ func truck_send() -> bool:
 	SaveDataManager.farm["truck"] = tr
 	SaveDataManager.save_game()
 	_popup("Truck off to market — back in %ds" % int(truck_trip_seconds()), Color.GOLD)
-	AudioManager.play_sfx("coin_collect")
+	AudioManager.play_sfx("truck_horn")
 	open_shop = ""
 	return true
 
@@ -654,6 +664,7 @@ func truck_tick():
 		SaveDataManager.add_research_points(rp)
 	SaveDataManager.save_game()
 	_popup("Truck's back! +%d coins, +%d research" % [coins, rp], Color.GOLD)
+	AudioManager.play_sfx("coin_collect")
 	AudioManager.play_sfx("level_complete")
 
 func _truck_station():
@@ -733,7 +744,7 @@ func buy_research(id: String) -> bool:
 	SaveDataManager.add_research_points(-int(node.get("cost_rp", 0)))
 	SaveDataManager.unlock_research(id)
 	_popup("Researched: %s!" % node.get("name", id), Color.GOLD)
-	AudioManager.play_sfx("level_complete")
+	AudioManager.play_sfx("research")
 	return true
 
 # ── research map: the whole graph, plus node state + keyboard navigation ──
@@ -1082,6 +1093,7 @@ func adjust_order_stock(which: String, delta: int):
 func _goto_town():
 	WorldController.travel_spawn = "from_farm"
 	WorldController.carry_day_t = day_t
+	AudioManager.play_sfx("gate")
 	get_tree().change_scene_to_file("res://scenes/Town/TownScene.tscn")
 
 func _nap():

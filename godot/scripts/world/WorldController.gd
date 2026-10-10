@@ -32,6 +32,7 @@ var prompt := ""
 var prompt_action := Callable()
 var open_shop := ""        # "", "seeds", "knives", "tools" (+ farm extras: plant, enhance, truck, research)
 var popups: Array = []
+var _step_clock := 0.0
 var banner_text := ""
 var banner_age := 99.0
 
@@ -71,11 +72,15 @@ func _on_tool_cycle():
 func _on_shop_closed():
 	pass
 
+# which AudioManager track plays on this map
+func _music_track() -> String:
+	return "farm"
+
 # ── lifecycle ──
 
 func _ready():
 	rng.randomize()
-	AudioManager.play_music("menu")
+	AudioManager.play_music(_music_track())
 	world_size = _world_size()
 	if carry_day_t >= 0.0:
 		day_t = carry_day_t
@@ -151,7 +156,13 @@ func _move_player(delta):
 
 	player.moving = dir != Vector2.ZERO
 	if dir == Vector2.ZERO:
+		_step_clock = 0.0
 		return
+	# soft footsteps while walking
+	_step_clock -= delta
+	if _step_clock <= 0.0:
+		_step_clock = 0.3
+		AudioManager.play_sfx_varied("footstep", 0.12, -4.0)
 	if dir.x != 0:
 		player.face = signf(dir.x)
 
@@ -179,6 +190,7 @@ func _input(event: InputEvent):
 		if open_shop != "":
 			open_shop = ""
 			_on_shop_closed()
+			AudioManager.play_sfx("menu_back")
 		else:
 			get_tree().change_scene_to_file("res://scenes/MainMenu.tscn")
 		return
@@ -189,7 +201,10 @@ func _input(event: InputEvent):
 
 	if event.keycode == KEY_E or event.keycode == KEY_SPACE:
 		if prompt_action.is_valid():
+			var was_open := open_shop
 			prompt_action.call()
+			if was_open == "" and open_shop != "":
+				AudioManager.play_sfx("menu_select")
 	elif event.keycode == KEY_F:
 		_on_alt_interact()
 	elif event.keycode == KEY_C:
@@ -244,7 +259,7 @@ func buy_seed(id: String) -> bool:
 		return false
 	SaveDataManager.add_item("seeds", id, 1)
 	_popup("Bought a %s seed" % GameData.potato_by_id(id).get("name", id), Color.LIGHT_GREEN)
-	AudioManager.play_sfx("coin_collect")
+	AudioManager.play_sfx("purchase")
 	return true
 
 func sell_spuds(id: String) -> int:
@@ -278,6 +293,7 @@ func buy_or_equip_knife(id: String) -> bool:
 		SaveDataManager.farm["equipped_knife"] = id
 		SaveDataManager.save_game()
 		_popup("%s equipped (×%.2f score)" % [k.get("name", id), float(k.get("damage", 1.0))], Color.LIGHT_GREEN)
+		AudioManager.play_sfx("menu_select")
 		return true
 	# top-tier knives are rank-gated: you must earn the Chef XP first
 	var need_xp := int(k.get("unlock_xp", 0))
@@ -344,7 +360,7 @@ func buy_sprinkler() -> bool:
 	SaveDataManager.farm["sprinkler_stock"] = sprinkler_stock() + 1
 	SaveDataManager.save_game()
 	_popup("Sprinkler bought — place it on a farm tile with [F]", Color.LIGHT_GREEN)
-	AudioManager.play_sfx("coin_collect")
+	AudioManager.play_sfx("purchase")
 	return true
 
 func buy_tool(id: String) -> bool:
@@ -365,7 +381,7 @@ func buy_enhancer(id: String) -> bool:
 	var charges = int(e.get("charges", 1))
 	SaveDataManager.add_item("items", id, charges)
 	_popup("Bought %s — %d charges" % [e.get("name", id), charges], Color.LIGHT_GREEN)
-	AudioManager.play_sfx("coin_collect")
+	AudioManager.play_sfx("purchase")
 	return true
 
 func owned_enhancers() -> Array:
@@ -388,6 +404,9 @@ func _total_seeds() -> int:
 
 func _popup(text: String, color: Color):
 	popups.append({"text": text, "color": color, "age": 0.0})
+	# every refusal in the economy is an orange-red popup — give it a buzz
+	if color == Color.ORANGE_RED:
+		AudioManager.play_sfx("error")
 
 func _show_banner(text: String):
 	banner_text = text

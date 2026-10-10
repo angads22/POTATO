@@ -177,7 +177,6 @@ func _enter_lobby():
 	get_tree().change_scene_to_file("res://scenes/Multiplayer/LobbyScene.tscn")
 
 func _enter_fps_lobby():
-	AudioManager.stop_music(0.5)
 	get_tree().change_scene_to_file("res://scenes/Fps/FpsLobby.tscn")
 
 func _show_leaderboard():

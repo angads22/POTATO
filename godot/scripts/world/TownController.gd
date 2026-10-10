@@ -17,6 +17,9 @@ func _ready():
 func _world_size() -> Vector2:
 	return TownBackground.WORLD
 
+func _music_track() -> String:
+	return "town"
+
 func _spawn_point() -> Vector2:
 	if WorldController.travel_spawn == "from_farm":
 		WorldController.travel_spawn = ""
@@ -65,10 +68,11 @@ func _scan_interactions():
 
 func _enter_kitchen():
 	GameManager.start_game("championship")
-	AudioManager.stop_music(0.5)
+	AudioManager.play_sfx("menu_select")
 	get_tree().change_scene_to_file("res://scenes/Gameplay/GameplayScene.tscn")
 
 func _goto_farm():
 	WorldController.travel_spawn = "from_town"
 	WorldController.carry_day_t = day_t
+	AudioManager.play_sfx("gate")
 	get_tree().change_scene_to_file("res://scenes/Farm/FarmScene.tscn")

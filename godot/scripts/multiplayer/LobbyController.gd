@@ -13,6 +13,7 @@ var status_msg: String = ""
 var blink: float = 0.0
 
 func _ready():
+	AudioManager.play_music("lobby")
 	MultiplayerManager.peer_joined.connect(_on_peer_joined)
 	MultiplayerManager.peer_left.connect(_on_peer_left)
 	MultiplayerManager.connection_failed.connect(_on_conn_failed)

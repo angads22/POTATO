@@ -92,6 +92,7 @@ func _ready() -> void:
 		FpsNetwork.roster_changed.connect(_reconcile_players)
 
 	_build_hud()
+	AudioManager.play_music("fps")
 
 	# capture the mouse for first-person look (skip on the headless CI server)
 	if get_local_player() != null and DisplayServer.get_name() != "headless":
@@ -216,7 +217,12 @@ func fire_from(shooter: FpsPlayer) -> void:
 	var w := shooter.current_weapon_def()
 	shooter.consume_ammo()
 	shooter.show_muzzle_flash()
-	AudioManager.play_sfx("cut_great")
+	if bool(w.get("projectile", false)):
+		AudioManager.play_sfx_varied("fps_launcher", 0.04)
+	elif int(w.get("pellets", 1)) > 1:
+		AudioManager.play_sfx_varied("fps_shot_heavy", 0.05)
+	else:
+		AudioManager.play_sfx_varied("fps_shot", 0.07)
 	var muzzle := shooter.muzzle_world_pos()
 	if bool(w.get("projectile", false)):
 		_fire_projectile(shooter, w, muzzle)
@@ -256,6 +262,7 @@ func _fire_hitscan(shooter: FpsPlayer, w: Dictionary, muzzle: Vector3) -> void:
 			center_end = endpoint
 	if any_hit and shooter.is_local and hud != null:
 		hud.hitmarker(any_head)
+		AudioManager.play_sfx("fps_headshot" if any_head else "fps_hit")
 	if _net():
 		_recv_shot.rpc(muzzle, center_end, shooter.peer_id)
 
@@ -314,6 +321,11 @@ func _recv_shot(from: Vector3, to: Vector3, shooter_pid: int) -> void:
 	var p = players.get(shooter_pid)
 	if p and is_instance_valid(p):
 		p.show_muzzle_flash()
+		# other players' shots: quieter, and fainter the further away they are
+		var me = get_local_player()
+		if me != null and is_instance_valid(me):
+			var dist: float = me.global_position.distance_to(from)
+			AudioManager.play_sfx_varied("fps_shot", 0.08, -6.0 - minf(18.0, dist * 0.4))
 
 # ── explosive splash (Fry Launcher) ──────────────────────────────────────────
 
@@ -367,6 +379,7 @@ func _explode(point: Vector3, radius: float, dmg: int, shooter_pid: int,
 					any = true
 	if any and shooter_local and hud != null:
 		hud.hitmarker(false)
+	AudioManager.play_sfx_varied("fps_explosion", 0.06)
 	_spawn_explosion(point, radius)
 
 func _spawn_explosion(point: Vector3, radius: float) -> void:
@@ -448,6 +461,8 @@ func award_frag(pid: int) -> void:
 	if not _auth() or match_over:
 		return
 	scores[pid] = scores.get(pid, 0) + 1
+	if pid == FpsNetwork.local_id():
+		AudioManager.play_sfx("fps_frag")
 	if _net():
 		_mirror_scores.rpc(scores)
 	if scores[pid] >= frag_limit:
@@ -539,6 +554,9 @@ func _mirror_respawn(pid: int, pos: Vector3) -> void:
 
 @rpc("authority", "call_remote", "reliable")
 func _mirror_scores(s: Dictionary) -> void:
+	var me := FpsNetwork.local_id()
+	if int(s.get(me, 0)) > int(scores.get(me, 0)):
+		AudioManager.play_sfx("fps_frag")
 	scores = s
 
 @rpc("authority", "call_remote", "reliable")
@@ -563,7 +581,8 @@ func _finish(winner: int) -> void:
 	paused = false
 	_return_timer = 14.0
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
-	AudioManager.play_sfx("level_complete")
+	AudioManager.stop_music(1.5)
+	AudioManager.play_sfx("victory" if winner == FpsNetwork.local_id() else "level_complete")
 	_award_payout(winner)
 
 # Each peer pays its own local player: coins per frag (+ a win bonus), and the

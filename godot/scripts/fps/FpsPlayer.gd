@@ -292,6 +292,8 @@ func _local_move(delta: float) -> void:
 	if is_on_floor():
 		if not locked and Input.is_physical_key_pressed(KEY_SPACE):
 			velocity.y = JUMP_VELOCITY
+			if is_local:
+				AudioManager.play_sfx_varied("fps_jump", 0.05)
 	else:
 		velocity.y -= GRAVITY * delta
 	move_and_slide()
@@ -354,7 +356,7 @@ func start_reload() -> void:
 		return
 	reloading = true
 	_reload_end_msec = Time.get_ticks_msec() + int(float(def["reload_time"]) * 1000.0)
-	AudioManager.play_sfx("menu_move")
+	AudioManager.play_sfx("fps_reload")
 
 func _finish_reload() -> void:
 	reloading = false
@@ -513,6 +515,11 @@ func face(point: Vector3) -> void:
 	head.rotation.x = clampf(atan2(to.y, flat_dist), -1.4, 1.4)
 
 func set_health(hp: int) -> void:
+	if is_local and alive:
+		if hp <= 0 and health > 0:
+			AudioManager.play_sfx("fps_death")
+		elif hp < health:
+			AudioManager.play_sfx_varied("fps_hurt", 0.08)
 	health = hp
 
 func set_dead(dead: bool) -> void:

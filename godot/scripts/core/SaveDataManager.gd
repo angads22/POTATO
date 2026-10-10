@@ -32,10 +32,14 @@ var unlocked_knives: Array[String] = []
 var settings: Dictionary = {
 	"master_volume": 1.0,
 	"sfx_volume": 1.0,
-	"music_volume": 1.0,
+	"music_volume": 0.8,
 	"sound_enabled": true,
 	"particle_effects": true,
 	"screen_shake": true,
+	"fullscreen": false,
+	# rhythm calibration: positive = your audio reaches you later than the
+	# game thinks (Bluetooth headphones), so judging shifts to match
+	"audio_offset_ms": 0,
 	"graphics_style": "classic",  # classic | pixel | hyperreal (see StyleManager)
 	# SPUD BLASTER economy: "starch" is the premium currency, earned only by
 	# winning a match and spent at the lobby Starch Exchange. "lifetime_starch"
