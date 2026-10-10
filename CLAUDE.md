@@ -5,20 +5,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this repo is
 
 **SLICE IT! · The Potato Cutting Championship** — a rhythm-action potato-cutting game that
-exists in **two independent implementations** of the same game design:
+exists in **three implementations** of the same game design:
 
 - **`PotatoSlicer/`** — the original, fully playable **C# / .NET 8.0 console** game (ASCII UI).
   This is what ships in GitHub Releases as a self-contained binary with an in-game auto-updater.
-- **`godot/`** — a **Godot 4.2+ / GDScript** visual remake (graphics, animations, an open-world
-  farm, and a 3D first-person multiplayer arena). `release.yml` now also exports it (Win/Linux/macOS
-  `SliceIt-Visual-*.zip`) into the same GitHub Release as the console build.
+- **`godot/`** — a **Godot 4.2+ / GDScript** visual remake (graphics, a fully procedural
+  soundtrack, beat-locked gameplay, Concert rhythm mode, an open-world farm, and a 3D first-person
+  multiplayer arena). `release.yml` also exports it (Win/Linux/macOS `SliceIt-Visual-*.zip`) into
+  the same GitHub Release as the console build.
+- **`web/`** — a **browser edition of Concert mode** (HTML5 canvas + WebAudio, no build step,
+  no dependencies). `web/build.py` bundles it into one self-contained `SliceIt-Web.html`, which
+  `release.yml` attaches to every release; `web.yml` can deploy it to GitHub Pages.
 
-The two share gameplay concepts (five cut mechanics, four game modes, knives, combos, FEVER,
-lives, leaderboard) but **share no code**. They carry their own version constants (console in the
-csproj / `Core/Updater.cs`; Godot in `project.godot`) but ship from **one `v*` tag**, so a release
-bumps both in lockstep — currently `3.5.0`. Both editions' in-game updaters read the same
-`releases/latest`, so the tag must equal both version constants. Treat them as two codebases —
-a change in one does not propagate to the other.
+The console and Godot editions share gameplay concepts (five cut mechanics, game modes, knives,
+combos, FEVER, lives, leaderboard) but **share no code**. They carry their own version constants
+(console in the csproj / `Core/Updater.cs`; Godot in `project.godot`) but ship from **one `v*`
+tag**, so a release bumps both in lockstep — currently `4.0.0`. Both editions' in-game updaters
+read the same `releases/latest`, so the tag must equal both version constants. Treat them as
+separate codebases — a change in one does not propagate to the other.
+
+**The one deliberate exception:** `web/core.js` is a line-for-line port of the Godot
+`SongComposer.compose()` and `ConcertChart` (same xorshift PRNG, same tables, same decision
+order), so a seed composes the identical song + chart on both — the Daily Song is shared. If you
+change composition or charting in either, change the other identically and run the parity check
+(below); CI fails otherwise. Rendering/synthesis (`web/audio.js` vs `scripts/audio/Synth.gd`) is
+also a port but only needs to *sound* the same, not match sample-for-sample.
 
 ## Common commands
 
@@ -38,29 +49,53 @@ There is no unit-test project — the console edition is validated only by `dotn
 # CI uses Godot 4.2.2 specifically.
 
 cd godot
-godot --headless --import .                                          # compile check (fails on SCRIPT ERROR)
-godot --headless --path . res://tests/SmokeTest.tscn --quit-after 900      # gameplay smoke test → prints "SMOKE OK"
-godot --headless --path . res://tests/FarmSmokeTest.tscn --quit-after 600  # farm smoke test → prints "FARM SMOKE OK"
-godot --headless --path . res://tests/TownSmokeTest.tscn --quit-after 600  # town smoke test → prints "TOWN SMOKE OK"
-godot --headless --path . res://tests/FpsSmokeTest.tscn --quit-after 300   # FPS arena smoke test → prints "FPS SMOKE OK"
+godot --headless --import .                                             # compile check (fails on SCRIPT ERROR)
+godot --headless --path . res://tests/SmokeTest.tscn --quit-after 4000        # → "SMOKE OK"
+godot --headless --path . res://tests/BossSmokeTest.tscn --quit-after 2000    # → "BOSS SMOKE OK"
+godot --headless --path . res://tests/ConcertSmokeTest.tscn --quit-after 6000 # → "CONCERT SMOKE OK"
+godot --headless --path . res://tests/FarmSmokeTest.tscn --quit-after 600     # → "FARM SMOKE OK"
+godot --headless --path . res://tests/TownSmokeTest.tscn --quit-after 600     # → "TOWN SMOKE OK"
+godot --headless --path . res://tests/FpsSmokeTest.tscn --quit-after 300      # → "FPS SMOKE OK"
 ```
-The smoke tests are auto-players, not assertions: `SmokeTest.gd` drives a full championship run
-(cuts at centre, locks the peel band, bins rotten potatoes), `FarmSmokeTest.gd` drives the farm
-(plow/plant/harvest, sections, sprinklers, fertilizer, save migration), `TownSmokeTest.gd`
-shops the town stalls, and `FpsSmokeTest.gd` boots a solo SPUD BLASTER match and shoots a target
-dummy to score a frag. CI greps stdout for the `SMOKE OK` / `FARM SMOKE OK` / `TOWN SMOKE OK` /
-`FPS SMOKE OK` sentinel strings, so any test you add must print its own sentinel and exit.
-`tests/Screenshot.tscn` exists for capturing frames.
+The smoke tests are auto-players: `SmokeTest.gd` plays a championship through two stage clears
+and FEVER (cuts when the beat-locked cursor is centred, locks the peel band, bins rotten
+potatoes), `BossSmokeTest.gd` beats the Colossal Spud, `ConcertSmokeTest.gd` checks chart
+determinism then plays a whole Concert song (chops, holds, bins), `FarmSmokeTest.gd` drives the
+farm (plow/plant/harvest, sprinklers, fertilizer, save migration), `TownSmokeTest.gd` shops the
+town stalls, and `FpsSmokeTest.gd` frags a target dummy in SPUD BLASTER. The kitchen/boss/concert
+tests set `AudioManager.debug_time_scale = 3.0` so the silent headless beat clock runs 3x fast;
+their budgets are wall-clock, with `--quit-after` as a hard frame cap. CI greps stdout for each
+sentinel, so any test you add must print its own sentinel and exit. **Clear
+`~/.local/share/godot/app_userdata/` between local runs** — the farm test's save-slot checks
+assume a fresh `user://` (CI always has one). `tests/Screenshot.tscn` captures frames (run under
+`xvfb-run … --rendering-driver opengl3`).
+
+### Web edition (`web/`)
+```sh
+python3 web/build.py                                  # → web/dist/SliceIt-Web.html (one file)
+node web/tools/smoke.js web/dist/SliceIt-Web.html     # headless Chromium plays a song → "WEB SMOKE OK"
+# parity with the Godot composer (CI runs this in godot.yml):
+node web/tools/dump_web.js /tmp/web.json
+godot --headless --path godot -s "$PWD/web/tools/dump_godot.gd" -- /tmp/godot.json
+python3 web/tools/check_parity.py /tmp/godot.json /tmp/web.json   # → "WEB PARITY OK"
+```
+`index.html` loads `core.js` + `audio.js` as separate files (GitHub Pages / Node); `build.py`
+inlines them. `window.__bot = true` turns on an in-page autoplay that the smoke test uses, and
+`window.__slice()` is a read-only state probe.
 
 ## CI (`.github/workflows/`)
 
 - **build.yml** — `dotnet build` of the console project on every push to `main` and every PR.
-- **godot.yml** — runs only when `godot/**` changes: import/compile check + the four smoke tests
-  (championship, farm, town, FPS arena).
+- **godot.yml** — runs when `godot/**` (or the web composer port) changes: import/compile check,
+  the six smoke tests, and the Godot↔web composer parity check.
+- **web.yml** — runs when `web/**` changes: bundles the single file and plays a song in headless
+  Chromium (landscape + portrait). Its `pages` job deploys to GitHub Pages on a manual run, or on
+  pushes to `main` once the repo variable `PAGES_ENABLED` is `"true"`.
 - **release.yml** — triggered by pushing a `v*` tag (or manual `workflow_dispatch`). Publishes the
-  self-contained console win-x64/linux-x64 binaries **and**, when `godot/export_presets.cfg` is
-  present, the exported Godot Visual edition (`SliceIt-Visual-{win-x64,linux-x64,mac}.zip`) into one
-  GitHub Release. A tag push marks it `latest`, so both editions' auto-updaters pick it up.
+  self-contained console win-x64/linux-x64 binaries, the exported Godot Visual edition
+  (`SliceIt-Visual-{win-x64,linux-x64,mac}.zip`, when `godot/export_presets.cfg` exists) and the
+  bundled web edition (`SliceIt-Web.html`) into one GitHub Release. A tag push marks it `latest`,
+  so both desktop editions' auto-updaters pick it up.
 
 ## Cutting a release (both editions ship from one tag)
 
@@ -72,6 +107,8 @@ read the **same** release, so all three must stay in lockstep or you get an upda
 2. Commit, then `git tag vX.Y.Z && git push origin vX.Y.Z` — the tag must equal those versions.
 3. release.yml builds & publishes; both editions' updaters find the new release on next launch.
    (Publishing a `latest` release auto-pushes the build to every existing user, so tag from `main`.)
+   The web edition has no version constant or updater; release.yml bundles `SliceIt-Web.html`
+   from whatever `web/` holds at the tag.
 
 ## Console architecture (`PotatoSlicer/`)
 
@@ -95,21 +132,55 @@ holding high score, coins, unlocks, leaderboard, achievements.
 
 ## Godot architecture (`godot/`)
 
-Three **autoload singletons** (declared in `project.godot`, available globally) carry all cross-scene state:
-- `scripts/core/GameManager.gd` — game state, score/combo/FEVER/lives, mode control; emits signals
-  (e.g. `combo_changed`) that UI listens to.
+**Autoload singletons** (declared in `project.godot`, available globally) carry cross-scene state:
+- `scripts/core/GameManager.gd` — game state, score/combo/FEVER/lives, run stats (`record_cut`,
+  `accuracy`, `grade`, personal bests), mode control, F11 fullscreen; emits signals UI listens to.
 - `scripts/core/SaveDataManager.gd` — JSON persistence (leaderboard, achievements, unlocked knives,
-  settings); auto-saves on change.
-- `scripts/core/AudioManager.gd` — SFX/music playback and per-bus volume (framework wired; OGG assets pending).
+  settings incl. volumes/`audio_offset_ms`/bests, 3 save slots); auto-saves on change.
+- `scripts/core/AudioManager.gd` — **all sound, and the beat clock.** `play_sfx(name)` plays a
+  synthesized SFX; `play_music(track)` / `play_song({style, bpm, seed})` composes + renders a song
+  on a `WorkerThreadPool` task (cached, prefetchable, two-deck crossfades) as four synced stems
+  (drums/harmony/lead/fever) whose gains `set_layer()` fades. `music_time()` / `music_beat()` is
+  the clock gameplay locks to: it runs on the wall clock from the moment a song is requested (so it
+  works with sound off and on the headless server — `audio_live` is false there and nothing is
+  rendered), and once audio joins, drift against the real playback position is slewed out each
+  frame. `pause_music()`/`resume_music()` freeze it. Verified against real PulseAudio output to
+  track the heard beat within a few ms.
+- Also: `Security`, `MultiplayerManager`, `FpsNetwork`, `OnlineLeaderboard`, `StyleManager`,
+  `UpdateManager`.
+
+**Audio is procedural** (`scripts/audio/`, no audio assets): `Synth.gd` (polyBLEP oscillators, FM,
+ADSR, filters, drum kit, circular echo, fast PCM16 packing), `SfxLibrary.gd` (every SFX as a
+recipe, loudness-normalized; add one = one entry in `build()`), `SongComposer.gd` (styles → drums,
+bass, chords, contour-based melodies; `compose()` is deterministic per seed, `render()` is the
+heavy worker-thread part). Its inner `Rng` must stay deterministic — don't call Godot's global
+`randf()`/`randi()` from composition code (an unqualified `randf()` inside that class once did).
 
 Main scene is `scenes/MainMenu.tscn`. Gameplay flow: `MainMenuController` → `GameplayController`
-(spawns potatoes, picks the minigame) → a `MinigameBase` subclass.
+(plays the stage's song, schedules potatoes onto bar lines, picks the minigame) → a `MinigameBase`
+subclass → `GameOver.tscn` (results). ESC opens `PauseOverlay` (works while the tree is paused).
+
+**The kitchen is beat-locked.** Each stage has a song (`GameplayController.STAGE_STYLES`, tempo
+`BASE_BPM * stage scale`); a potato's drop-in starts early so it *lands* on a bar line, and that
+beat is the minigame's `beat_origin`. Cursors are pure functions of `AudioManager.music_beat()` —
+never accumulate frame deltas. The classic sweep (`set_sweep(4.0)`) crosses the centre on beat 3,
+the snare of every kitchen groove (all kitchen styles are "half-time": snare on beat 3 only).
 
 **Minigames are the main extension point.** Every cut mechanic in `scripts/minigames/` extends
 `MinigameBase.gd` and is wired into `GameplayController._create_minigame()`. To add one: subclass
-`MinigameBase`, implement `_on_primary_input()` / `_on_secondary_input()`, set `cut_result.quality`
+`MinigameBase`, call `super.start_minigame(potato, origin_beat)`, drive visuals from `beats()` /
+`sweep_cursor()` (use `change_sweep()` to change speed without a jump), express timeouts in beats,
+implement `_on_primary_input()` / `_on_secondary_input()`, set `cut_result.quality`
 (PERFECT/GREAT/GOOD/MISS/FAIL) and `cut_result.score_multiplier` (0.0–1.5), call `end_minigame()`,
 then register it in `_create_minigame()`.
+
+**Concert mode** (`scripts/concert/`, `scenes/Concert/`) is a note-highway rhythm mode:
+`ConcertChart` derives a song's identity from a seed (`spec_for_seed`, `daily_seed`, `SETLIST`)
+and builds the chart from the composed song (intro = drums, verse/chorus/finale = melody; chop /
+hold / rotten / golden notes; per-difficulty `RULES`); `ConcertController` runs song select
+(live previews), the conveyor, judging (±45/90/135 ms), HYPE, multipliers and FEVER, then hands the
+run to the shared results screen. **Keep `ConcertChart.gd` and `SongComposer.compose()` in
+lockstep with `web/core.js`.**
 
 **Balance is data-driven:** knives, potatoes, farm items and the research tree live in
 `resources/game_data/*.json` (`knives.json`, `potatoes.json`, `items.json`, `research.json`) — new
@@ -149,10 +220,23 @@ broadcasts its own avatar (ENet server relay carries client→client packets). `
 
 See `godot/README.md` and `godot/VISUALS.md` for the detailed expansion guide and current status checklist.
 
+## Web architecture (`web/`)
+
+`core.js` (deterministic composer + chart, Node-loadable), `audio.js` (synth, SFX, stem renderer →
+`AudioBuffer`s), `index.html` (the game: one canvas, a `state` machine title → select → play →
+outro → results, landscape 1280×720 or a portrait 720×1280 chute chosen from the viewport). Songs
+start sample-accurately via `AudioBufferSourceNode.start(when)`; the clock is
+`AudioContext.getOutputTimestamp()` interpolated with `performance.now()`, and inputs are judged at
+`event.timeStamp`. Per-browser bests/settings live in `localStorage` (wrapped in try/catch).
+Shareable links use a bare hash token `#s<seed>-<difficulty>`.
+
 ## Conventions
 
-- **Don't cross-pollinate the two editions** — they're parallel implementations, not a shared core.
+- **Don't cross-pollinate the editions** — they're parallel implementations, not a shared core
+  (except the composer/chart port above, which must stay identical).
 - Console game balance → `Data/GameData.cs`; Godot game balance → `resources/game_data/*.json`.
 - `Game` partials all declare `partial class Game`; keep new game-flow methods in the partial that
   matches its concern rather than growing `Game.cs` unboundedly.
 - Any new Godot headless test must print a unique sentinel string and self-quit so CI can grep for it.
+- Any sound goes through `AudioManager` — add a recipe to `SfxLibrary.build()` (and a `LOUDNESS`
+  target) rather than shipping an audio file. Music styles are data in `SongComposer.STYLES`.

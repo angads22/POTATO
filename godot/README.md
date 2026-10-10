@@ -42,10 +42,15 @@ These are global managers available everywhere:
   - Emits signals for UI updates
   - Controls game flow and progression
 
-- **AudioManager** — Music and sound effects
-  - Framework for SFX loading and playback
-  - Volume control per bus (master, music, sfx)
-  - Toggle audio on/off
+- **AudioManager** — every sound in the game, plus the beat clock
+  - `play_sfx(name)`: synthesized SFX on a voice pool (`SFX` bus)
+  - `play_music(track)` / `play_song({style, bpm, seed})`: procedurally
+    composed songs, rendered on a worker thread, cached, crossfaded
+  - four synced stems per song (drums / harmony / lead / fever) with
+    `set_layer()` fades — FEVER and Concert's arrangement use them
+  - `music_time()` / `music_beat()`: the clock gameplay locks to (works with
+    the sound off and on the headless CI server, too)
+  - Master / Music / SFX volumes, a safety limiter, a little room reverb
 
 - **SaveDataManager** — Persistent data
   - Leaderboard (top 10 scores)
@@ -61,12 +66,50 @@ These are global managers available everywhere:
 3. **MinigameBase** — Abstract base for all cut mechanics
 4. **SpecificMinigames** — SliceMinigame, PeelMinigame, SpeedCutMinigame, JulienneMinigame, DodgeMinigame
 
+### Audio: everything is synthesized (`scripts/audio/`)
+
+There are no audio files. `Synth.gd` is a small software synthesizer
+(polyBLEP saw/square, triangle, 2-operator FM, noise, ADSR, pitch and filter
+envelopes, a drum kit, a circular echo). `SfxLibrary.gd` builds every sound
+effect from it at boot — chops are a noise transient plus a woody body, game
+over is a sad trombone — each loudness-normalized. `SongComposer.gd` writes
+music: a style (key, mode, progressions, drum/bass/comping patterns,
+instruments) plus a seed gives an 8-bar song whose melody follows
+contour-shaped 2-bar motifs (A A' B A'') snapped onto the chords. The same
+seed always composes the same song.
+
+| Where | Style | Tempo |
+|-------|-------|-------|
+| Menu | kitchen funk | 104 |
+| Championship stages 1–6 | lo-fi → jazz → funk → disco → game show → epic | 132, rising ~8% a stage |
+| Boss | harmonic-minor brass | the final stage's tempo |
+| Farm / town | country uke + whistle / oom-pah accordion | 92 / 120 |
+| SPUD BLASTER / lobbies | driving minor / four-on-the-floor | 140 / 118 |
+
+### Beat-locked gameplay
+
+Kitchen songs are "half-time": the snare lands on beat 3 of every bar, and
+that is exactly where the slice cursor crosses the centre. Potatoes drop in
+to land on bar lines, golden spuds sweep double-time, the speed-cut zone
+shrinks one beat at a time, julienne is "chop on 3, chop on 1", the peel
+gauge fills over one bar, and the boss strikes on the kick and the snare.
+Minigame cursors are pure functions of `AudioManager.music_beat()` relative
+to the minigame's `beat_origin` — never accumulated frame deltas.
+
 ### Game Modes
 
 - **Championship** — 6-stage campaign with final boss; stage-clear bonuses
   and a life restored every other stage
 - **Endless** — Infinite waves with escalating wave bonuses and golden-potato
   odds that climb the deeper you survive
+- **Concert** (`scripts/concert/`) — a note-highway rhythm mode. `ConcertChart`
+  turns a seed into a song (style, tempo, title) and a chart (intro on the
+  drums, then the melody; chop / hold / rotten / golden notes; Easy / Normal /
+  Hard), with a Daily Song seeded by the UTC date and a fixed setlist.
+  `ConcertController` runs song select with live previews, the conveyor,
+  judging (±45/90/135 ms), HYPE, a x1–x4 multiplier and FEVER. The web
+  edition (`../web/`) ports `ConcertChart` + `SongComposer.compose()` 1:1, so
+  a seed is the same song in the browser.
 
 ### The Overworld (Farm + Town)
 
@@ -150,20 +193,36 @@ Controls: WASD move · mouse look · LMB (or F) shoot · SPACE jump · ESC pause
 ### Adding a New Minigame Mechanic
 
 1. Create a new script in `scripts/minigames/` that extends `MinigameBase`
-2. Implement `_on_primary_input()` and `_on_secondary_input()` with cut logic
-3. Set `cut_result.quality` (PERFECT/GREAT/GOOD/MISS/FAIL)
-4. Set `cut_result.score_multiplier` (0.0-1.5)
-5. Call `end_minigame()` when done
+2. In `start_minigame(potato, origin_beat)` call `super` and set up a sweep
+   with `set_sweep(beats_per_pass)` if you use a cursor
+3. Drive everything from `beats()` / `sweep_cursor()`; express timeouts in beats
+4. Implement `_on_primary_input()` and `_on_secondary_input()` with cut logic
+5. Set `cut_result.quality` (PERFECT/GREAT/GOOD/MISS/FAIL) and
+   `cut_result.score_multiplier` (0.0-1.5), then call `end_minigame()`
 6. Reference it in `GameplayController._create_minigame()`
 
 Example:
 ```gdscript
 extends MinigameBase
 
+var cursor := 0.0
+
+func start_minigame(potato: Dictionary, origin_beat: float = -1.0e9):
+	super.start_minigame(potato, origin_beat)
+	set_sweep(4.0)  # centre crossings on beat 3
+
+func _process(_delta):
+	if is_active:
+		cursor = sweep_cursor()
+		if beats() > 12.0:
+			cut_result.quality = "MISS"
+			end_minigame()
+		queue_redraw()
+
 func _on_primary_input():
-	# Your logic here
-	cut_result.quality = "GREAT"
-	cut_result.score_multiplier = 1.25
+	var q := judge(absf(sweep_cursor() - 0.5), 0.02, 0.05, 0.11)
+	cut_result.quality = q
+	cut_result.score_multiplier = multiplier_for(q)
 	end_minigame()
 ```
 
@@ -179,10 +238,11 @@ func _on_primary_input():
    - Potato split/damage animations
    - UI transitions
 
-3. **Audio** — Place OGG files in `assets/audio/`
-   - SFX: `sfx/cut_good.ogg`, `sfx/coin_collect.ogg`, etc.
-   - Music: `music/menu.ogg`, `music/boss_battle.ogg`, etc.
-   - AudioManager.play_sfx() and .play_music() reference these
+3. **Audio** — there are no audio files: add a sound as a recipe in
+   `SfxLibrary.build()` (plus a `LOUDNESS` target) and play it with
+   `AudioManager.play_sfx("name")`. A new musical style is one entry in
+   `SongComposer.STYLES`; a new named track is one entry in
+   `AudioManager.TRACKS`.
 
 ### Adding New Game Data
 
@@ -231,12 +291,20 @@ GameManager.combo_changed.connect(func(combo):
 ### Headless Smoke Tests
 
 An auto-player drives a championship run — it watches the active minigame,
-cuts at the centre, locks the peel in the band and bins rotten potatoes —
-and two more drive the farm economy and the town stalls:
+cuts when the beat-locked cursor is centred, locks the peel in the band and
+bins rotten potatoes — and more drive the boss, Concert, the farm economy,
+the town stalls and the FPS arena. On the headless server nothing is
+rendered or played, but the beat clock still runs (3x fast in these tests):
 
 ```bash
-godot --headless --path godot res://tests/SmokeTest.tscn --quit-after 900
-# prints "SMOKE OK — score=... lives=..." and exits 0 on success
+godot --headless --path godot res://tests/SmokeTest.tscn --quit-after 4000
+# two stage clears + FEVER on the beat — prints "SMOKE OK — score=..."
+
+godot --headless --path godot res://tests/BossSmokeTest.tscn --quit-after 2000
+# strikes the Colossal Spud on beats 1 and 3 until it falls — "BOSS SMOKE OK"
+
+godot --headless --path godot res://tests/ConcertSmokeTest.tscn --quit-after 6000
+# chart determinism, then a whole song with chops, holds and bins — "CONCERT SMOKE OK"
 
 godot --headless --path godot res://tests/FarmSmokeTest.tscn --quit-after 600
 # plow/plant/water/harvest/sell, sections, sprinklers, fertilizer charges,
@@ -257,7 +325,7 @@ CI runs these on every PR touching `godot/` (see `.github/workflows/godot.yml`).
 ```bash
 # Export as standalone executable
 # Godot will package as single-file binary for Windows/Linux/Mac
-# Result: `PotatoSlicer-v2.0.0.exe` (or equivalent)
+# release.yml exports Windows / Linux / macOS builds on every v* tag
 ```
 
 ## Current Status
@@ -291,19 +359,24 @@ CI runs these on every PR touching `godot/` (see `.github/workflows/godot.yml`).
   championship kitchen, gates between farm and town
 - ✅ SPUD BLASTER: 3D first-person deathmatch arena with LAN + internet
   (UPnP) multiplayer and a solo practice mode vs. bots
-- ✅ Headless smoke tests (gameplay, farm, town, FPS arena) + CI workflow
-- ⏳ Audio files (framework wired, OGG assets needed)
-- ⏳ Boss fight minigame
-- ⏳ Particles and richer juice (squash/stretch, trails)
+- ✅ Procedural audio: synthesized SFX for every action and a composed
+  soundtrack for every scene (no audio files), with volumes and calibration
+- ✅ Beat-locked kitchen: potatoes land on bar lines, cuts land on the snare,
+  tempo climbs per stage, FEVER adds a layer to the song
+- ✅ Concert rhythm mode with seeded songs, a Daily Song and a web edition
+- ✅ Colossal Spud boss fight, particles, squash-and-stretch, screen shake
+- ✅ Pause menu, graded results screen, personal bests, F11 fullscreen
+- ✅ Headless smoke tests (championship, boss, concert, farm, town, FPS) + CI
 
 ## Next Steps
 
-1. **Audio** — Drop OGG files into `assets/audio/` and implement playback in AudioManager
-2. **Boss** — Add a Colossal Spud minigame with an HP bar (extend `MinigameBase`)
-3. **Town content** — New buildings/activities belong on the town map (the
-   boarded plaza lot in `TownBackground` is the placeholder)
-4. **Polish** — Particles, squash-and-stretch, juice
-5. **Expansion** — New potatoes/mechanics are one JSON entry + one `MinigameBase` subclass away
+1. **Town content** — New buildings/activities belong on the town map (the
+   boarded plaza lot in `TownBackground` is the placeholder) — a Concert
+   stage there would tie the new mode into the overworld
+2. **Concert** — an online Daily Song leaderboard (the seed is already shared
+   with the web edition), longer song forms (verse/chorus variations)
+3. **Farm ambience** — day/night variations of the farm theme, rain
+4. **Expansion** — New potatoes/mechanics are one JSON entry + one `MinigameBase` subclass away
 
 ## Building for Distribution
 

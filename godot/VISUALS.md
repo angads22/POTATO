@@ -102,14 +102,26 @@ procedural-first rules, sunnier palette:
   knives, tools, plant picker, fertilize picker, the market-truck loader and
   the research-shed tree).
 
-## Phase 3 — next
+## Phase 3 — implemented
 
-- Boss fight: oversized potato with HP bar and cracked-skin states.
+- **Boss fight** — the Colossal Spud: oversized potato with an HP bar and
+  cracked-skin states.
+- **Motion on the beat** — the potato's bob, the hovering cleaver, the
+  utensil rail and the menu title all move with the music's beat clock;
+  the timing track's frame breathes on each beat and four beat lamps under it
+  mark the bar (the gold one is the beat to cut on).
+- **The concert stage** — Concert mode reuses the tier-6 kitchen (bunting,
+  crowd, spotlights) as a venue, with a conveyor belt whose slats tick past
+  in time and potatoes, sweet-potato ribbons and rotten spuds drawn in code.
+- **Results** — a score count-up and a stamped S–D grade.
+
+## Phase 4 — next
+
 - Weather on the farm (rain that waters every tile).
 - Decorate-your-farm unlocks (scarecrow, gnome, fancy fences).
 - Build out the town's boarded lot (the hook for whatever comes next).
 
-## Phase 4 — asset swap (optional)
+## Phase 5 — asset swap (optional)
 
 Every visual is one node class. To move to drawn sprites later, replace the
 `_draw()` body of that class with a `Sprite2D`/`AnimatedSprite2D` — call
