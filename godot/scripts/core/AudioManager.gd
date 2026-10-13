@@ -71,6 +71,12 @@ var _jobs: Dictionary = {}        # key -> {task, song, result}
 var _fade_in: float = 0.8
 var _tweens: Dictionary = {}      # AudioStreamPlayer -> its volume Tween
 var _last_beat: int = -999999
+# The audio stack is loaded at runtime rather than named by its class_name:
+# autoloads are parsed before Godot builds the global class list on a fresh
+# checkout, so naming SfxLibrary / SongComposer here would fail the first
+# import (and drop this autoload for that editor session).
+var _sfx_library = null
+var _composer = null
 
 func _ready():
 	process_mode = Node.PROCESS_MODE_ALWAYS  # keep fades/clock alive in pause
@@ -92,9 +98,12 @@ func _ready():
 			add_child(p)
 			_decks[d][stem] = p
 
+	_sfx_library = load("res://scripts/audio/SfxLibrary.gd")
+	_composer = load("res://scripts/audio/SongComposer.gd")
 	if audio_live:
 		var job := {"result": {}}
-		job["task"] = WorkerThreadPool.add_task(func(): job["result"] = SfxLibrary.build(), false, "sfx")
+		var lib = _sfx_library
+		job["task"] = WorkerThreadPool.add_task(func(): job["result"] = lib.build(), false, "sfx")
 		_sfx_job = job
 
 func _exit_tree():
@@ -225,7 +234,7 @@ func play_song(spec: Dictionary, fade_in: float = 0.8, lead_in_beats: float = 0.
 		song = _jobs[key]["song"]
 		loop_sec = song["loop_beats"] * 60.0 / bpm
 	else:
-		song = SongComposer.compose(spec.get("style", "menu"), int(spec.get("seed", 1)), bpm)
+		song = _composer.compose(spec.get("style", "menu"), int(spec.get("seed", 1)), bpm)
 		loop_sec = song["loop_beats"] * 60.0 / bpm
 		_start_render(key, song)
 
@@ -234,7 +243,7 @@ func prefetch(spec: Dictionary):
 	var key := song_key(spec)
 	if _cache.has(key) or _jobs.has(key):
 		return
-	var s := SongComposer.compose(spec.get("style", "menu"), int(spec.get("seed", 1)), float(spec.get("bpm", 120.0)))
+	var s: Dictionary = _composer.compose(spec.get("style", "menu"), int(spec.get("seed", 1)), float(spec.get("bpm", 120.0)))
 	_start_render(key, s)
 
 # True once a song's audio is rendered (always true when audio isn't live).
@@ -245,7 +254,8 @@ func _start_render(key: String, s: Dictionary):
 	if not audio_live:
 		return
 	var job := {"song": s, "result": {}}
-	job["task"] = WorkerThreadPool.add_task(func(): job["result"] = SongComposer.render(s), false, "song")
+	var composer = _composer
+	job["task"] = WorkerThreadPool.add_task(func(): job["result"] = composer.render(s), false, "song")
 	_jobs[key] = job
 
 func stop_music(fade_out: float = 1.0):
