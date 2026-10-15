@@ -17,6 +17,10 @@ exists in **three implementations** of the same game design:
   no dependencies). `web/build.py` bundles it into one self-contained `SliceIt-Web.html`, which
   `release.yml` attaches to every release; `web.yml` can deploy it to GitHub Pages.
 
+Separately, **`physics-quest/`** is an unrelated app: **Physics Quest 12**, a Prodigy-style
+browser RPG for studying Grade 12 physics (Ontario SPH4U). It shares no code, versioning or
+release flow with the potato game; see "Physics Quest 12" below.
+
 The console and Godot editions share gameplay concepts (five cut mechanics, game modes, knives,
 combos, FEVER, lives, leaderboard) but **share no code**. They carry their own version constants
 (console in the csproj / `Core/Updater.cs`; Godot in `project.godot`) but ship from **one `v*`
@@ -83,6 +87,13 @@ python3 web/tools/check_parity.py /tmp/godot.json /tmp/web.json   # → "WEB PAR
 inlines them. `window.__bot = true` turns on an in-page autoplay that the smoke test uses, and
 `window.__slice()` is a read-only state probe.
 
+### Physics Quest 12 (`physics-quest/`)
+```sh
+node physics-quest/tools/check_questions.js       # every skill x 400 seeds vs reference formulas → "QUESTIONS OK"
+python3 physics-quest/build.py                    # → physics-quest/dist/PhysicsQuest12.html (one file)
+node physics-quest/tools/smoke.js physics-quest/dist/PhysicsQuest12.html   # headless playthrough → "PHYSICS QUEST SMOKE OK"
+```
+
 ## CI (`.github/workflows/`)
 
 - **build.yml** — `dotnet build` of the console project on every push to `main` and every PR.
@@ -91,6 +102,8 @@ inlines them. `window.__bot = true` turns on an in-page autoplay that the smoke 
 - **web.yml** — runs when `web/**` changes: bundles the single file and plays a song in headless
   Chromium (landscape + portrait). Its `pages` job deploys to GitHub Pages on a manual run, or on
   pushes to `main` once the repo variable `PAGES_ENABLED` is `"true"`.
+- **physics-quest.yml** — runs when `physics-quest/**` changes: the question checker, the
+  single-file bundle, and the headless playthrough (landscape + phone).
 - **release.yml** — triggered by pushing a `v*` tag (or manual `workflow_dispatch`). Publishes the
   self-contained console win-x64/linux-x64 binaries, the exported Godot Visual edition
   (`SliceIt-Visual-{win-x64,linux-x64,mac}.zip`, when `godot/export_presets.cfg` exists) and the
@@ -229,6 +242,23 @@ start sample-accurately via `AudioBufferSourceNode.start(when)`; the clock is
 `AudioContext.getOutputTimestamp()` interpolated with `performance.now()`, and inputs are judged at
 `event.timeStamp`. Per-browser bests/settings live in `localStorage` (wrapped in try/catch).
 Shareable links use a bare hash token `#s<seed>-<difficulty>`.
+
+## Physics Quest 12 architecture (`physics-quest/`)
+
+Plain HTML/JS, no build step, no dependencies, no assets (everything is drawn on a canvas).
+- `questions.js` (Node-loadable, `window.PQ` in the browser) — `SKILLS`: each numeric skill is
+  `S(id, unit, tier, name, gen)` where `gen(rng)` returns the givens `p`, `ans`, `unit`, `wrong`
+  (distractors modelled on real mistakes), `steps` and `formula`. **Compute the answer from the
+  values exactly as shown in the prompt** (round givens first). `makeQuestion(skill, seed)` builds
+  four distinct choices; `checkTyped` accepts typed answers within 2%; `calc` is a safe evaluator
+  (degrees, no `eval`). Concept questions are rows in `CONCEPTS`. Units: dyn/enm/fld/wav/mod.
+- **Every numeric skill needs a matching independent formula in `REF` in
+  `tools/check_questions.js`**, or the checker (and CI) fails.
+- `game.js` — one IIFE: a 3×2 grid of zones (hub + one per unit, chained by gates opened by
+  each boss), battles (spell → question → damage), the Codex (practice, unit tests, formula sheet,
+  mistake journal), shop/bag, title, saves in `localStorage` key `physicsQuest12.save.v1`
+  (wrapped in try/catch). `window.__pq()` is a read-only probe and `window.__pqDebug` has test
+  helpers (`battle`, `set`, `teleport`, `mapCheck`) that the smoke test uses.
 
 ## Conventions
 
