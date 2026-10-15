@@ -1,0 +1,44 @@
+name: Physics Quest
+
+# Physics Quest 12 (physics-quest/), a separate Grade 12 physics study game.
+# Checks every question generator against independent reference formulas,
+# bundles the single-file build, and plays it in headless Chromium in a
+# landscape and a phone viewport, failing on any page error.
+
+on:
+  push:
+    branches: [main]
+    paths: ['physics-quest/**', '.github/workflows/physics-quest.yml']
+  pull_request:
+    paths: ['physics-quest/**', '.github/workflows/physics-quest.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Check every question generator
+        run: |
+          node physics-quest/tools/check_questions.js | tee questions.log
+          grep -q "QUESTIONS OK" questions.log
+      - name: Bundle the single-file build
+        run: python3 physics-quest/build.py
+      - name: Install Playwright + Chromium
+        run: |
+          npm install --no-save playwright@1.48.2
+          npx playwright install --with-deps chromium
+      - name: Headless browser playthrough
+        run: |
+          node physics-quest/tools/smoke.js physics-quest/dist/PhysicsQuest12.html | tee pq-smoke.log
+          grep -q "PHYSICS QUEST SMOKE OK" pq-smoke.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PhysicsQuest12
+          path: physics-quest/dist/PhysicsQuest12.html
