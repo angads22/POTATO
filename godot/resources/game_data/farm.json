@@ -1,0 +1,86 @@
+{
+	"version": 1,
+	"_comment": "Spudling Acres balance source (design §5.14). FarmEconomy.gd reads every farm number from here; the GDScript balance test (tests/farm/) runs the real economy on this file. Times are seconds unless named *_ms; coins are integers; crop ids reuse potatoes.json.",
+
+	"clock": {"clockin_s": 120, "report_min_s": 120, "welcome_butterfly_min_s": 600, "reaction_s": 5, "rollback_tolerance_s": 60},
+	"plots": {"cols": 4, "rows": 3, "per_field": 12, "w": 140, "h": 110},
+
+	"crops": [
+		{"id": "russet",      "name": "Russet",         "color": "#b87333", "grow_s": 40,    "seed": 0,   "sell": 2,    "strain_at": [5000, 50000, 500000, 5000000], "slot": "Active play (the clicker crop); always free"},
+		{"id": "yukon_gold",  "name": "Yukon Gold",     "color": "#e3c16f", "grow_s": 180,   "seed": 2,   "sell": 10,   "strain_at": [1000, 10000, 100000, 1000000], "slot": "A 5-minute session"},
+		{"id": "red",         "name": "Red Potato",     "color": "#a83232", "grow_s": 840,   "seed": 8,   "sell": 40,   "strain_at": [250, 2500, 25000, 250000],     "slot": "Between class check-ins"},
+		{"id": "purple",      "name": "Purple Majesty", "color": "#6a3b8f", "grow_s": 3000,  "seed": 25,  "sell": 125,  "strain_at": [80, 800, 8000, 80000],         "slot": "An hour / a free period"},
+		{"id": "fingerling",  "name": "Fingerling",     "color": "#c9a14a", "grow_s": 9900,  "seed": 70,  "sell": 360,  "strain_at": [30, 300, 3000, 30000],         "slot": "A 3-hour gap"},
+		{"id": "king_edward", "name": "King Edward",    "color": "#d8b878", "grow_s": 25200, "seed": 160, "sell": 800,  "strain_at": [12, 120, 1200, 12000],         "slot": "A school or work day, a short night"},
+		{"id": "golden",      "name": "Golden Potato",  "color": "#ffd700", "grow_s": 57600, "seed": 320, "sell": 1600, "strain_at": [12, 60, 600, 6000],            "slot": "Overnight", "rare": true}
+	],
+
+	"fields": {
+		"count": 6,
+		"greenhouse_index": 6,
+		"names": ["Field 1", "Field 2", "Field 3", "Field 4", "Field 5", "Field 6", "Greenhouse"],
+		"rects": [[230, 700, 560, 330], [1000, 700, 560, 330], [1770, 700, 560, 330],
+		          [230, 1110, 560, 330], [1000, 1110, 560, 330], [1770, 1110, 560, 330]],
+		"greenhouse_rect": [1180, 150, 560, 330],
+		"fences": {"1-2": [0, 1], "2-3": [1, 2], "4-5": [3, 4], "5-6": [4, 5], "1-4": [0, 3], "2-5": [1, 4], "3-6": [2, 5]},
+		"sockets": {"1-2": [895, 865], "2-3": [1665, 865], "4-5": [895, 1275], "5-6": [1665, 1275],
+		            "1-4": [510, 1070], "2-5": [1280, 1070], "3-6": [2050, 1070]}
+	},
+
+	"deeds": [100, 1000, 12000, 250000, 3000000],
+	"greenhouse": {"cost": 6000000, "grow_mult": 0.5333, "page": 6},
+	"sprinklers": {"costs": [300, 20000, 1000000], "grow_mult": 0.8, "page": 1},
+	"huts": {"costs": [25, 200, 2500, 25000, 300000, 3000000, 8000000],
+	         "names": ["Pip", "Dot", "Rusty", "Tater", "Bea", "Moss", "Nib"],
+	         "hats": ["#e05a47", "#4a90d9", "#e0a030", "#5cb85c", "#b06ab3", "#4ac0c0", "#d46a9a"]},
+	"share": [[0.5, 0], [0.6, 40000], [0.7, 2000000]],
+	"quick": {"walk_s": [60, 30, 15], "costs": [0, 6000, 500000], "page": 2},
+	"house": {"shift_h": [2, 4, 8, 12], "costs": [0, 800, 15000, 300000],
+	          "names": ["Cabin", "Cottage", "House", "Manor"]},
+	"tools": [
+		{"id": "basic",  "name": "Basic Hoe",  "cost": 0,       "silver": 0.30, "gold": 0.10},
+		{"id": "copper", "name": "Copper Hoe", "cost": 100,     "silver": 0.30, "gold": 0.10, "tend_all": true},
+		{"id": "iron",   "name": "Iron Hoe",   "cost": 25000,   "silver": 0.35, "gold": 0.15, "page": 3},
+		{"id": "gold",   "name": "Gold Hoe",   "cost": 5000000, "silver": 0.40, "gold": 0.20, "page": 6, "butterfly_rate": 1.5}
+	],
+	"stars": {"silver_mult": 1.5, "gold_mult": 2.0},
+	"soil": {"base": 100, "growth": 1.32, "mult": 1.05},
+	"strains": {"costs": [5000, 50000, 500000, 5000000], "mult": 1.5, "page": 3,
+	            "ribbons": ["bronze", "silver", "gold", "blue"]},
+	"favorite": {"mult": 1.4, "salt": 1592614637},
+	"butterflies": {"min_s": 240, "max_s": 480, "life_s": 12, "radius": 60,
+	                "odds": {"bumper": 0.4, "sunshower": 0.3, "penny": 0.3},
+	                "welcome_odds": {"sunshower": 0.5, "penny": 0.5},
+	                "welcome_delay_s": [3, 8],
+	                "bumper_s": 30, "sunshower_s": 120, "penny_s": 120, "penny_min": 25},
+
+	"catalog": [
+		{"page": 1, "needs": {"russet": 120},                       "unlocks": "yukon_gold",  "also": ["sprinklers"],
+		 "text": "Buttery, quick, and forgiving of a late harvest."},
+		{"page": 2, "needs": {"yukon_gold": 360},                   "unlocks": "red",         "also": ["quick"],
+		 "text": "Ripens in a class period. Ask Pip about it."},
+		{"page": 3, "needs": {"red": 480, "yukon_gold": 240},       "unlocks": "purple",      "also": ["iron", "strains"],
+		 "text": "Purple all the way through. Show-offs."},
+		{"page": 4, "needs": {"purple": 480},                       "unlocks": "fingerling",  "also": [],
+		 "text": "Long, thin, and worth the afternoon."},
+		{"page": 5, "needs": {"fingerling": 240, "purple": 480},    "unlocks": "king_edward", "also": [],
+		 "text": "Plant before school, dig after."},
+		{"page": 6, "needs": {"king_edward": 120, "fingerling": 240}, "unlocks": "golden",    "also": ["greenhouse", "gold"],
+		 "text": "Sleeps all night. Wakes up rich."}
+	],
+
+	"tutorial": [
+		{"id": "plant",   "label": "Plant Field 1",                 "hint": "Click Field 1 or press E on it",   "done": {"planted": 1}},
+		{"id": "harvest", "label": "Harvest Field 1",               "hint": "Russet is ready in 40 s",          "done": {"hand_picks": 1}},
+		{"id": "hut",     "label": "Hire Pip",                      "hint": "Spudlings work while you're away", "done": {"huts": 1},   "buy": "hut"},
+		{"id": "deed",    "label": "Buy a second field",            "hint": "More land, more spuds",            "done": {"fields": 2}, "buy": "deed"},
+		{"id": "copper",  "label": "Buy the Copper Hoe",            "hint": "Tend All with T",                  "done": {"tool": 1},   "buy": "tool"},
+		{"id": "page1",   "label": "Ship 120 Russet: Yukon page",   "hint": "Catalog pages unlock new crops",   "done": {"page": 1}}
+	],
+
+	"log": {"absences_max": 64, "presence_days": 7, "min_absences": 3, "typical_default_s": 10800, "f_here_default": 0.10},
+	"picnic": {"max_min": 15, "factor": 0.5},
+	"kitchen": {"golden_per_ribbon": 0.004, "golden_cap": 0.10},
+	"start": {"wallet_if_new": 50, "plan": "russet", "zoom": 0.45},
+	"wallet_cap": 1000000000000000
+}
