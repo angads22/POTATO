@@ -33,7 +33,7 @@ const FREE_CROP := "russet"       # seed 0: the no-deadlock fallback
 const MASK32 := 0xFFFFFFFF
 const HOUR_MS := 3600000
 const DAY_MS := 86400000
-const NONRUSSET := ["yukon_gold", "red", "purple", "fingerling", "king_edward", "golden"]
+const FAV_DEFAULT := [["yukon_gold", "purple", "king_edward"], ["red", "fingerling", "golden"]]
 const ROMAN := ["", "I", "II", "III", "IV"]
 const TAB := {"deed": "land", "greenhouse": "land", "sprinkler": "land",
 		"hut": "helpers", "share": "helpers", "quick": "helpers", "house": "helpers",
@@ -111,6 +111,16 @@ static func _index() -> void:
 	for s in _cfg["share"]:
 		share.append(float(s[0]))
 	var b: Dictionary = _cfg["butterflies"]
+	# Market Favorite day lists: [even days, odd days]. They must be disjoint
+	# (no repeat on consecutive days) and never hold the free crop; a missing
+	# or empty list falls back to the lead-decision defaults.
+	var fav_days: Array = []
+	for key in ["even", "odd"]:
+		var lst: Array = []
+		for c in _cfg["favorite"].get(key, []):
+			if _crop.has(str(c)) and str(c) != FREE_CROP and not str(c) in lst:
+				lst.append(str(c))
+		fav_days.append(lst if not lst.is_empty() else FAV_DEFAULT[fav_days.size()].duplicate())
 	_k = {
 		"clockin_ms": int(ck["clockin_s"]) * 1000,
 		"report_min_ms": int(ck["report_min_s"]) * 1000,
@@ -123,6 +133,7 @@ static func _index() -> void:
 		"walk_ms": walk, "shift_ms": shift, "share": share,
 		"wallet_cap": int(_cfg["wallet_cap"]),
 		"fav_mult": float(_cfg["favorite"]["mult"]), "fav_salt": int(_cfg["favorite"]["salt"]) & MASK32,
+		"fav_days": fav_days,
 		"soil_base": float(_cfg["soil"]["base"]), "soil_growth": float(_cfg["soil"]["growth"]),
 		"soil_mult": float(_cfg["soil"]["mult"]), "strain_mult": float(_cfg["strains"]["mult"]),
 		"spr_mult": float(_cfg["sprinklers"]["grow_mult"]), "gh_mult": float(_cfg["greenhouse"]["grow_mult"]),
@@ -180,9 +191,13 @@ static func new_farm() -> Dictionary:
 		"migration": {},
 	}
 
+# grow_eff_ms: the standing crop's effective grow time, locked at planting
+# (like fav), so a sprinkler placed, moved or removed later changes the next
+# planting only: a growing crop never jumps to ripe and a ripe one never
+# un-ripens. 0 when empty.
 static func _new_field(owned: bool) -> Dictionary:
 	return {"owned": owned, "plan": str(_k.get("start_plan", FREE_CROP)), "crop": "", "planted_g": 0,
-			"by": "you", "seed_paid": 0, "fav": false, "hut": false, "hut_k": -1, "carry": 0}
+			"grow_eff_ms": 0, "by": "you", "seed_paid": 0, "fav": false, "hut": false, "hut_k": -1, "carry": 0}
 
 # Deep-fill missing keys from the schema-4 defaults and int()-cast every
 # integer (Godot's JSON parser returns all numbers as floats). Idempotent.
@@ -210,7 +225,7 @@ static func normalize(farm: Dictionary) -> void:
 		f["plan"] = str(f["plan"]) if _crop.has(str(f["plan"])) else k.start_plan
 		f["crop"] = str(f["crop"]) if _crop.has(str(f["crop"])) else ""
 		f["by"] = "spud" if str(f["by"]) == "spud" else "you"
-		_ints(f, ["planted_g", "seed_paid", "carry", "hut_k"])
+		_ints(f, ["planted_g", "grow_eff_ms", "seed_paid", "carry", "hut_k"])
 	# upgrades, clamped to their ladders
 	var up: Dictionary = farm["up"]
 	_ints(up, ["tool", "share", "quick", "house", "soil", "huts", "sprinklers"])
@@ -229,6 +244,14 @@ static func normalize(farm: Dictionary) -> void:
 			placed.append(str(s))
 	farm["sprinklers"] = placed
 	up["sprinklers"] = clampi(maxi(up["sprinklers"], placed.size()), 0, _cfg["sprinklers"]["costs"].size())
+	# A standing crop without a locked grow time (a hand-built dict) takes the
+	# field's current watering; an empty field holds 0.
+	for i in FIELDS:
+		var f: Dictionary = fields[i]
+		if f["crop"] == "":
+			f["grow_eff_ms"] = 0
+		elif int(f["grow_eff_ms"]) <= 0:
+			f["grow_eff_ms"] = grow_eff_ms(farm, f["crop"], i)
 	# catalog: page clamped, every crop up to it unlocked
 	var cat: Array = _cfg["catalog"]
 	farm["page"] = clampi(int(farm["page"]), 0, cat.size())
@@ -260,7 +283,7 @@ static func normalize(farm: Dictionary) -> void:
 	var rep: Dictionary = farm["report"]
 	if not rep.is_empty():
 		_fill(rep, _empty_report())
-		_ints(rep, ["from_ms", "to_ms", "away_ms", "coins", "baskets", "worked_ms", "nap_ms"])
+		_ints(rep, ["from_ms", "to_ms", "away_ms", "coins", "baskets", "worked_ms", "nap_ms", "nap_from_ms"])
 		for c in rep["picks"].keys():
 			rep["picks"][c] = int(rep["picks"][c])
 		var pg: Array = []
@@ -287,7 +310,7 @@ static func _ensure(farm: Dictionary) -> void:
 				and fl[6] is Dictionary and typeof(fl[6].get("carry")) == TYPE_INT:
 			_kk()
 			return
-	_ensure(farm)
+	normalize(farm)
 
 static func _fill(dst: Dictionary, src: Dictionary) -> void:
 	for key in src:
@@ -313,9 +336,11 @@ static func _int_pairs(a) -> Array:
 				out.append([int(e[0]), int(e[1])])
 	return out
 
+# worked_ms and nap_ms are durations summed over the absences since the last
+# note; nap_from_ms is the instant the latest shift ended (0 if none did).
 static func _empty_report() -> Dictionary:
 	return {"from_ms": 0, "to_ms": 0, "away_ms": 0, "coins": 0, "baskets": 0, "picks": {}, "worked_ms": 0,
-			"nap_ms": 0, "pages": []}
+			"nap_ms": 0, "nap_from_ms": 0, "pages": []}
 
 # First farm visit: stamp the clock, seed the rng, schedule the first
 # butterfly. Field 1 stays empty (tutorial goal 1 is to plant it). No-op once
@@ -383,19 +408,16 @@ static func _rand(farm: Dictionary) -> float:
 static func _rand_int(farm: Dictionary, lo: int, hi: int) -> int:   # inclusive
 	return lo + mini(hi - lo, int(_rand(farm) * float(hi - lo + 1)))
 
-# Today's Market Favorite (§5.8), stateless: a hash of the local day. A day
-# whose raw pick repeats yesterday's raw pick takes the next crop instead (this
-# exact formula can still repeat the shown crop, e.g. after a shifted day).
-# Russet is never the Favorite.
+# Today's Market Favorite (lead decision 2, replacing the §5.8 base/shift
+# hash), stateless: even local days pick from farm.json favorite.even
+# [yukon_gold, purple, king_edward], odd days from favorite.odd [red,
+# fingerling, golden], index xorshift32(((d * 2654435761) & 0xFFFFFFFF) ^
+# salt) % 3. The two lists are disjoint, so consecutive days never share a
+# Favorite; Russet is in neither.
 static func favorite(day: int) -> String:
-	var b := _fav_base(day)
-	if b == _fav_base(day - 1):
-		return NONRUSSET[(NONRUSSET.find(b) + 1) % NONRUSSET.size()]
-	return b
-
-static func _fav_base(day: int) -> String:
-	var x := ((day * 2654435761) & MASK32) ^ int(_kk().fav_salt)
-	return NONRUSSET[xorshift32(x) % NONRUSSET.size()]
+	var tri: Array = _kk().fav_days[posmod(day, 2)]
+	var x := ((day * 2654435761) & MASK32) ^ int(_k.fav_salt)
+	return tri[xorshift32(x) % tri.size()]
 
 static func _is_fav(crop: String, t: int, tz: int) -> bool:
 	return crop != FREE_CROP and favorite(day_index(t, tz)) == crop
@@ -454,16 +476,23 @@ static func grow_eff_ms(farm: Dictionary, crop: String, i: int) -> int:
 		return int(round(g * _kk().spr_mult))
 	return g
 
+# The standing crop's grow time, locked when it was planted (falls back to the
+# current watering for a hand-built dict that never went through normalize()).
+static func _ge_of(farm: Dictionary, i: int) -> int:
+	var f: Dictionary = farm["fields"][i]
+	var ge := int(f.get("grow_eff_ms", 0))
+	return ge if ge > 0 else grow_eff_ms(farm, f["crop"], i)
+
 static func _ripe(farm: Dictionary, i: int, now: int) -> bool:
 	var f: Dictionary = farm["fields"][i]
-	return f["crop"] != "" and g_now(farm, now) - int(f["planted_g"]) >= grow_eff_ms(farm, f["crop"], i)
+	return f["crop"] != "" and g_now(farm, now) - int(f["planted_g"]) >= _ge_of(farm, i)
 
 # Wall-clock instant the current crop ripens (0 when empty).
 static func _ready_at(farm: Dictionary, i: int) -> int:
 	var f: Dictionary = farm["fields"][i]
 	if f["crop"] == "":
 		return 0
-	return int(f["planted_g"]) + grow_eff_ms(farm, f["crop"], i) - int(farm["g_offset_ms"])
+	return int(f["planted_g"]) + _ge_of(farm, i) - int(farm["g_offset_ms"])
 
 static func _valid_field(i) -> bool:
 	return typeof(i) == TYPE_INT and i >= 0 and i < FIELDS
@@ -560,7 +589,8 @@ static func _settle(farm: Dictionary, now: int, tz: int) -> Dictionary:
 		return res
 	# The current absence's work window: Spudlings clock in 120 s after the
 	# last input and work one shift. Nothing happens while you're present.
-	var w0: int = int(clock["last_input_ms"]) + k.clockin_ms
+	var l_in: int = clock["last_input_ms"]
+	var w0: int = l_in + k.clockin_ms
 	var w1: int = w0 + _shift_ms(farm)
 	var huts: Array = []
 	for i in FIELDS:
@@ -569,16 +599,18 @@ static func _settle(farm: Dictionary, now: int, tz: int) -> Dictionary:
 	var hi := mini(now, w1)
 	if hi > w0:
 		for i in huts:
-			_settle_hut(farm, i, w0, hi, tz, res)
+			_settle_hut(farm, i, l_in, w0, hi, tz, res)
 	if now >= w0:
 		var rep := _report(farm)
 		if rep["from_ms"] == 0:
-			rep["from_ms"] = int(clock["last_input_ms"])
+			rep["from_ms"] = l_in
 		rep["to_ms"] = now
 		if not huts.is_empty():
+			# Durations, additive over settle spans (bulk == stepped).
 			rep["worked_ms"] += maxi(0, mini(now, w1) - maxi(last, w0))
 			if now > w1:
-				rep["nap_ms"] = w1
+				rep["nap_ms"] += now - maxi(last, w1)
+				rep["nap_from_ms"] = w1
 	clock["last_settle_ms"] = now
 	_income_advance(farm, _hour(now))
 	var pages := _check_pages(farm, res["events"])
@@ -590,45 +622,58 @@ static func _settle(farm: Dictionary, now: int, tz: int) -> Dictionary:
 	return res
 
 # The clock went backwards (more than the tolerance): credit nothing and shift
-# the growth clock so crops neither un-grow nor jump (§5.1).
+# the whole farm back with it (§5.1): the growth clock, so crops neither
+# un-grow nor jump, and the last input stamp, so the absence keeps the shift it
+# had left. (§5.1 says last_input = min(last_input, now); that leaves the work
+# window where it was in wall time, and a clock set back and then restored
+# would let Spudlings re-work the hours already worked. last_input <=
+# last_settle, so the shifted stamp is still <= now.)
 static func _rebase(farm: Dictionary, now: int, back: int) -> void:
 	var clock: Dictionary = farm["clock"]
 	farm["g_offset_ms"] = int(farm["g_offset_ms"]) + back
 	clock["last_settle_ms"] = now
-	clock["last_input_ms"] = mini(int(clock["last_input_ms"]), now)
+	clock["last_input_ms"] = mini(int(clock["last_input_ms"]) - back, now)
 	var bf: Dictionary = farm["buffs"]
 	for key in ["bumper_until_ms", "next_butterfly_ms"]:
 		if int(bf[key]) > 0:
 			bf[key] = maxi(1, int(bf[key]) - back)
 
 # One hut field over the work window up to `hi` (§5.6). Closed form:
-#   pick 1 at p1 = max(ripe_wall, w0) + P harvests the stored crop (yours at
-#   full value, theirs at the share) and replants the plan for free; every
-#   later pick k comes one cycle c = grow_eff(plan) + P after the previous
-#   one, so n = 1 + floor((hi - p1) / c). A replant carries the Favorite flag
-#   of its own local day, so picks are summed per hour bucket and the
-#   Favorite plantings counted per local day by floor division.
-static func _settle_hut(farm: Dictionary, i: int, w0: int, hi: int, tz: int, res: Dictionary) -> void:
+#   pick 1 at p1 = max(ripe_wall, w0) + P harvests the stored crop and
+#   replants the plan for free; every later pick k comes one cycle
+#   c = grow_eff(plan) + P after the previous one, so n = 1 + floor((hi - p1)
+#   / c). A replant carries the Favorite flag of its own local day, so picks
+#   are summed per hour bucket and the Favorite plantings counted per local
+#   day by floor division.
+# Wages: a crop that was already in the ground when this absence began (wall
+# planting time <= l_in, the last input) is picked at full value, whoever
+# planted it: yours, or a Spudling crop that was still growing through your
+# check-in, so a hut never takes a cut of a crop you would have hand-picked
+# (§5.6 "the first pick of an absence (your crop) is worth 1.0 x gross").
+# Only crops the Spudlings plant during this absence pay the share.
+static func _settle_hut(farm: Dictionary, i: int, l_in: int, w0: int, hi: int, tz: int, res: Dictionary) -> void:
 	var f: Dictionary = farm["fields"][i]
 	var plan: String = f["plan"]
 	var goff := int(farm["g_offset_ms"])
 	var walk := _walk_ms(farm)
+	var ge_plan := grow_eff_ms(farm, plan, i)
 	if f["crop"] == "":
 		# An empty hut field is planted at w0 + P (no harvest value).
 		var tp := w0 + walk
 		if tp > hi:
 			return
-		_spud_plant(f, plan, tp, goff, tz)
+		_spud_plant(f, plan, tp, goff, tz, ge_plan)
 	var crop1: String = f["crop"]
-	var ripe_wall := int(f["planted_g"]) + grow_eff_ms(farm, crop1, i) - goff
+	var ripe_wall := int(f["planted_g"]) + _ge_of(farm, i) - goff
 	var p1 := maxi(ripe_wall, w0) + walk
 	if p1 > hi:
 		return
-	var cyc := grow_eff_ms(farm, plan, i) + walk
+	var cyc := ge_plan + walk
 	var n := 1 + (hi - p1) / cyc                 # hi >= p1, so no negative division
 	var share := _share(farm)
 	var plots: int = _kk().plots
-	var v1 := _pick_milli(_tile_milli(farm, crop1, f["fav"]), f["by"] == "you", share, plots)
+	var full1: bool = f["by"] == "you" or int(f["planted_g"]) - goff <= l_in
+	var v1 := _pick_milli(_tile_milli(farm, crop1, f["fav"]), full1, share, plots)
 	_income_add(farm, _hour(p1), v1)
 	var total := v1
 	if n >= 2:
@@ -647,7 +692,7 @@ static func _settle_hut(farm: Dictionary, i: int, w0: int, hi: int, tz: int, res
 			total += m
 			kk = k_end + 1
 	var pn := p1 + (n - 1) * cyc
-	_spud_plant(f, plan, pn, goff, tz)
+	_spud_plant(f, plan, pn, goff, tz, ge_plan)
 	var coins := _credit_field(farm, f, total)
 	var shipped: Dictionary = farm["shipped"]
 	shipped[crop1] = int(shipped.get(crop1, 0)) + plots
@@ -666,16 +711,17 @@ static func _settle_hut(farm: Dictionary, i: int, w0: int, hi: int, tz: int, res
 	res["picks"] += n
 	res["coins"] += coins
 
-static func _spud_plant(f: Dictionary, plan: String, t: int, goff: int, tz: int) -> void:
+static func _spud_plant(f: Dictionary, plan: String, t: int, goff: int, tz: int, ge: int) -> void:
 	f["crop"] = plan
 	f["planted_g"] = t + goff
+	f["grow_eff_ms"] = ge
 	f["by"] = "spud"
 	f["seed_paid"] = 0
 	f["fav"] = _is_fav(plan, t, tz)
 
-# Wages: your crop is picked at full value, a Spudling-planted one at the share.
-static func _pick_milli(tile: int, yours: bool, share: float, plots: int) -> int:
-	if yours:
+# Wages: full value, or the share for a crop planted during this absence.
+static func _pick_milli(tile: int, full: bool, share: float, plots: int) -> int:
+	if full:
 		return tile * plots
 	return int(round(float(tile * plots) * share))
 
@@ -798,6 +844,20 @@ static func _fail(res: Dictionary, msg: String) -> Dictionary:
 	res["msg"] = msg
 	return res
 
+# A failed action still ran note_input (and may have settled): drop a pin that
+# is no longer buyable, as every action does.
+static func _failf(farm: Dictionary, res: Dictionary, msg: String) -> Dictionary:
+	_check_pin(farm)
+	return _fail(res, msg)
+
+# Clear goal.pinned once its row can no longer be bought (bought, maxed, owned).
+static func _check_pin(farm: Dictionary) -> void:
+	var pin: String = farm["goal"]["pinned"]
+	if pin != "":
+		var p := _parse_id(pin, null)
+		if _cost(farm, p[0], _resolve_arg(farm, p[0], p[1])) < 0:
+			farm["goal"]["pinned"] = ""
+
 # Every player action: start the farm if needed, then note the input (which
 # settles first). Spudling coins credited on the way in are `spud_coins`.
 static func _begin(farm: Dictionary, now: int, tz: int) -> Dictionary:
@@ -813,11 +873,7 @@ static func _begin(farm: Dictionary, now: int, tz: int) -> Dictionary:
 static func _finish(farm: Dictionary, res: Dictionary) -> void:
 	_check_pages(farm, res["events"])
 	_advance_tutorial(farm, res["events"])
-	var pin: String = farm["goal"]["pinned"]
-	if pin != "":
-		var p := _parse_id(pin, null)
-		if _cost(farm, p[0], _resolve_arg(farm, p[0], p[1])) < 0:
-			farm["goal"]["pinned"] = ""
+	_check_pin(farm)
 
 # Tend one field (§5.4): ripe -> hand-harvest + plant the plan; empty -> plant
 # the plan; growing -> no-op returning ready_at_ms and a prompt.
@@ -827,9 +883,9 @@ static func tend(farm: Dictionary, i: int, now_ms: int, tz_s: int) -> Dictionary
 	_ensure(farm)
 	var res := _begin(farm, now_ms, tz_s)
 	if not _valid_field(i):
-		return _fail(res, "No such field")
+		return _failf(farm, res, "No such field")
 	if not farm["fields"][i]["owned"]:
-		return _fail(res, "%s is for sale" % _field_name(i))
+		return _failf(farm, res, "%s is for sale" % _field_name(i))
 	res["crop"] = ""
 	res["stars"] = []
 	res["planted"] = ""
@@ -889,6 +945,7 @@ static func _harvest(farm: Dictionary, i: int, now: int, rec: Dictionary) -> voi
 	st["hand_coins"] = int(st["hand_coins"]) + coins
 	st["stars"] = int(st["stars"]) + starred
 	f["crop"] = ""
+	f["grow_eff_ms"] = 0
 	f["seed_paid"] = 0
 	rec["crop"] = crop
 	rec["coins"] = coins
@@ -911,6 +968,7 @@ static func _plant_plan(farm: Dictionary, i: int, now: int, tz: int, res: Dictio
 	res["spent"] += cost
 	f["crop"] = plan
 	f["planted_g"] = g_now(farm, now)
+	f["grow_eff_ms"] = grow_eff_ms(farm, plan, i)
 	f["by"] = "you"
 	f["seed_paid"] = cost
 	f["fav"] = _is_fav(plan, now, tz)
@@ -922,7 +980,7 @@ static func tend_all(farm: Dictionary, now_ms: int, tz_s: int, ignore_tool := fa
 	_ensure(farm)
 	var res := _begin(farm, now_ms, tz_s)
 	if not ignore_tool and not has_tend_all(farm):
-		return _fail(res, "Tend All needs the Copper Hoe")
+		return _failf(farm, res, "Tend All needs the Copper Hoe")
 	_tend_all_fields(farm, now_ms, tz_s, res)
 	_finish(farm, res)
 	return res
@@ -972,18 +1030,22 @@ static func collect(farm: Dictionary, now_ms: int, tz_s: int) -> Dictionary:
 	_finish(farm, res)
 	return res
 
-# Set a field's plan (free; only the next planting uses it).
+# Set a field's plan (free; only the next planting uses it). Scenes pass
+# now_ms: the change is then an input that settles first, so the new plan is
+# never applied to Spudling replants in time already passed. Without now_ms
+# (projections, tests) nothing is settled or stamped.
 static func set_plan(farm: Dictionary, i: int, crop: String, now_ms := -1, tz_s := 0) -> Dictionary:
 	_ensure(farm)
 	var res := _begin(farm, now_ms, tz_s) if now_ms >= 0 else _result()
 	if not _valid_field(i) or not farm["fields"][i]["owned"]:
-		return _fail(res, "No such field")
+		return _failf(farm, res, "No such field")
 	if not _crop.has(crop):
-		return _fail(res, "Unknown crop")
+		return _failf(farm, res, "Unknown crop")
 	if not crop in farm["unlocked"]:
-		return _fail(res, _page_reason(farm, int(_crop[crop]["page"])))
+		return _failf(farm, res, _page_reason(farm, int(_crop[crop]["page"])))
 	farm["fields"][i]["plan"] = crop
 	res["events"].append({"type": "plan", "field": i, "crop": crop})
+	_check_pin(farm)
 	return res
 
 # Uproot the growing crop (refund floor(seed_paid / 2)) and plant the plan. A
@@ -994,7 +1056,7 @@ static func replant_now(farm: Dictionary, i: int, now_ms: int, tz_s: int) -> Dic
 	var res := _begin(farm, now_ms, tz_s)
 	res["refund"] = 0
 	if not _valid_field(i) or not farm["fields"][i]["owned"]:
-		return _fail(res, "No such field")
+		return _failf(farm, res, "No such field")
 	var f: Dictionary = farm["fields"][i]
 	if f["crop"] == "" or _ripe(farm, i, now_ms):
 		_tend_field(farm, i, now_ms, tz_s, res)
@@ -1004,6 +1066,7 @@ static func replant_now(farm: Dictionary, i: int, now_ms: int, tz_s: int) -> Dic
 		res["refund"] = refund
 		res["events"].append({"type": "uproot", "field": i, "crop": f["crop"], "refund": refund})
 		f["crop"] = ""
+		f["grow_eff_ms"] = 0
 		f["seed_paid"] = 0
 		res["fields"] = [{"field": i, "crop": "", "coins": 0, "stars": [], "planted": _plant_plan(farm, i, now_ms, tz_s, res)}]
 	_finish(farm, res)
@@ -1019,7 +1082,10 @@ static func replant_now(farm: Dictionary, i: int, now_ms: int, tz_s: int) -> Dic
 # Result adds id, item, arg, needed (cost when short).
 static func buy(farm: Dictionary, item: String, arg, now_ms: int, tz_s: int) -> Dictionary:
 	_ensure(farm)
-	var res := _begin(farm, now_ms, tz_s)
+	return _buy(farm, item, arg, _begin(farm, now_ms, tz_s))
+
+# buy() after the input was noted (res from _begin).
+static func _buy(farm: Dictionary, item: String, arg, res: Dictionary) -> Dictionary:
 	var p := _parse_id(item, arg)
 	var it: String = p[0]
 	var a = _resolve_arg(farm, it, p[1])
@@ -1028,13 +1094,13 @@ static func buy(farm: Dictionary, item: String, arg, now_ms: int, tz_s: int) -> 
 	res["id"] = row_id(it, a)
 	var cost := _cost(farm, it, a)
 	if cost < 0:
-		return _fail(res, "Nothing left to buy there")
+		return _failf(farm, res, "Nothing left to buy there")
 	var why := _lock_reason(farm, it, a)
 	if why != "":
-		return _fail(res, why)
+		return _failf(farm, res, why)
 	if int(farm["wallet"]) < cost:
 		res["needed"] = cost
-		return _fail(res, "Needs %s c" % Fmt.coins(cost))
+		return _failf(farm, res, "Needs %s c" % Fmt.coins(cost))
 	farm["wallet"] = int(farm["wallet"]) - cost
 	res["spent"] = cost
 	_apply(farm, it, a, res["events"])
@@ -1066,6 +1132,8 @@ static func _resolve_arg(farm: Dictionary, it: String, arg):
 		"deed":
 			if _is_num(arg):
 				return int(arg)
+			if arg != null and str(arg) != "":
+				return -1                 # "deed:abc" names no field
 			for i in _kk().field_count:
 				if not farm["fields"][i]["owned"]:
 					return i
@@ -1073,6 +1141,8 @@ static func _resolve_arg(farm: Dictionary, it: String, arg):
 		"hut":
 			if _is_num(arg):
 				return int(arg)
+			if arg != null and str(arg) != "":
+				return -1
 			for i in FIELDS:
 				if farm["fields"][i]["owned"] and not farm["fields"][i]["hut"]:
 					return i
@@ -1234,46 +1304,67 @@ static func _hut_name(kk: int) -> String:
 	return str(names[kk]) if kk >= 0 and kk < names.size() else "Spudling"
 
 # Place a bought sprinkler on a fence socket, or move one (from_socket) for
-# free. Sockets bordering unowned fields are allowed. Pass now_ms to count it
-# as an input (settles first).
+# free. Sockets bordering unowned fields are allowed. Watering only affects
+# plantings made after the change (crops in the ground keep the grow time
+# they were planted with). Scenes pass now_ms: it is then an input that
+# settles first, so Spudling replants in time already passed keep the old
+# watering. Without now_ms nothing is settled or stamped.
 static func place_sprinkler(farm: Dictionary, socket: String, from_socket := "", now_ms := -1, tz_s := 0) -> Dictionary:
 	_ensure(farm)
 	var res := _begin(farm, now_ms, tz_s) if now_ms >= 0 else _result()
 	if not _kk().fences.has(socket):
-		return _fail(res, "No such fence")
+		return _failf(farm, res, "No such fence")
 	var placed: Array = farm["sprinklers"]
 	if from_socket != "":
 		var idx := placed.find(from_socket)
 		if idx < 0:
-			return _fail(res, "No sprinkler on fence %s" % from_socket)
+			return _failf(farm, res, "No sprinkler on fence %s" % from_socket)
 		if socket == from_socket:
+			_check_pin(farm)
 			return res
 		if socket in placed:
-			return _fail(res, "That fence already has a sprinkler")
+			return _failf(farm, res, "That fence already has a sprinkler")
 		placed[idx] = socket
 		res["events"].append({"type": "sprinkler_moved", "from": from_socket, "to": socket})
+		_check_pin(farm)
 		return res
 	if socket in placed:
-		return _fail(res, "That fence already has a sprinkler")
+		return _failf(farm, res, "That fence already has a sprinkler")
 	if placed.size() >= int(farm["up"]["sprinklers"]):
-		return _fail(res, "Buy a sprinkler first")
+		return _failf(farm, res, "Buy a sprinkler first")
 	placed.append(socket)
 	res["events"].append({"type": "sprinkler", "socket": socket})
+	_check_pin(farm)
 	return res
 
-# Pin a Farm Book row id as the Next Goal ("" unpins).
+# Pin a Farm Book row as the Next Goal ("" unpins). Refused (ok=false, the
+# old pin kept) for an id that can't be bought: unknown, maxed, owned. A
+# gated row can be pinned. The stored id is the row's canonical id ("hut" ->
+# "hut:0", "deed" -> "deed:1"), the one book() rows carry; result adds id.
 static func pin(farm: Dictionary, id: String) -> Dictionary:
 	_ensure(farm)
-	farm["goal"]["pinned"] = id
-	return _result()
+	var res := _result()
+	res["id"] = ""
+	if id == "":
+		farm["goal"]["pinned"] = ""
+		return res
+	var p := _parse_id(id, null)
+	var a = _resolve_arg(farm, p[0], p[1])
+	if _cost(farm, p[0], a) < 0:
+		return _fail(res, "Nothing left to buy there")
+	res["id"] = row_id(p[0], a)
+	farm["goal"]["pinned"] = res["id"]
+	return res
 
 # Q: buy the Next Goal if it is an affordable purchase (never a filler buy).
+# Like every action it notes the input (settling first) even when it fails.
 static func buy_goal(farm: Dictionary, now_ms: int, tz_s: int) -> Dictionary:
+	_ensure(farm)
+	var res := _begin(farm, now_ms, tz_s)
 	var g := next_goal(farm, now_ms)
 	if g["item"] == "" or not g["can_buy"]:
-		var res := _result()
-		return _fail(res, g.get("locked_reason", "") if g.get("locked_reason", "") != "" else "Nothing to buy yet")
-	return buy(farm, g["item"], g["arg"], now_ms, tz_s)
+		return _failf(farm, res, g["locked_reason"] if g["locked_reason"] != "" else "Nothing to buy yet")
+	return _buy(farm, g["item"], g["arg"], res)
 
 # ════════════════════════════════════════════════════════════ butterflies
 
@@ -1320,7 +1411,7 @@ static func catch_butterfly(farm: Dictionary, now_ms: int, welcome := false, for
 	var is_welcome := welcome or bool(farm["buffs"]["welcome"])
 	var res := _begin(farm, now_ms, tz)
 	if forced_outcome == "" and not due:
-		return _fail(res, "No butterfly here")
+		return _failf(farm, res, "No butterfly here")
 	var b: Dictionary = _cfg["butterflies"]
 	var outcome := forced_outcome
 	if outcome == "":
@@ -1486,11 +1577,16 @@ static func _field_away(farm: Dictionary, i: int, gap: int, ev: float) -> float:
 		return 0.0
 	return _away_value(farm, i, farm["fields"][i]["plan"], gap, ev)
 
-# Value (milli-coins) of one absence of gap_ms on field i planted with c:
-#   no hut (or gap <= clock-in): hand_net if it ripens in time, else pro-rated;
+# Value (milli-coins) of one absence of gap_ms on field i planted with c,
+# with breakpoint (sawtooth) math (lead decision 1, replacing §5.11's
+# pro-rating): a crop that is ripe `span` ms after the absence starts is worth
+# its full value if span <= gap, else value / ceil(span / gap), the share of
+# it one gap-long absence of a steady schedule brings in.
+#   no hut (or gap <= clock-in): hand_net per the rule above (span = grow_eff);
 #   hut: first pick at full value + share × gross per further cycle until the
-#   shift ends − seed, plus the last Spudling crop, hand-picked with stars if
-#   ripe by your return (else pro-rated).
+#   shift ends − seed, plus the last Spudling crop (planted at p_last, hand-
+#   picked with stars) per the same rule with span = p_last + grow_eff.
+# Speed upgrades therefore pay only when they move a crop across a gap boundary.
 static func _away_value(farm: Dictionary, i: int, c: String, gap: int, ev := -1.0) -> float:
 	var k := _kk()
 	if ev < 0.0:
@@ -1498,7 +1594,7 @@ static func _away_value(farm: Dictionary, i: int, c: String, gap: int, ev := -1.
 	var ge := grow_eff_ms(farm, c, i)
 	var hn := _hand_net(farm, i, c, false, ev)
 	var f: Dictionary = farm["fields"][i]
-	var no_hut := hn if ge <= gap else hn * float(gap) / float(ge)
+	var no_hut := _per_absence(hn, ge, gap)
 	if not f["hut"] or gap <= k.clockin_ms:
 		return no_hut
 	var walk := _walk_ms(farm)
@@ -1510,11 +1606,13 @@ static func _away_value(farm: Dictionary, i: int, c: String, gap: int, ev := -1.
 	var cycles := (e - p1) / (ge + walk)
 	var v: float = gross + _share(farm) * gross * cycles - k.plots * _crop[c]["seed"] * 1000.0
 	var p_last := p1 + cycles * (ge + walk)
-	if p_last + ge <= gap:
-		v += gross * ev
-	else:
-		v += gross * ev * float(maxi(0, gap - p_last)) / float(ge)
-	return v
+	return v + _per_absence(gross * ev, p_last + ge, gap)
+
+# Breakpoint share of a value that becomes ripe `span` ms into an absence.
+static func _per_absence(value: float, span: int, gap: int) -> float:
+	if span <= gap:
+		return value
+	return value / ceilf(float(span) / float(maxi(1, gap)))
 
 # Plan-independent power: each owned field's best unlocked hand rate (c/s).
 static func farm_power(farm: Dictionary) -> float:
@@ -1558,7 +1656,7 @@ static func field_view(farm: Dictionary, i: int, now_ms: int) -> Dictionary:
 		v["working"] = now_ms >= w0 and now_ms <= w1
 		v["napping"] = now_ms > w1
 	if f["crop"] != "":
-		var ge := grow_eff_ms(farm, f["crop"], i)
+		var ge := _ge_of(farm, i)
 		var ready := _ready_at(farm, i)
 		var prog := clampf(float(ge - maxi(0, ready - now_ms)) / float(ge), 0.0, 1.0)
 		v["grow_ms"] = ge
@@ -1871,7 +1969,8 @@ static func _ship_rate(farm: Dictionary, c: String, fh: float, typ: int) -> floa
 			continue
 		var ge := grow_eff_ms(farm, c, i)
 		var here := float(k.plots) / float(ge + k.reaction_ms)
-		var away := float(k.plots) / float(maxi(ge, gap))
+		# one harvest per ceil(ge / gap) absences (breakpoint math, lead decision 1)
+		var away := float(k.plots) / float(_cdiv(ge, maxi(1, gap)) * maxi(1, gap))
 		if f["hut"]:
 			var work := maxi(0, mini(gap, k.clockin_ms + _shift_ms(farm)) - k.clockin_ms)
 			away = float(k.plots) * (1.0 + float(work) / float(ge + _walk_ms(farm))) / float(maxi(gap, 1))
@@ -1883,9 +1982,12 @@ static func _ship_rate(farm: Dictionary, c: String, fh: float, typ: int) -> floa
 # Pip's note: what happened since the last note, then cleared (along with the
 # one-time migration ledger). Ripe fields are counted at the last settle;
 # away_ms sums every absence (>= clock-in) since the last note, including the
-# one still open. from_ms is the start of the first of them.
+# one still open. from_ms is the start of the first of them. worked_ms and
+# nap_ms are durations (Spudlings working / napping after their shift, summed
+# over those absences); nap_from_ms is the instant the latest shift ended.
 # {from_ms, to_ms, away_ms, coins, baskets, picks {crop: baskets}, worked_ms,
-#  nap_ms, napped, pages, ripe, ripe_fields, waiting_coins, helpers, migration}
+#  nap_ms, nap_from_ms, napped, pages, ripe, ripe_fields, waiting_coins,
+#  helpers, migration}
 static func take_report(farm: Dictionary) -> Dictionary:
 	_ensure(farm)
 	return _take_report(farm)
@@ -1911,7 +2013,8 @@ static func _take_report(farm: Dictionary) -> Dictionary:
 	var out := {"from_ms": int(r["from_ms"]), "to_ms": int(r["to_ms"]),
 			"away_ms": away,
 			"coins": int(r["coins"]), "baskets": int(r["baskets"]), "picks": r["picks"],
-			"worked_ms": int(r["worked_ms"]), "nap_ms": int(r["nap_ms"]), "napped": int(r["nap_ms"]) > 0,
+			"worked_ms": int(r["worked_ms"]), "nap_ms": int(r["nap_ms"]), "nap_from_ms": int(r["nap_from_ms"]),
+			"napped": int(r["nap_ms"]) > 0,
 			"pages": r["pages"], "ripe": ripe.size(), "ripe_fields": ripe, "waiting_coins": int(waiting),
 			"helpers": helpers, "migration": farm["migration"].duplicate(true)}
 	farm["report"] = {}
