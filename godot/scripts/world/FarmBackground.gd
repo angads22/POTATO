@@ -110,9 +110,16 @@ static func _segment_distance(p: Vector2, a: Vector2, b: Vector2) -> float:
 	var tt := clampf((p - a).dot(ab) / len2, 0.0, 1.0)
 	return p.distance_to(a + ab * tt)
 
+var _acc := 0.0
+
+# The backdrop only animates grass, water and sprinkler spray, so 30 redraws
+# a second are plenty (it is the biggest canvas item in the scene).
 func _process(delta):
 	t += delta
-	queue_redraw()
+	_acc += delta
+	if _acc >= 1.0 / 30.0:
+		_acc = 0.0
+		queue_redraw()
 
 func _draw():
 	var farm: Dictionary = SaveDataManager.farm

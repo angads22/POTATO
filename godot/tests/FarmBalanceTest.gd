@@ -6,13 +6,17 @@ extends Node
 # (tests/farm/FarmSuite.gd) checks:
 #   - §6.3 milestone windows (14 days class/casual, 10 sessions active)
 #   - §6.2 feel targets (first coins, Pip, 6 buys in 15 min, class day 1)
-#   - SD1 SD2 SD4 SD6 SD7 SD8 and a reduced SD3 tournament (5 x 3 x 7 days)
+#   - lead play-feel checks: a purchase every ~2 min in the first active half
+#     hour, something to do at every class check-in on day 1
+#   - SD1 SD2 SD4 SD6 SD7 SD8 and an SD3 tournament (S1-S3 + S5 x 3 profiles
+#     x 14 days; lead ruling 4 form, see tests/farm/BALANCE.md)
 #   - §5.12 invariants 2-8 (bulk == stepped with a JSON round trip, shift
-#     cap, nothing lost, hut safety, no deadlock, 7-day settle < 100 ms,
-#     determinism), bankroll (10K start: pages <= 25% earlier), the veteran
-#     landing, and 60-day magnitudes
+#     cap, nothing lost, hut safety, the your-crop grace, no deadlock, 7-day
+#     settle < 100 ms, determinism), bankroll (10K start: pages <= 25%
+#     earlier), the veteran landing, and 60-day magnitudes
 # Prints its tables, then "FARM BALANCE OK", or "FARM BALANCE FAIL: <n>
-# failures" followed by each failure. Runs synchronously in _ready (~30 s).
+# failures" followed by each failure. Runs synchronously in _ready (~60 s
+# locally; budget 90 s).
 # It never touches SaveDataManager or user://.
 #
 #   godot --headless --path . res://tests/FarmBalanceTest.tscn --quit-after 6000

@@ -702,7 +702,7 @@ func _shop_key(k: Key):
 			shop_sel = posmod(shop_sel - 1, knives.size())
 		KEY_DOWN, KEY_S:
 			shop_sel = posmod(shop_sel + 1, knives.size())
-		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE, KEY_E:
+		KEY_ENTER, KEY_KP_ENTER:
 			buy_or_equip_knife(str(knives[shop_sel]["id"]))
 		_:
 			var idx := int(k) - KEY_1

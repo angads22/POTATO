@@ -442,8 +442,12 @@ func _draw_row(ci: CanvasItem, font: Font, f: Dictionary, r: Dictionary, rr: Rec
 	tw = ROW_W - 10.0 - 118.0
 	ci.draw_string(font, Vector2(tx, rr.position.y + 37), WorldHUD.fit(font, str(r["effect"]), 12, tw), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, WorldHUD.INK_DIM)
 	var lines := row_detail(f, r)
-	ci.draw_string(font, Vector2(tx, rr.position.y + 53), WorldHUD.fit(font, lines[0], 12, tw), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, lines[2])
-	if lines[1] != "":
+	if r["locked"]:
+		# a lock reason gets both detail lines ("Catalog page 3: ship 480 Red · 312/480")
+		ci.draw_multiline_string(font, Vector2(tx, rr.position.y + 53), lines[0], HORIZONTAL_ALIGNMENT_LEFT, tw, 12, 2, lines[2])
+	else:
+		ci.draw_string(font, Vector2(tx, rr.position.y + 53), WorldHUD.fit(font, lines[0], 12, tw), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, lines[2])
+	if lines[1] != "" and not r["locked"]:
 		ci.draw_string(font, Vector2(tx, rr.position.y + 68), WorldHUD.fit(font, lines[1], 12, tw), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, lines[3])
 	# [Buy] shows the price; [Pin] a push-pin (filled when pinned)
 	var buy := Rect2(rr.end.x - 112, rr.position.y + 16, 62, 44)
@@ -703,7 +707,10 @@ func _draw_card(ci: CanvasItem, font: Font):
 	if v["watered"]:
 		WorldHUD.icon_droplet(ci, Vector2(sr.position.x + 18, sr.get_center().y), 8.0)
 	var btn_w := (166.0 if spr["label"] != "" else 0.0) + (72.0 if spr.get("can_move", false) else 0.0)
-	ci.draw_string(font, Vector2(sr.position.x + 34, sr.position.y + 27), WorldHUD.fit(font, str(spr["text"]), 13,
+	var stext := str(spr["text"])
+	if btn_w > 200.0:
+		stext = stext.replace("Watered by fence ", "Watered by ")
+	ci.draw_string(font, Vector2(sr.position.x + 34, sr.position.y + 27), WorldHUD.fit(font, stext, 13,
 			ROW_W - 40 - btn_w), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, WorldHUD.INK)
 	if spr["label"] != "":
 		var b := Rect2(sr.end.x - 166, sr.position.y, 166, 44)

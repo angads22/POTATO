@@ -59,9 +59,11 @@ static func hut_pos(i: int) -> Vector2:
 	var r := field_rect(i)
 	return Vector2(r.position.x - 104.0, r.position.y + 58.0)
 
+# Click / blocker rect of a hut: 104 px so it stays >= 44 px on screen at
+# the 0.45 overview zoom.
 static func hut_rect(i: int) -> Rect2:
 	var p := hut_pos(i)
-	return Rect2(p.x - 46, p.y - 52, 92, 92)
+	return Rect2(p.x - 52, p.y - 56, 104, 104)
 
 # ── clock / presence ──
 

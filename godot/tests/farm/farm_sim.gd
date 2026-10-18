@@ -21,7 +21,8 @@ extends SceneTree
 #                                              bankroll, veteran, 60-day magnitudes
 #   --ci                                       the FarmBalanceTest set, printed here (no exit code)
 #   --only a,b,...                             with --all/--ci: only these sections, from
-#                                              main, feel, feelplus, sdfix, sd4, sd3, sd5, sd8, sd9, inv, bank, vet, mag
+#                                              main (incl. the time-to-each-upgrade table), feel, feelplus,
+#                                              sdfix, sd4, sd3, sd5, sd8, sd9, inv, bank, vet, mag
 
 const FE = preload("res://scripts/farm/FarmEconomy.gd")
 const FarmBot = preload("res://tests/farm/FarmBot.gd")
@@ -131,6 +132,7 @@ func run_all(s, args: Dictionary) -> void:
 		s.run_main(dm)
 	if _on("main"):
 		s.print_milestones()
+		s.upgrade_times()
 		for p in ["active", "class", "casual"]:
 			print("")
 			print("-- %s per day   (hand plantings %s · Spudling picks %s)" % [p, str(s.main[p].hand_plants), str(s.main[p].spud_picks)])

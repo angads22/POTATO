@@ -364,7 +364,8 @@ func _draw_modal(font: Font):
 	var title := "A note from %s" % str(helpers[0]) if not helpers.is_empty() else "While you were away"
 	draw_string(font, Vector2(r.position.x + 30, r.position.y + 46), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 28, ink)
 	var away := int(rep.get("away_ms", 0)) / 1000
-	draw_string(font, Vector2(r.position.x + 32, r.position.y + 72), "you were away %s" % NumFmt.dur(away),
+	var sub := "you were away %s" % NumFmt.dur(away) if away > 0 else "welcome to Spudling Acres"
+	draw_string(font, Vector2(r.position.x + 32, r.position.y + 72), sub,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.45, 0.32, 0.18))
 	if not helpers.is_empty():
 		FarmBook._spudling_icon(self, Vector2(r.end.x - 52, r.position.y + 50), 20.0, FarmView.hut_hat(0))

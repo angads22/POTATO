@@ -492,6 +492,76 @@ func feel_plus(ndays := 14, assert_it := false, with_huts := true) -> void:
 	say("   ROI buyer held to 1 hut vs ROI, %d days from a fresh start: %s(late-game hut value per field: SD4 'all' row)" % [ndays, line])
 	done()
 
+# Time to every upgrade (the user's "time to upgrades" evidence): when each
+# profile's ROI player first owns each purchase, from the main runs.
+# Rows: Field 2-6 and the Greenhouse, huts 1-7, farmhouse, share, Quick
+# Hands, hoes, sprinklers, Soil levels, Prize Strain tiers.
+func upgrade_times() -> void:
+	section("TIME TO EACH UPGRADE (ROI player, fresh start; active: played time, class/casual: check-in #)")
+	var labels := {"deed": ["Field 2", "Field 3", "Field 4", "Field 5", "Field 6"], "greenhouse": ["Greenhouse"],
+			"hut": ["Hut 1 (Pip)", "Hut 2", "Hut 3", "Hut 4", "Hut 5", "Hut 6", "Hut 7"],
+			"house": ["Cottage 4h", "House 8h", "Manor 12h"], "share": ["Share 60%", "Share 70%"],
+			"quick": ["Quick 30s", "Quick 15s"], "tool": ["Copper Hoe", "Iron Hoe", "Gold Hoe"],
+			"sprinkler": ["Sprinkler 1", "Sprinkler 2", "Sprinkler 3"]}
+	var soil_marks := [1, 10, 20, 30, 40, 45, 50]
+	var order: Array = []
+	for it in ["deed", "greenhouse", "hut", "house", "share", "quick", "tool", "sprinkler"]:
+		for l in labels[it]:
+			order.append(l)
+	for m in soil_marks:
+		order.append("Soil L%d" % m)
+	for k in [1, 4, 8, 12]:
+		order.append("Strain tiers %d" % k)
+	var at := {}
+	for p in MAIN:
+		if not main.has(p):
+			continue
+		var b = main[p]
+		at[p] = {}
+		var n := {}
+		var strains := 0
+		for q in b.purchases:
+			var it: String = q["item"]
+			var k := int(n.get(it, 0))
+			n[it] = k + 1
+			var lab := ""
+			if labels.has(it) and k < labels[it].size():
+				lab = labels[it][k]
+			elif it == "soil" and (k + 1) in soil_marks:
+				lab = "Soil L%d" % (k + 1)
+			elif it == "strain":
+				strains += 1
+				if strains in [1, 4, 8, 12]:
+					lab = "Strain tiers %d" % strains
+			if lab != "" and not at[p].has(lab):
+				at[p][lab] = [int(q["t"]), int(q["cost"]), int(q["wi"])]
+	var hdr := pad("Upgrade", 16)
+	for p in MAIN:
+		hdr += "| " + pad(p, 30)
+	say(hdr)
+	say("-".repeat(hdr.length()))
+	for lab in order:
+		var line := pad(lab, 16)
+		var any := false
+		for p in MAIN:
+			var cell := "-"
+			if at.has(p) and at[p].has(lab):
+				any = true
+				var e: Array = at[p][lab]
+				var b = main[p]
+				var when: String = b.fmt_t(e[0])
+				if p == "active":
+					var pm: int = b.played_ms(e[0])
+					when += " (%s)" % (("%dm" % int(round(pm / float(MIN)))) if pm < 2 * HOUR else ("%.1fh" % (pm / float(HOUR))))
+				else:
+					when += " #%d" % (e[2] + 1)
+				cell = "%s %s" % [when, coins(e[1])]
+			line += "| " + pad(cell, 30)
+		if any:
+			say(line)
+	say("   '-' = not bought within the run (%s)" % ", ".join(MAIN.map(func(p): return "%s %d days" % [p, main[p].days] if main.has(p) else p)))
+	done()
+
 static func _mmss(ms: int) -> String:
 	if ms >= 1 << 60 or ms < 0:
 		return "never"
@@ -1327,7 +1397,9 @@ func veteran(ndays: int) -> void:
 # ════════════════════════════════════════════════════════ the CI set
 
 # Exactly what FarmBalanceTest runs (design §10.5): 14 days class/casual, 10
-# sessions active, the cheap SD checks plus a reduced SD3 tournament.
+# sessions active, the cheap SD checks, the SD3 tournament on the three main
+# profiles over 14 days (lead ruling 4 form), FEEL+ without the extra hut
+# runs, and bankroll runs just long enough for page 6.
 const CI_DAYS := {"active": 10, "class": 14, "casual": 14}
 # Bankroll runs only need every Catalog page to land (active page 6 at ~24
 # played hours = day 7; class and casual by day 5).
