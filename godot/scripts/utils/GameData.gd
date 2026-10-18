@@ -1,26 +1,30 @@
 extends RefCounted
 class_name GameData
 
-# Static loader for game-data resources (knives, potatoes).
+# Static loader for game-data resources (knives, potatoes, achievements).
 # Data lives in resources/game_data/*.json so designers can tweak balance
-# without touching code. Loaded once and cached.
+# without touching code. Loaded once and cached. The farm's balance lives in
+# farm.json and is read by scripts/farm/FarmEconomy.gd, not here.
+#
+# resources/game_data/legacy/ holds the FROZEN v4.0.0 (farm schema 3) tables:
+# the research tree, the plow/sprinkler/fertilizer items and the old per-crop
+# seed/sell/yield values. Only the save migration reads them (FarmMigration via
+# SaveDataManager), so later balance edits can never change how an old save
+# lands. Never edit those files.
 
 const KNIVES_PATH = "res://resources/game_data/knives.json"
 const POTATOES_PATH = "res://resources/game_data/potatoes.json"
-const ITEMS_PATH = "res://resources/game_data/items.json"
-const RESEARCH_PATH = "res://resources/game_data/research.json"
 const ACHIEVEMENTS_PATH = "res://resources/game_data/achievements.json"
-
-# Crops a brand-new farm can plant before any research; the rest unlock via
-# the Research Shed (see research.json "unlock_crop" effects).
-const STARTER_CROPS = ["russet", "yukon_gold"]
+const LEGACY_RESEARCH_PATH = "res://resources/game_data/legacy/research_v3.json"
+const LEGACY_ITEMS_PATH = "res://resources/game_data/legacy/items_v3.json"
+const LEGACY_CROPS_PATH = "res://resources/game_data/legacy/crops_v3.json"
 
 static var _knives: Array = []
 static var _potatoes: Array = []
-static var _tools: Array = []
-static var _enhancers: Array = []
-static var _research: Array = []
 static var _achievements: Array = []
+static var _legacy_research: Array = []
+static var _legacy_items: Dictionary = {}
+static var _legacy_crops: Array = []
 
 static func knives() -> Array:
 	if _knives.is_empty():
@@ -48,54 +52,6 @@ static func potato_by_id(id: String) -> Dictionary:
 static func standard_potatoes() -> Array:
 	return potatoes().filter(func(p): return not p.get("rotten", false) and not p.get("rare", false))
 
-# Varieties that can be planted on the farm (anything with a seed price).
-static func farmable_potatoes() -> Array:
-	return potatoes().filter(func(p): return p.has("seed_cost"))
-
-# Farmable varieties the player may currently plant/buy: the starter crops
-# plus any unlocked through research. Pass the unlocked-crop id list so this
-# stays stateless (SaveDataManager.unlocked_crops()).
-static func unlocked_potatoes(unlocked_ids: Array) -> Array:
-	return farmable_potatoes().filter(
-		func(p): return p["id"] in STARTER_CROPS or p["id"] in unlocked_ids)
-
-# Farm tools (permanent, enable auto-farming) and growth enhancers
-# (consumables applied to a planted plot)
-static func tools() -> Array:
-	if _tools.is_empty():
-		_tools = _load_array(ITEMS_PATH, "tools")
-	return _tools
-
-static func enhancers() -> Array:
-	if _enhancers.is_empty():
-		_enhancers = _load_array(ITEMS_PATH, "enhancers")
-	return _enhancers
-
-static func tool_by_id(id: String) -> Dictionary:
-	for tl in tools():
-		if tl.get("id", "") == id:
-			return tl
-	return {}
-
-static func enhancer_by_id(id: String) -> Dictionary:
-	for e in enhancers():
-		if e.get("id", "") == id:
-			return e
-	return {}
-
-# Research tree nodes (resources/game_data/research.json): permanent farm
-# upgrades bought with coins + research points (logistics, tools, crops, growth).
-static func research_nodes() -> Array:
-	if _research.is_empty():
-		_research = _load_array(RESEARCH_PATH, "nodes")
-	return _research
-
-static func research_by_id(id: String) -> Dictionary:
-	for n in research_nodes():
-		if n.get("id", "") == id:
-			return n
-	return {}
-
 # Achievement catalogue (resources/game_data/achievements.json): {id, name,
 # desc}. Awarded at runtime via SaveDataManager.unlock_achievement(id).
 static func achievements() -> Array:
@@ -108,6 +64,33 @@ static func achievement_by_id(id: String) -> Dictionary:
 		if a.get("id", "") == id:
 			return a
 	return {}
+
+# ── frozen schema-3 tables (save migration only) ──
+
+# The v3 research tree: [{id, name, branch, cost_coins, cost_rp, requires,
+# effect, ...}] (87 nodes).
+static func legacy_research_nodes() -> Array:
+	if _legacy_research.is_empty():
+		_legacy_research = _load_array(LEGACY_RESEARCH_PATH, "nodes")
+	return _legacy_research
+
+# The v3 shop items: {"tools": [plow, sprinkler], "enhancers": [compost,
+# super_grow, miracle_mulch]}.
+static func legacy_items() -> Dictionary:
+	if _legacy_items.is_empty():
+		_legacy_items = {"tools": _load_array(LEGACY_ITEMS_PATH, "tools"),
+				"enhancers": _load_array(LEGACY_ITEMS_PATH, "enhancers")}
+	return _legacy_items
+
+# The v3 per-crop farm values: [{id, seed_cost, grow_time, sell_value, yield}].
+static func legacy_crops() -> Array:
+	if _legacy_crops.is_empty():
+		_legacy_crops = _load_array(LEGACY_CROPS_PATH, "crops")
+	return _legacy_crops
+
+# Everything FarmMigration.migrate_v3() needs, in the shape it takes.
+static func legacy_tables() -> Dictionary:
+	return {"research": legacy_research_nodes(), "items": legacy_items(), "crops": legacy_crops()}
 
 static func _load_array(path: String, key: String) -> Array:
 	if not FileAccess.file_exists(path):

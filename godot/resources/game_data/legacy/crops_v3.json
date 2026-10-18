@@ -1,0 +1,12 @@
+{
+	"_comment": "Frozen v4.0.0 (farm schema 3) farm values for every crop, moved out of potatoes.json. Read only by FarmMigration (via GameData.legacy_crops()) so old saves refund the same coins no matter how the new economy is tuned. Do not edit.",
+	"crops": [
+		{ "id": "russet",      "seed_cost": 10,  "grow_time": 25,  "sell_value": 6,   "yield": [2, 4] },
+		{ "id": "yukon_gold",  "seed_cost": 16,  "grow_time": 35,  "sell_value": 9,   "yield": [2, 4] },
+		{ "id": "red",         "seed_cost": 26,  "grow_time": 50,  "sell_value": 14,  "yield": [2, 4] },
+		{ "id": "purple",      "seed_cost": 40,  "grow_time": 65,  "sell_value": 21,  "yield": [2, 5] },
+		{ "id": "fingerling",  "seed_cost": 60,  "grow_time": 80,  "sell_value": 30,  "yield": [2, 5] },
+		{ "id": "king_edward", "seed_cost": 90,  "grow_time": 95,  "sell_value": 44,  "yield": [3, 5] },
+		{ "id": "golden",      "seed_cost": 200, "grow_time": 140, "sell_value": 110, "yield": [2, 3] }
+	]
+}
