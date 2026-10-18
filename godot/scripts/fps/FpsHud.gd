@@ -6,6 +6,8 @@ class_name FpsHud
 # pause overlay and the coins/starch payout results screen. Drawn the same way
 # as the rest of the game's UI — immediate-mode _draw with the fallback font.
 
+const Fmt = preload("res://scripts/utils/NumFmt.gd")
+
 var arena  # FpsArena
 
 var _hitmarker_until := 0.0
@@ -234,8 +236,9 @@ func _draw_payout(font: Font, vp: Vector2, cx: float, y: float) -> void:
 	var pay: Dictionary = arena.payout
 	if pay.is_empty():
 		return
+	var picnic := int(pay.get("picnic", 0))
 	var box_w := 360.0
-	var box_h := 110.0
+	var box_h := 136.0 if picnic > 0 else 110.0
 	var bx := cx - box_w / 2.0
 	draw_rect(Rect2(bx, y, box_w, box_h), Color(0.12, 0.1, 0.06, 0.95))
 	draw_rect(Rect2(bx, y, box_w, box_h), Color(0.85, 0.68, 0.3, 0.6), false, 2.0)
@@ -243,7 +246,7 @@ func _draw_payout(font: Font, vp: Vector2, cx: float, y: float) -> void:
 			Color(0.95, 0.85, 0.5))
 	var coins := int(pay.get("coins", 0))
 	var starch := int(pay.get("starch", 0))
-	draw_string(font, Vector2(bx + 16, y + 56), "Coins  +%d" % coins,
+	draw_string(font, Vector2(bx + 16, y + 56), "Coins  +%s" % Fmt.coins(coins),
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(1.0, 0.85, 0.35))
 	var st_col: Color = Color(0.6, 0.95, 0.85) if starch > 0 else Color(0.55, 0.55, 0.5)
 	draw_string(font, Vector2(bx + 16, y + 84), "Starch +%d" % starch,
@@ -251,8 +254,13 @@ func _draw_payout(font: Font, vp: Vector2, cx: float, y: float) -> void:
 	if starch == 0:
 		draw_string(font, Vector2(bx + 150, y + 84), "(win to earn starch)",
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.6, 0.58, 0.5))
+	if picnic > 0:
+		# the farm's share: minutes of its output, design §8
+		draw_string(font, Vector2(bx + 16, y + 114), "Farm Picnic +%s (%s farm-min)" % [
+				Fmt.coins(picnic), Fmt.compact(float(pay.get("picnic_min", 0.0)))],
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color(0.7, 0.95, 0.55))
 	# running totals
-	draw_string(font, Vector2(bx + 200, y + 56), "Wallet: %d" % SaveDataManager.wallet(),
+	draw_string(font, Vector2(bx + 200, y + 56), "Wallet: %s" % Fmt.coins(SaveDataManager.wallet()),
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.8, 0.75, 0.6))
 	draw_string(font, Vector2(bx + 200, y + 84), "Starch: %d" % SaveDataManager.starch(),
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.7, 0.85, 0.8))

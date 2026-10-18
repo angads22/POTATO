@@ -106,6 +106,20 @@ static func build() -> Dictionary:
 			"r": 0.01, "lp": 1800.0, "noise": 0.4, "vol": 0.3}, 0.0, 0.0)
 	out["fps_death"] = _miss(s)
 
+	# ── Spudling Acres: soft, cozy cues (each has a visual twin, design §7.4).
+	# Added last so the shared noise RNG leaves every older recipe unchanged.
+	out["tend_pop"] = _tend_pop(s)
+	out["star"] = _arp(s, [91, 98], 0.05, {"wave": "fm", "fm_ratio": 3.5, "fm_index": 1.3, "fm_decay": 0.12,
+			"a": 0.001, "d": 0.22, "s": 0.0, "r": 0.15, "vol": 0.14}, 0.09, 0.25)
+	out["butterfly"] = _flutter(s)
+	out["butterfly_catch"] = _arp(s, [84, 88, 91, 96], 0.05, {"wave": "fm", "fm_ratio": 3.0, "fm_index": 1.1,
+			"fm_decay": 0.15, "a": 0.001, "d": 0.25, "s": 0.0, "r": 0.2, "vol": 0.16}, 0.11, 0.3)
+	out["page_unlock"] = _page_turn(s)
+	out["note_open"] = _note_open(s)
+	# rate-limited by the caller (<= 4/s while a wallet rolls up), so tiny
+	out["coin_tick"] = s.tone(Synth.midi_hz(100), 0.004, {"wave": "tri", "a": 0.0005, "d": 0.02, "s": 0.0,
+			"r": 0.008, "lp": 7000.0, "vol": 0.2})
+
 	var waves := {}
 	for k in out:
 		var buf: PackedFloat32Array = out[k]
@@ -133,6 +147,8 @@ const LOUDNESS := {
 	"fps_shot": 0.12, "fps_shot_heavy": 0.13, "fps_launcher": 0.13, "fps_hit": 0.05,
 	"fps_headshot": 0.06, "fps_frag": 0.08, "fps_hurt": 0.12, "fps_jump": 0.04,
 	"fps_pickup": 0.06, "fps_explosion": 0.15, "fps_death": 0.11, "fps_reload": 0.05,
+	"tend_pop": 0.05, "star": 0.045, "butterfly": 0.03, "butterfly_catch": 0.06,
+	"page_unlock": 0.065, "note_open": 0.04, "coin_tick": 0.025,
 }
 
 static func _level(buf: PackedFloat32Array, target_rms: float):
@@ -364,6 +380,42 @@ static func _launcher(s: Synth) -> PackedFloat32Array:
 	var thump := s.tone(90.0, 0.05, {"wave": "sine", "a": 0.001, "d": 0.18, "s": 0.0, "r": 0.06,
 			"pdrop": 14.0, "pdecay": 0.03, "vol": 0.7})
 	return s.concat(thump, _whoosh(s, 0.25), 0.0)
+
+# A soft round "pop" with a puff of soil: one field tended (12 plots ripple).
+static func _tend_pop(s: Synth) -> PackedFloat32Array:
+	var pop := s.tone(280.0, 0.03, {"wave": "sine", "a": 0.002, "d": 0.08, "s": 0.0, "r": 0.03,
+			"slide": 10.0, "vol": 0.45})
+	var soil := s.tone(1.0, 0.03, {"wave": "noise", "a": 0.002, "d": 0.05, "s": 0.0, "r": 0.02,
+			"hp": 500.0, "lp": 2200.0, "vol": 0.12})
+	Synth.mix(pop, soil, 0)
+	return pop
+
+# A butterfly drifts in: a quiet, wavering rising shimmer (never urgent).
+static func _flutter(s: Synth) -> PackedFloat32Array:
+	var p := {"wave": "sine", "a": 0.01, "d": 0.12, "s": 0.3, "r": 0.15, "trem": 0.6, "trem_rate": 18.0,
+			"vib": 0.3, "vib_rate": 9.0, "vib_delay": 0.0, "vol": 0.14}
+	var out := s.silence(0.8)
+	var notes := [88, 93, 91, 96]
+	for i in notes.size():
+		Synth.mix(out, s.tone(Synth.midi_hz(notes[i]), 0.07, p), s.n_samples(0.075 * i))
+	Synth.echo(out, s.n_samples(0.13), 0.25, 0.4)
+	return _trim(out)
+
+# A Catalog page: a papery swish, then a warm three-note bell.
+static func _page_turn(s: Synth) -> PackedFloat32Array:
+	var swish := s.tone(1.0, 0.16, {"wave": "noise", "a": 0.04, "d": 0.12, "s": 0.0, "r": 0.05,
+			"hp": 1200.0, "lp": 2500.0, "lp_env": 3500.0, "lp_decay": 0.08, "vol": 0.22})
+	var bell := _arp(s, [79, 84, 88], 0.08, {"wave": "fm", "fm_ratio": 2.0, "fm_index": 0.9, "fm_decay": 0.2,
+			"a": 0.002, "d": 0.35, "s": 0.0, "r": 0.25, "vol": 0.17}, 0.16, 0.25)
+	return s.concat(swish, bell, 0.1)
+
+# Pip's note unfolds: a short paper rustle and one soft low chime.
+static func _note_open(s: Synth) -> PackedFloat32Array:
+	var rustle := s.tone(1.0, 0.1, {"wave": "noise", "a": 0.02, "d": 0.08, "s": 0.0, "r": 0.04,
+			"hp": 1500.0, "lp": 4500.0, "trem": 0.5, "trem_rate": 30.0, "vol": 0.18})
+	var chime := s.tone(Synth.midi_hz(72), 0.05, {"wave": "fm", "fm_ratio": 2.0, "fm_index": 0.6, "fm_decay": 0.15,
+			"a": 0.003, "d": 0.45, "s": 0.0, "r": 0.2, "vol": 0.16})
+	return s.concat(rustle, chime, 0.06)
 
 # Drop trailing near-silence so short SFX don't hold a voice for nothing.
 static func _trim(buf: PackedFloat32Array) -> PackedFloat32Array:

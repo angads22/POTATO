@@ -139,6 +139,9 @@ func _on_download_done(code: int):
 	out.close()
 	if OS.get_name() != "Windows":
 		OS.execute("chmod", ["+x", exe])
+	# write a pending (debounced) farm save before the new build starts and
+	# reads it
+	SaveDataManager.flush_farm()
 	OS.create_process(exe, ["--updated"])
 	get_tree().quit()
 

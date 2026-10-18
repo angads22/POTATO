@@ -1,7 +1,8 @@
 extends Node
 
 # Persistent data management
-# Handles leaderboard, achievements, unlocks, settings
+# Handles leaderboard, achievements, unlocks, settings and the farm save
+# (Spudling Acres, farm schema 4: see scripts/farm/FarmEconomy.gd).
 
 const SAVE_PATH = "user://potato_game/"
 const LEADERBOARD_FILE = "leaderboard.json"
@@ -9,6 +10,22 @@ const ACHIEVEMENTS_FILE = "achievements.json"
 const SETTINGS_FILE = "settings.json"
 const UNLOCKS_FILE = "unlocks.json"
 const FARM_FILE = "farm.json"
+# One-time copy of a pre-schema-4 farm.json, written before the first
+# schema-4 write over it (design §9.2), and a copy of an unreadable one.
+const FARM_BACKUP_FILE = "farm.schema3.json"
+const FARM_CORRUPT_FILE = "farm.corrupt.json"
+const FARM_SCHEMA := 4
+
+# Farm saving (design §7.6): request_farm_save() marks the farm dirty; it is
+# written FARM_SAVE_DEBOUNCE_MS after the last request, and at least every
+# FARM_SAVE_FORCE_MS while requests keep coming. flush_farm() writes now.
+const FARM_SAVE_DEBOUNCE_MS := 2000
+const FARM_SAVE_FORCE_MS := 10000
+# The heartbeat settles a started farm from every scene (Spudling coins land
+# in the wallet while you're in the kitchen too). It never stamps input.
+const HEARTBEAT_S := 30.0
+# Classroom low-power mode while a scene that allows it loses focus.
+const LOW_POWER_FPS := 10
 
 # ── save slots ──
 # The player keeps up to MAX_SLOTS fully independent save files. Each slot's
@@ -42,6 +59,8 @@ var settings: Dictionary = {
 	"audio_offset_ms": 0,
 	"player_name": "",
 	"seen_kitchen_tutorial": false,  # the one-time "cut on the beat" coach card
+	"sound_prompted": false,    # the first-launch "Play with sound?" card was answered
+	"last_menu_item": "",       # main-menu action Enter re-opens (e.g. "farm")
 	"best_scores": {},          # mode -> best score
 	"concert_bests": {},        # "<seed>:<difficulty>" -> {score, grade}
 	"graphics_style": "classic",  # classic | pixel | hyperreal (see StyleManager)
@@ -74,45 +93,45 @@ const RANKS := [
 	{"floor": 20000, "name": "Legendary Potato Master"},
 ]
 
-# Farm + economy state (schema 3, free-form open grid). New games start with a
-# few russet seeds, pocket change and a fresh plow so the farming loop can
-# begin immediately. The whole pasture is one plowable grid: tiles are sparse
-# (only plowed / planted / sprinkler cells exist), keyed "col:row" and holding
-# {plowed, potato_id, planted_at (unix), watered, ...} — growth survives
-# quitting because it's measured against the wall clock. Progression runs on
-# the Research Shed (research points + coins) and crops haul to market on the
-# truck. Schema-1 ("plots" array) and schema-2 ("field:row:col" + sections)
-# saves migrate automatically (see _migrate_farm).
-var farm: Dictionary = {
-	"schema": 3,
-	"wallet": 50,
-	"seeds": {"russet": 3},
-	"spuds": {},
-	"water": 0,
-	"owned_knives": ["butter"],
-	"equipped_knife": "butter",
-	"tiles": {},            # sparse "col:row" -> tile dict
-	"plow_uses": 10,        # durability left on the current plow; 0 = broken
-	"plows_bought": 0,      # replacement purchases — each one costs more
-	"cover_freebies": 9,    # free "cover plot" uses; once spent, covering costs coins
-	"sprinkler_stock": 0,   # sprinklers bought but not yet placed on a tile
-	"items": {},            # fertilizer charges remaining, per enhancer id
-	"research_points": 0,   # spent with coins on the research tree
-	"research": {},         # unlocked research node ids -> true
-	# market truck: load spuds, send it off, coins + RP arrive after a trip
-	"truck": {"status": "idle", "cargo": {}, "return_at": 0.0,
-			"pending_coins": 0, "pending_rp": 0},
-	# Standing orders, configured at the farm's two order depots (each gated
-	# behind its automation research). "crops"/"grade" name what's restocked,
-	# "stock_target" how many to keep on hand. The Seed Co-op + Supply Depot
-	# unlock once auto_buy_seeds / auto_buy_fertilizer are researched. Orders
-	# pay a delivery premium over the shop price (see FarmController), so the
-	# automated farm runs at a thinner margin than hands-on buying.
-	"seed_order": {"enabled": true, "crops": ["russet", "yukon_gold"], "stock_target": 5},
-	"fertilizer_order": {"enabled": true, "grade": "compost", "stock_target": 3}
-}
+# Farm + economy state: the Spudling Acres save, schema 4 (design §9.1). The
+# dict is owned by this autoload but its rules live in FarmEconomy (static and
+# pure: scenes call FarmEconomy.tend(SaveDataManager.farm, now, tz) and then
+# request_farm_save()). It also carries the wallet shared with every mode and
+# the owned/equipped knives. Older saves (schema 1 "plots", schema 2
+# "field:row:col" + sections, schema 3 open grid + research + truck) migrate
+# on load through _migrate_farm(), a 1 -> 2 -> 3 -> 4 chain on the raw dict.
+# Views re-read SaveDataManager.farm every tick and never cache it: it is
+# replaced wholesale by load_game(), switch_slot() and tests.
+var farm: Dictionary = {}
+var farm_writes: int = 0          # farm.json writes since boot (tests, debugging)
+
+# The farm scripts are loaded at runtime, never named by class_name: autoloads
+# are parsed before Godot's global class list exists on a fresh checkout (see
+# AudioManager, commit 3000e3d).
+var _fe = null      # scripts/farm/FarmEconomy.gd
+var _clock = null   # scripts/farm/FarmClock.gd
+var _mig = null     # scripts/farm/FarmMigration.gd
+var _fmt = null     # scripts/utils/NumFmt.gd
+
+var _farm_dirty := false
+var _dirty_since_ms := 0
+var _last_request_ms := 0
+var _heartbeat: Timer
+var _low_power_ok := false
+var _low_power_on := false
+var _saved_max_fps := 0
+var _saved_low_cpu := false
 
 func _ready():
+	# Debounced farm writes and the heartbeat keep running while the tree is
+	# paused (pause menu, kitchen pause).
+	process_mode = Node.PROCESS_MODE_ALWAYS
+	set_process(false)
+	_fe = load("res://scripts/farm/FarmEconomy.gd")
+	_clock = load("res://scripts/farm/FarmClock.gd")
+	_mig = load("res://scripts/farm/FarmMigration.gd")
+	_fmt = load("res://scripts/utils/NumFmt.gd")
+	farm = _fe.new_farm()
 	# Ensure save directory exists
 	if not DirAccess.dir_exists_absolute(SAVE_PATH):
 		DirAccess.make_dir_recursive_absolute(SAVE_PATH)
@@ -130,6 +149,14 @@ func _ready():
 		_save_meta()
 	DirAccess.make_dir_recursive_absolute(_slot_dir())
 	load_game()
+	_heartbeat = Timer.new()
+	_heartbeat.name = "FarmHeartbeat"
+	_heartbeat.wait_time = HEARTBEAT_S
+	_heartbeat.one_shot = false
+	_heartbeat.process_mode = Node.PROCESS_MODE_ALWAYS
+	_heartbeat.timeout.connect(heartbeat)
+	add_child(_heartbeat)
+	_heartbeat.start()
 
 # ── save-slot plumbing ──
 
@@ -169,7 +196,7 @@ func switch_slot(n: int) -> bool:
 	n = clampi(n, 1, MAX_SLOTS)
 	if n == current_slot:
 		return false
-	save_game()
+	save_game()   # also flushes the farm
 	current_slot = n
 	_save_meta()
 	DirAccess.make_dir_recursive_absolute(_slot_dir())
@@ -189,7 +216,7 @@ func slot_summary(n: int) -> String:
 	var dir := SAVE_PATH + "slot%d/" % n
 	var farm_d = _load_json_at(dir + FARM_FILE)
 	var set_d = _load_json_at(dir + SETTINGS_FILE)
-	return "%d coins · %d Chef XP" % [int(farm_d.get("wallet", 0)), int(set_d.get("career_xp", 0))]
+	return "%s coins · %d Chef XP" % [_fmt.coins(int(farm_d.get("wallet", 0))), int(set_d.get("career_xp", 0))]
 
 func load_game():
 	# Load leaderboard
@@ -212,35 +239,183 @@ func load_game():
 	if unlocks_data.has("knives"):
 		unlocked_knives.assign(unlocks_data["knives"])
 
-	# Load farm — saved keys override the new-game defaults. Migration must
-	# happen on the raw dict: after the merge the defaults' "schema" key
-	# would mask an old save.
-	var farm_data = _load_json(FARM_FILE)
-	if not farm_data.is_empty():
-		farm_data = _migrate_farm(farm_data)
-		farm.merge(farm_data, true)
+	_load_farm()
+
+# The farm is rebuilt from the schema-4 defaults and the file on disk, so it
+# always equals the save (an unsaved in-memory change is dropped). Migration
+# runs on the RAW dict: after the merge the defaults' "schema" key would mask
+# an old save. The merge is shallow, so normalize() deep-fills nested keys and
+# int()-casts every number (JSON parses them all as floats).
+func _load_farm():
+	farm = _fe.new_farm()
+	_farm_dirty = false
+	set_process(false)
+	var raw := _read_farm_raw()
+	if raw.is_empty():
+		return
+	var old_schema := int(raw.get("schema", 1)) if _is_num(raw.get("schema", 1)) else 1
+	raw = _migrate_farm(raw)
+	farm.merge(raw, true)
+	_fe.normalize(farm)
+	_mig.fix_ledger(farm)
+	if old_schema < FARM_SCHEMA:
+		# keep the pre-migration file once, then write schema 4 over it so the
+		# next launch loads it as-is
+		_backup_farm(FARM_BACKUP_FILE)
+		save_farm()
+
+# The slot's farm.json as a raw dict ({} when missing). An unreadable file is
+# copied aside once (farm.corrupt.json) before anything can overwrite it.
+func _read_farm_raw() -> Dictionary:
+	var path := _slot_dir() + FARM_FILE
+	if not FileAccess.file_exists(path):
+		return {}
+	var file = FileAccess.open(path, FileAccess.READ)
+	if not file:
+		return {}
+	var parsed = JSON.parse_string(file.get_as_text())
+	file.close()
+	if parsed is Dictionary:
+		return parsed
+	_backup_farm(FARM_CORRUPT_FILE)
+	return {}
+
+# Copy this slot's farm.json to `name` unless that copy already exists.
+func _backup_farm(name: String) -> void:
+	var src := _slot_dir() + FARM_FILE
+	var dst := _slot_dir() + name
+	if FileAccess.file_exists(src) and not FileAccess.file_exists(dst):
+		DirAccess.copy_absolute(src, dst)
 
 func save_game():
 	_save_json(LEADERBOARD_FILE, {"scores": leaderboard})
 	_save_json(ACHIEVEMENTS_FILE, achievements)
 	_save_json(SETTINGS_FILE, settings)
 	_save_json(UNLOCKS_FILE, {"knives": unlocked_knives})
+	save_farm()
+
+# ── farm saving ──
+
+# Write farm.json now (and ONLY farm.json). Clears the dirty flag.
+func save_farm():
 	_save_json(FARM_FILE, farm)
+	farm_writes += 1
+	_farm_dirty = false
+	set_process(false)
+
+# The farm changed: write it FARM_SAVE_DEBOUNCE_MS after the last request, or
+# FARM_SAVE_FORCE_MS after the first unsaved change, whichever comes first.
+# Scenes call this after every FarmEconomy action (cheap: no disk access).
+func request_farm_save():
+	var now := Time.get_ticks_msec()
+	if not _farm_dirty:
+		_farm_dirty = true
+		_dirty_since_ms = now
+	_last_request_ms = now
+	set_process(true)
+
+# Write now if a requested save is still pending. Called on focus-out, window
+# close, slot switch, before quitting, and by scenes on _exit_tree.
+func flush_farm():
+	if _farm_dirty:
+		save_farm()
+
+func farm_dirty() -> bool:
+	return _farm_dirty
+
+func _process(_delta):
+	if not _farm_dirty:
+		set_process(false)
+		return
+	var now := Time.get_ticks_msec()
+	if now - _last_request_ms >= FARM_SAVE_DEBOUNCE_MS or now - _dirty_since_ms >= FARM_SAVE_FORCE_MS:
+		save_farm()
+
+func _notification(what):
+	match what:
+		NOTIFICATION_WM_CLOSE_REQUEST:
+			flush_farm()
+		NOTIFICATION_APPLICATION_FOCUS_OUT:
+			flush_farm()
+			if _low_power_ok:
+				_enter_low_power()
+		NOTIFICATION_APPLICATION_FOCUS_IN:
+			_exit_low_power()
+
+func _exit_tree():
+	flush_farm()
+	_exit_low_power()
+
+# ── farm heartbeat ──
+
+# Every HEARTBEAT_S from every scene: settle a started farm to now so its
+# Spudling coins land while you play the kitchen (or sit in the menu). Never
+# stamps input (only real input in the farm and town does, via note_input),
+# so leaving the game open doesn't stretch the Spudling shift. Returns the
+# settle result ({} when the farm hasn't started).
+func heartbeat() -> Dictionary:
+	if not farm_started():
+		return {}
+	var res: Dictionary = _fe.settle(farm, _clock.now_ms(), _clock.tz_s())
+	if int(res.get("coins", 0)) > 0 or int(res.get("picks", 0)) > 0 or bool(res.get("rebased", false)) \
+			or not res.get("pages", []).is_empty() or not res.get("events", []).is_empty():
+		request_farm_save()
+	return res
+
+# ── classroom low-power mode (design §7.6) ──
+
+# Scenes that can idle cheaply (main menu, farm, town) set this on _ready and
+# clear it on _exit_tree. While it is set, losing focus drops to LOW_POWER_FPS
+# with OS low-processor mode; focus-in or clearing the flag restores both.
+func set_low_power_ok(ok: bool):
+	_low_power_ok = ok
+	if not ok:
+		_exit_low_power()
+
+func low_power_active() -> bool:
+	return _low_power_on
+
+func _enter_low_power():
+	if _low_power_on:
+		return
+	_low_power_on = true
+	_saved_max_fps = Engine.max_fps
+	_saved_low_cpu = OS.low_processor_usage_mode
+	Engine.max_fps = LOW_POWER_FPS
+	OS.low_processor_usage_mode = true
+
+func _exit_low_power():
+	if not _low_power_on:
+		return
+	_low_power_on = false
+	Engine.max_fps = _saved_max_fps
+	OS.low_processor_usage_mode = _saved_low_cpu
 
 # Bring any older farm save up to the current schema. Runs as a chain on the
 # raw dict (before the defaults merge, so an old "schema" key can't mask it):
 # schema-1 ("plots" array) -> schema-2 ("field:row:col" grid + sections) ->
-# schema-3 (free-form "col:row" grid + research + truck).
+# schema-3 (free-form "col:row" grid + research + truck) -> schema-4
+# (Spudling Acres: FarmMigration.migrate_v3 with the frozen v3 tables).
 func _migrate_farm(raw: Dictionary) -> Dictionary:
-	if int(raw.get("schema", 1)) >= 3 and not raw.has("plots") \
-			and not raw.has("plots_owned") and not raw.has("sections_owned"):
+	if _is_num(raw.get("schema", 1)) and int(raw.get("schema", 1)) >= FARM_SCHEMA:
 		return raw
 	var out := raw
 	if int(out.get("schema", 1)) < 2 or out.has("plots") or out.has("plots_owned"):
 		out = _migrate_1_to_2(out)
 	if int(out.get("schema", 2)) < 3:
 		out = _migrate_2_to_3(out)
+	if int(out.get("schema", 3)) < FARM_SCHEMA:
+		out = _migrate_3_to_4(out)
 	return out
+
+static func _is_num(v) -> bool:
+	return typeof(v) == TYPE_INT or typeof(v) == TYPE_FLOAT
+
+# schema-3 -> schema-4: refunds, unlocks and land per design §9.2. The v3
+# research / item / crop values come from the frozen legacy tables.
+func _migrate_3_to_4(raw: Dictionary) -> Dictionary:
+	var gd = preload("res://scripts/utils/GameData.gd")
+	return _mig.migrate_v3(raw, gd.legacy_tables())
 
 # schema-1 (fixed "plots" array, "plots_owned" counter, global "sprinkler"
 # tool) -> schema-2 grid. Crops are re-homed onto Field 1's tiles, the old
@@ -379,7 +554,7 @@ func _migrate_2_to_3(raw: Dictionary) -> Dictionary:
 		if str(td.get("last", "")) != "":
 			owned_ids[str(td["last"])] = true
 	var gd = preload("res://scripts/utils/GameData.gd")
-	for node in gd.research_nodes():
+	for node in gd.legacy_research_nodes():
 		var eff: Dictionary = node.get("effect", {})
 		if eff.has("unlock_crop") and owned_ids.has(eff["unlock_crop"]):
 			research[node["id"]] = true
@@ -476,16 +651,55 @@ func update_setting(key: String, value):
 func wallet() -> int:
 	return int(farm.get("wallet", 0))
 
+func _wallet_cap() -> int:
+	return int(_fe.cfg().get("wallet_cap", 1000000000000000))
+
+# Coins from outside the farm (run payouts, the Picnic). Written at once: it
+# is a once-per-run event and the player may quit right after.
 func add_coins(amount: int):
-	farm["wallet"] = wallet() + amount
-	save_game()
+	farm["wallet"] = clampi(wallet() + amount, 0, _wallet_cap())
+	save_farm()
 
 func spend_coins(amount: int) -> bool:
 	if wallet() < amount:
 		return false
 	farm["wallet"] = wallet() - amount
-	save_game()
+	save_farm()
 	return true
+
+# True once the player has opened the farm (FarmEconomy.start stamped it).
+func farm_started() -> bool:
+	var ck = farm.get("clock", {})
+	return ck is Dictionary and int(ck.get("epoch_ms", 0)) != 0
+
+# Farm Picnic for a kitchen / concert / SPUD BLASTER run (design §8):
+# min(15, 0.5 x played minutes x accuracy) minutes of the farm's output,
+# credited to the wallet. 0 before the farm has started. The caller decides
+# whether the run qualifies (it must have banked coins).
+# {coins: int, minutes: float}
+func award_picnic(played_s: float, accuracy: float) -> Dictionary:
+	if not farm_started():
+		return {"coins": 0, "minutes": 0.0}
+	var coins: int = _fe.picnic_coins(farm, played_s, accuracy)
+	var p: Dictionary = _fe.cfg().get("picnic", {})
+	var minutes := minf(float(p.get("max_min", 15)),
+			float(p.get("factor", 0.5)) * maxf(0.0, played_s) / 60.0 * clampf(accuracy, 0.0, 1.0))
+	if coins > 0:
+		add_coins(coins)
+	return {"coins": coins, "minutes": minutes}
+
+# Dry-run settle on a copy for teasers (main menu): {started, ripe,
+# waiting_coins, settle_coins, report_coins, wallet}. Never mutates the save.
+func farm_preview() -> Dictionary:
+	return _fe.preview(farm, _clock.now_ms(), _clock.tz_s())
+
+# Kitchen golden-potato odds bonus from Prize Strains (+0.004 per tier, max 0.10).
+func kitchen_golden_bonus() -> float:
+	return _fe.kitchen_golden_bonus(farm)
+
+# Wallet-style number for autoload callers that can't name NumFmt.
+func fmt_coins(n) -> String:
+	return _fmt.coins(n)
 
 # ── SPUD BLASTER premium economy (starch) ──
 
@@ -526,80 +740,6 @@ func fps_skin() -> String:
 func set_fps_skin(id: String):
 	settings["fps_skin"] = id
 	save_game()
-
-# Generic counter bump for the "seeds"/"spuds" inventories
-func add_item(inventory: String, id: String, count: int = 1):
-	var inv: Dictionary = farm.get(inventory, {})
-	inv[id] = int(inv.get(id, 0)) + count
-	if inv[id] <= 0:
-		inv.erase(id)
-	farm[inventory] = inv
-	save_game()
-
-func item_count(inventory: String, id: String) -> int:
-	return int(farm.get(inventory, {}).get(id, 0))
-
-# ── research progression ──
-
-func research_points() -> int:
-	return int(farm.get("research_points", 0))
-
-func add_research_points(n: int):
-	farm["research_points"] = research_points() + n
-	save_game()
-
-func has_research(id: String) -> bool:
-	return bool(farm.get("research", {}).get(id, false))
-
-func unlock_research(id: String):
-	var r: Dictionary = farm.get("research", {})
-	r[id] = true
-	farm["research"] = r
-	save_game()
-
-# Crop ids the player may currently plant: starter crops plus everything an
-# unlocked research node grants via its "unlock_crop" effect.
-func unlocked_crops() -> Array:
-	var out: Array = []
-	var gd = preload("res://scripts/utils/GameData.gd")
-	for node in gd.research_nodes():
-		if has_research(node.get("id", "")):
-			var eff: Dictionary = node.get("effect", {})
-			if eff.has("unlock_crop"):
-				out.append(eff["unlock_crop"])
-	return out
-
-# Sum a numeric research effect (e.g. "plow_durability") across unlocked nodes.
-func research_bonus(effect_key: String) -> float:
-	var total := 0.0
-	var gd = preload("res://scripts/utils/GameData.gd")
-	for node in gd.research_nodes():
-		if has_research(node.get("id", "")):
-			var eff: Dictionary = node.get("effect", {})
-			if eff.has(effect_key):
-				total += float(eff[effect_key])
-	return total
-
-# Product of every unlocked "grow_mult" effect (1.0 = none), applied to crop
-# grow times so research-sped crops keep growing correctly across reloads.
-func grow_time_mult() -> float:
-	var m := 1.0
-	var gd = preload("res://scripts/utils/GameData.gd")
-	for node in gd.research_nodes():
-		if has_research(node.get("id", "")):
-			var eff: Dictionary = node.get("effect", {})
-			if eff.has("grow_mult"):
-				m *= float(eff["grow_mult"])
-	return m
-
-# True when any unlocked node carries the given boolean effect (e.g. "auto_harvest").
-func research_flag(effect_key: String) -> bool:
-	var gd = preload("res://scripts/utils/GameData.gd")
-	for node in gd.research_nodes():
-		if has_research(node.get("id", "")):
-			if bool(node.get("effect", {}).get(effect_key, false)):
-				return true
-	return false
 
 func equipped_knife() -> Dictionary:
 	# preload by path: autoloads compile before the global class_name cache

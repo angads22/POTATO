@@ -585,18 +585,24 @@ func _finish(winner: int) -> void:
 	AudioManager.play_sfx("victory" if winner == FpsNetwork.local_id() else "level_complete")
 	_award_payout(winner)
 
-# Each peer pays its own local player: coins per frag (+ a win bonus), and the
-# premium "starch" currency only on a win. Lifetime starch feeds the global
-# leaderboard.
+# Each peer pays its own local player: coins per frag (+ a win bonus), the
+# Farm Picnic on top of any coins, and the premium "starch" currency only on a
+# win. Lifetime starch feeds the global leaderboard.
 func _award_payout(winner: int) -> void:
 	var local := FpsNetwork.local_id()
 	var frags := int(scores.get(local, 0))
 	var won := winner == local
 	var coins := frags * COIN_PER_FRAG + (WIN_BONUS if won else 0)
 	var starch := STARCH_PER_WIN if won else 0
-	payout = {"frags": frags, "coins": coins, "starch": starch, "won": won}
+	payout = {"frags": frags, "coins": coins, "starch": starch, "won": won, "picnic": 0, "picnic_min": 0.0}
 	if coins > 0:
 		SaveDataManager.add_coins(coins)
+		# Farm Picnic (design §8): the same farm-output bonus as a kitchen run,
+		# accuracy 1.0 for a win and 0.5 otherwise, over the time actually played.
+		var played := maxf(0.0, float(FpsNetwork.time_limit) - time_left)
+		var picnic: Dictionary = SaveDataManager.award_picnic(played, 1.0 if won else 0.5)
+		payout["picnic"] = int(picnic["coins"])
+		payout["picnic_min"] = float(picnic["minutes"]) if payout["picnic"] > 0 else 0.0
 	if starch > 0:
 		SaveDataManager.add_starch(starch)
 	OnlineLeaderboard.submit_fps_result(

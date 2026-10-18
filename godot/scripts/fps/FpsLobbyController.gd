@@ -9,6 +9,7 @@ class_name FpsLobbyController
 enum Phase { MENU, HOSTING, JOINING, CONNECTED, ERROR, SHOP }
 
 const PLASMA_COST := 25  # starch to unlock the exclusive Plasma Fryer
+const Fmt = preload("res://scripts/utils/NumFmt.gd")
 
 var phase: Phase = Phase.MENU
 var ip_chars: Array[String] = []
@@ -221,7 +222,7 @@ func _draw_menu(font: Font, cx: float) -> void:
 	draw_line(Vector2(cx - 250, y - 6), Vector2(cx + 250, y - 6), Color(0.4, 0.34, 0.24), 1.0)
 	draw_string(font, Vector2(cx - 250, y + 22), "[M] Map: %s" % _map_label(),
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(0.95, 0.85, 0.5))
-	var bal := "Starch: %d   ·   Coins: %d" % [SaveDataManager.starch(), SaveDataManager.wallet()]
+	var bal := "Starch: %d   ·   Coins: %s" % [SaveDataManager.starch(), Fmt.coins(SaveDataManager.wallet())]
 	var bs := font.get_string_size(bal, HORIZONTAL_ALIGNMENT_RIGHT, -1, 18)
 	draw_string(font, Vector2(cx + 250 - bs.x, y + 22), bal,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.7, 0.85, 0.8))

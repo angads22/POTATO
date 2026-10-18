@@ -4,6 +4,17 @@ extends Node2D
 # Mode selection, leaderboard, settings (incl. audio calibration), achievements,
 # updates & about. Everything is keyboard- and mouse-driven; the title and the
 # mascot bob in time with the (procedurally composed) menu theme.
+#
+# Classroom-friendly bits (farm design §7.5/§7.6): the [4] Potato Farm row
+# teases "9 ripe · +1.2K waiting" from a dry-run settle (never touching the
+# save), the menu remembers the last mode it opened so Enter re-opens it, the
+# very first launch asks "Play with sound?" before any music starts, M mutes
+# from anywhere in the menu, and the game idles at 10 fps while unfocused.
+
+const Fmt = preload("res://scripts/utils/NumFmt.gd")
+# Menu actions remembered in settings.last_menu_item (submenus and Quit are not).
+const REMEMBERED := ["championship", "endless", "concert", "farm", "lobby", "fps"]
+const TEASER_EVERY := 1.0   # seconds between farm-teaser dry runs
 
 var selected_menu_item: int = 0
 var hovered_item: int = -1
@@ -45,8 +56,27 @@ var calib_offsets: Array = []
 var calib_result_ms: int = 0
 var calib_done: bool = false
 
+# "9 ripe · +1.2K waiting" for the farm row ("" until the farm has started)
+var farm_teaser: String = ""
+var _teaser_t: float = 0.0
+
+# first-launch "Play with sound?" card (settings.sound_prompted)
+var sound_prompt: bool = false
+var _prompt_sel: int = 0     # 0 = Sound on, 1 = Muted
+var _prompt_rects: Array[Rect2] = []
+
 func _ready():
-	AudioManager.play_music("menu")
+	SaveDataManager.set_low_power_ok(true)
+	# The very first launch asks before making any noise (a classroom is quiet).
+	sound_prompt = not bool(SaveDataManager.settings.get("sound_prompted", false))
+	if not sound_prompt:
+		AudioManager.play_music("menu")
+	# Enter re-opens whatever mode was opened last (the farm, for most visits).
+	var last := str(SaveDataManager.settings.get("last_menu_item", ""))
+	for i in menu_items.size():
+		if menu_items[i][2] == last:
+			selected_menu_item = i
+	update_farm_teaser()
 	# warm up the first kitchen song and the farm theme while the player browses
 	AudioManager.prefetch({"style": "lofi", "bpm": 132.0, "seed": 101})
 	AudioManager.prefetch(AudioManager.TRACKS["farm"])
@@ -74,11 +104,76 @@ func _ready():
 	UpdateManager.status_changed.connect(queue_redraw)
 	queue_redraw()
 
-func _process(_delta):
+func _exit_tree():
+	SaveDataManager.set_low_power_ok(false)
+
+func _process(delta):
+	# the farm teaser is a dry-run settle: cheap, but once a second is plenty
+	_teaser_t += delta
+	if _teaser_t >= TEASER_EVERY:
+		_teaser_t = 0.0
+		update_farm_teaser()
 	# keep the hover highlight, selection pulse and beat bounce live
 	queue_redraw()
 
+# "9 ripe · +1.2K waiting" from FarmEconomy.preview (a settle on a deep copy;
+# the save itself is never touched). Empty until the farm has been started.
+func update_farm_teaser():
+	farm_teaser = ""
+	if not SaveDataManager.farm_started():
+		return
+	var pv: Dictionary = SaveDataManager.farm_preview()
+	var ripe := int(pv.get("ripe", 0))
+	if ripe > 0:
+		farm_teaser = "%d ripe · +%s waiting" % [ripe, Fmt.coins(int(pv.get("waiting_coins", 0)))]
+	elif int(pv.get("report_coins", 0)) > 0:
+		farm_teaser = "Spudlings picked +%s" % Fmt.coins(int(pv["report_coins"]))
+	else:
+		farm_teaser = "all growing"
+
+# ── first-launch sound card ──
+
+func _sound_prompt_input(event: InputEvent):
+	if event is InputEventMouseMotion:
+		for i in _prompt_rects.size():
+			if _prompt_rects[i].has_point(get_global_mouse_position()):
+				_prompt_sel = i
+		return
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		for i in _prompt_rects.size():
+			if _prompt_rects[i].has_point(get_global_mouse_position()):
+				answer_sound_prompt(i == 0)
+		return
+	if not (event is InputEventKey and event.pressed and not event.echo):
+		return
+	match event.keycode:
+		KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN, KEY_A, KEY_D, KEY_W, KEY_S, KEY_TAB:
+			_prompt_sel = 1 - _prompt_sel
+		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+			answer_sound_prompt(_prompt_sel == 0)
+		KEY_M, KEY_ESCAPE:
+			answer_sound_prompt(false)
+
+# Store the answer (settings.sound_enabled + sound_prompted), then start the
+# menu music, which the card held back.
+func answer_sound_prompt(sound_on: bool):
+	if not sound_prompt:
+		return
+	sound_prompt = false
+	if AudioManager.sound_enabled != sound_on:
+		AudioManager.toggle_sound()
+	SaveDataManager.update_setting("sound_prompted", true)
+	AudioManager.play_music("menu")
+	AudioManager.play_sfx("menu_select")
+
+func _toggle_mute():
+	AudioManager.toggle_sound()
+	AudioManager.play_sfx("menu_select")
+
 func _input(event: InputEvent):
+	if sound_prompt:
+		_sound_prompt_input(event)
+		return
 	# Mouse on the main menu: hover to highlight, left-click to pick.
 	if not in_submenu:
 		if event is InputEventMouseMotion:
@@ -115,6 +210,7 @@ func _input(event: InputEvent):
 		KEY_UP, KEY_W: _move_selection(-1)
 		KEY_DOWN, KEY_S: _move_selection(1)
 		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE: _activate(selected_menu_item)
+		KEY_M: _toggle_mute()
 		_:
 			for i in menu_items.size():
 				if menu_items[i][1] == event.keycode:
@@ -125,6 +221,9 @@ func _input(event: InputEvent):
 func _submenu_key(event: InputEventKey):
 	if current_submenu == "calibrate":
 		_calibrate_key(event)
+		return
+	if event.keycode == KEY_M and not event.echo:
+		_toggle_mute()
 		return
 	if current_submenu == "settings":
 		_settings_key(event)
@@ -150,6 +249,8 @@ func _submenu_key(event: InputEventKey):
 func _activate(i: int):
 	var action: String = menu_items[i][2]
 	AudioManager.play_sfx("menu_select")
+	if action in REMEMBERED and str(SaveDataManager.settings.get("last_menu_item", "")) != action:
+		SaveDataManager.update_setting("last_menu_item", action)
 	match action:
 		"championship", "endless": _start_game(action)
 		"concert":
@@ -165,7 +266,9 @@ func _activate(i: int):
 			if UpdateManager.state in ["idle", "error", "uptodate"]:
 				UpdateManager.check()
 			_open_submenu("about")
-		"quit": get_tree().quit()
+		"quit":
+			SaveDataManager.flush_farm()   # a debounced farm save must not be lost
+			get_tree().quit()
 
 func _move_selection(delta: int):
 	selected_menu_item = posmod(selected_menu_item + delta, menu_items.size())
@@ -400,6 +503,31 @@ func _draw():
 		_draw_submenu()
 	else:
 		_draw_main_menu()
+	if sound_prompt:
+		_draw_sound_prompt()
+
+# The first-launch card: two big buttons (>= 44 px for trackpads).
+func _draw_sound_prompt():
+	var font := ThemeDB.fallback_font
+	var vp := get_viewport_rect().size
+	draw_rect(Rect2(Vector2.ZERO, vp), Color(0, 0, 0, 0.72))
+	var card := Rect2(vp.x / 2 - 260, vp.y / 2 - 130, 520, 260)
+	GameHUD.panel_style(Color(0.16, 0.1, 0.06, 0.97)).draw(get_canvas_item(), card)
+	var cx := card.get_center().x
+	_text(font, "Play with sound?", cx, card.position.y + 64, 30, Color.GOLD)
+	_text(font, "You can press M any time to mute or unmute.", cx, card.position.y + 100, 15,
+			Color(0.8, 0.74, 0.62))
+	_prompt_rects.clear()
+	var labels := ["Sound on", "Muted"]
+	for i in 2:
+		var r := Rect2(cx - 220 + i * 230, card.position.y + 140, 210, 64)
+		_prompt_rects.append(r)
+		var active := i == _prompt_sel
+		draw_rect(r, Color(0.85, 0.68, 0.3, 0.3 if active else 0.1))
+		draw_rect(r, Color(1.0, 0.8, 0.3, 0.95) if active else Color(0.6, 0.5, 0.35, 0.8), false, 2.0)
+		_text(font, labels[i], r.get_center().x, r.get_center().y + 8, 22,
+				Color.GOLD if active else Color(0.92, 0.88, 0.8))
+	_text(font, "←/→ choose · Enter confirm · Esc muted", cx, card.end.y - 22, 13, Color(0.6, 0.55, 0.45))
 
 func _draw_main_menu():
 	var font = ThemeDB.fallback_font
@@ -417,7 +545,7 @@ func _draw_main_menu():
 	_text(font, "The Potato Cutting Championship", title_x, 160, 22, Color(0.35, 0.22, 0.1))
 	_text(font, "v" + UpdateManager.current_version, title_x, 186, 15, Color(0.45, 0.32, 0.2))
 	# farm wallet, so progress is visible from the front door
-	_text(font, "Wallet: %d coins" % SaveDataManager.wallet(), title_x, 210, 16, Color(0.72, 0.52, 0.12))
+	_text(font, "Wallet: %s coins" % Fmt.coins(SaveDataManager.wallet()), title_x, 210, 16, Color(0.72, 0.52, 0.12))
 
 	# chef career card under the mascot, so the rank shows from the front door
 	_draw_career_card(font, 1010.0, 560.0)
@@ -434,7 +562,7 @@ func _draw_main_menu():
 
 	# Menu in a walnut panel
 	var row_h := 32.0
-	var panel_rect = Rect2(title_x - 200, 226, 400, 40 + menu_items.size() * row_h)
+	var panel_rect = Rect2(title_x - 220, 226, 440, 40 + menu_items.size() * row_h)
 	GameHUD.panel_style().draw(get_canvas_item(), panel_rect)
 	_item_rects.clear()
 	var y_pos = panel_rect.position.y + 40
@@ -456,6 +584,14 @@ func _draw_main_menu():
 		draw_string(font, Vector2(panel_rect.position.x + 44, y_pos), "[%s]" % key_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 15,
 				Color(0.75, 0.62, 0.4) if not active else Color(1.0, 0.85, 0.4))
 		draw_string(font, Vector2(panel_rect.position.x + 98, y_pos), menu_items[i][0], HORIZONTAL_ALIGNMENT_LEFT, -1, 19, color)
+		# the farm teaser: "· 9 ripe · +1.2K waiting", right-aligned in the row
+		if menu_items[i][2] == "farm" and farm_teaser != "":
+			var tz := "· " + farm_teaser
+			var tw := font.get_string_size(tz, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
+			var lw := font.get_string_size(menu_items[i][0], HORIZONTAL_ALIGNMENT_LEFT, -1, 19).x
+			var tx0 := maxf(panel_rect.position.x + 98 + lw + 8, row_rect.end.x - 8 - tw)
+			draw_string(font, Vector2(tx0, y_pos - 1), tz, HORIZONTAL_ALIGNMENT_LEFT, -1, 14,
+					Color(0.75, 0.95, 0.55) if active else Color(0.62, 0.8, 0.48))
 		# a little "new" sparkle on Concert
 		if menu_items[i][2] == "concert":
 			var sp := 0.6 + 0.4 * sin(Time.get_ticks_msec() / 200.0)
@@ -464,7 +600,8 @@ func _draw_main_menu():
 
 	# clickability hint
 	draw_string(font, Vector2(panel_rect.position.x + 16, panel_rect.position.y + panel_rect.size.y + 22),
-			"Click an option, or use Up/Down + Enter  ·  F11 fullscreen", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.6, 0.55, 0.45))
+			"Click an option, or Up/Down + Enter  ·  M sound %s  ·  F11 fullscreen" % (
+				"on" if AudioManager.sound_enabled else "off"), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.6, 0.55, 0.45))
 
 # Chef rank + XP-to-next-rank bar, centred on (cx, cy).
 func _draw_career_card(font: Font, cx: float, cy: float):

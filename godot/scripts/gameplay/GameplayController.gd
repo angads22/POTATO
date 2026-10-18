@@ -22,6 +22,7 @@ const FEVER_BEATS = 16.0      # FEVER lasts four bars
 
 # one musical style per championship venue (Endless cycles through them)
 const STAGE_STYLES = ["lofi", "jazz", "funky", "disco", "gameshow", "epic"]
+const FarmEcon = preload("res://scripts/farm/FarmEconomy.gd")
 
 var current_minigame: MinigameBase
 var stage_potatoes: Array[Dictionary] = []
@@ -192,8 +193,9 @@ func _load_stage_potatoes():
 	var count = 6 + GameManager.current_state.stage * 2
 
 	# Endless sweetens the pot: golden odds climb with every wave survived.
-	# The "Lucky Spuds" research line raises the base odds in every mode.
-	var golden_chance: float = golden.get("chance", 0.07) + SaveDataManager.research_bonus("golden_luck")
+	# The farm's Prize Strains raise the base odds in every mode (+0.004 per
+	# Strain tier, capped at +0.10: FarmEconomy.kitchen_golden_bonus).
+	var golden_chance: float = golden.get("chance", 0.07) + FarmEcon.kitchen_golden_bonus(SaveDataManager.farm)
 	if GameManager.current_state.mode == "endless":
 		golden_chance += 0.01 * GameManager.current_state.stage
 	golden_chance = minf(0.35, golden_chance)

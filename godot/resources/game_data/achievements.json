@@ -13,6 +13,10 @@
 		{ "id": "encore",         "name": "Encore!",           "desc": "Clear a song in Concert mode." },
 		{ "id": "daily_chef",     "name": "Daily Special",     "desc": "Clear the Daily Song." },
 		{ "id": "perfect_pitch",  "name": "Perfect Pitch",     "desc": "Earn an S on a Hard concert." },
-		{ "id": "full_combo",     "name": "Full Combo",        "desc": "Finish a concert without a single miss." }
+		{ "id": "full_combo",     "name": "Full Combo",        "desc": "Finish a concert without a single miss." },
+		{ "id": "first_spudling", "name": "Hired Help",        "desc": "Hire your first Spudling on the farm." },
+		{ "id": "catalog_complete","name": "Full Catalog",     "desc": "Unlock every page of the Seed Catalog." },
+		{ "id": "blue_ribbon",    "name": "Blue Ribbon",       "desc": "Raise a crop to Prize Strain IV." },
+		{ "id": "manor",          "name": "Manor Born",        "desc": "Grow the farmhouse into the Manor." }
 	]
 }

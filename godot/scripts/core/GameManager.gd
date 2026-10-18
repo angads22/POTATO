@@ -25,6 +25,8 @@ class GameState:
 	var is_paused: bool = false
 	var last_victory: bool = false
 	var last_payout: int = 0  # coins banked to the farm wallet by the last run
+	var last_picnic: int = 0  # Farm Picnic coins the last run added on top (design §8)
+	var picnic_min: float = 0.0  # ...worth this many minutes of the farm's output
 	var last_xp_gain: int = 0  # chef XP earned by the last run
 	var ranked_up: bool = false  # did that XP cross into a new chef rank?
 	# run stats for the results screen
@@ -40,6 +42,9 @@ class GameState:
 
 var current_state: GameState = GameState.new()
 var game_modes = {}  # Will be populated with mode configurations
+# Seconds of actual play in the current run (paused time doesn't count). The
+# Farm Picnic pays for min(15, 0.5 x played minutes x accuracy) farm-minutes.
+var run_play_seconds: float = 0.0
 
 func _ready():
 	# Initialize game modes and load saved data
@@ -47,6 +52,10 @@ func _ready():
 	SaveDataManager.load_game()
 	_apply_window_icon()
 	apply_fullscreen()
+
+func _process(delta: float):
+	if current_state.is_running and not current_state.is_paused and not get_tree().paused:
+		run_play_seconds += delta
 
 # F11 toggles fullscreen anywhere in the game.
 func _unhandled_input(event: InputEvent):
@@ -105,6 +114,8 @@ func start_game(mode: String):
 	current_state.fever_active = false
 	current_state.fever_multiplier = 1.0
 	current_state.last_payout = 0
+	current_state.last_picnic = 0
+	current_state.picnic_min = 0.0
 	current_state.last_xp_gain = 0
 	current_state.ranked_up = false
 	current_state.perfect = 0
@@ -117,6 +128,7 @@ func start_game(mode: String):
 	current_state.concert_spec = {}
 	current_state.prev_best = best_score(mode)
 	current_state.is_running = true
+	run_play_seconds = 0.0
 
 	game_started.emit()
 
@@ -132,6 +144,11 @@ func end_game(victory: bool):
 	current_state.last_payout = current_state.coins_earned + current_state.score / 20
 	if current_state.last_payout > 0:
 		SaveDataManager.add_coins(current_state.last_payout)
+		# Farm Picnic: a run that banked coins also brings home a few minutes of
+		# the farm's output (0 until the farm has been started).
+		var picnic: Dictionary = SaveDataManager.award_picnic(run_play_seconds, accuracy())
+		current_state.last_picnic = int(picnic["coins"])
+		current_state.picnic_min = float(picnic["minutes"]) if current_state.last_picnic > 0 else 0.0
 	# Chef XP from the run feeds the career rank ladder.
 	current_state.last_xp_gain = current_state.score / 100
 	current_state.ranked_up = SaveDataManager.add_career_xp(current_state.last_xp_gain)
@@ -140,10 +157,6 @@ func end_game(victory: bool):
 		SaveDataManager.unlock_achievement("champion")
 	if current_state.score >= 10000:
 		SaveDataManager.unlock_achievement("five_figures")
-	# "Field Research" turns championship scores into research points
-	var champ_rp = int(current_state.score * SaveDataManager.research_bonus("champ_rp_per"))
-	if champ_rp > 0:
-		SaveDataManager.add_research_points(champ_rp)
 	# Submit to global leaderboard (no-op when Supabase isn't configured)
 	var knife_id: String = SaveDataManager.farm.get("equipped_knife", "butter")
 	var player_name: String = str(SaveDataManager.settings.get("player_name", "")).strip_edges()

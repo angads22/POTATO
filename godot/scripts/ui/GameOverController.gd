@@ -6,6 +6,7 @@ extends Node2D
 # leaderboard (the last name used is remembered), then [R] plays again or
 # [SPACE] returns to the menu.
 
+const Fmt = preload("res://scripts/utils/NumFmt.gd")
 const COUNT_TIME = 1.1    # score count-up
 const STAMP_AT = 1.25     # grade stamp lands
 const GRADE_COLORS = {
@@ -197,8 +198,13 @@ func _draw():
 	# ── rewards ──
 	var ry := 470.0
 	if s.last_payout > 0:
-		_text(font, "+%d coins banked to your farm (wallet: %d)" % [s.last_payout, SaveDataManager.wallet()],
-				cx, ry, 18, Color.GOLD)
+		var pay := "+%s c" % Fmt.coins(s.last_payout)
+		if s.last_picnic > 0:
+			# the Farm Picnic: minutes of the farm's output on top (design §8)
+			pay += " · Farm Picnic +%s (%s farm-min)" % [Fmt.coins(s.last_picnic), Fmt.compact(s.picnic_min)]
+		else:
+			pay += " banked to your farm"
+		_text(font, "%s  ·  wallet %s" % [pay, Fmt.coins(SaveDataManager.wallet())], cx, ry, 18, Color.GOLD)
 		ry += 26.0
 	var rank := SaveDataManager.career_rank()
 	_text(font, "+%d Chef XP  ·  %s" % [s.last_xp_gain, rank["name"]], cx, ry, 17, Color(0.85, 0.7, 0.3))
