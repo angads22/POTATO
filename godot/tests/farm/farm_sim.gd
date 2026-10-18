@@ -21,7 +21,7 @@ extends SceneTree
 #                                              bankroll, veteran, 60-day magnitudes
 #   --ci                                       the FarmBalanceTest set, printed here (no exit code)
 #   --only a,b,...                             with --all/--ci: only these sections, from
-#                                              main, feel, sdfix, sd4, sd3, sd5, sd8, sd9, inv, bank, vet, mag
+#                                              main, feel, feelplus, sdfix, sd4, sd3, sd5, sd8, sd9, inv, bank, vet, mag
 
 const FE = preload("res://scripts/farm/FarmEconomy.gd")
 const FarmBot = preload("res://tests/farm/FarmBot.gd")
@@ -36,8 +36,11 @@ func _initialize() -> void:
 			print("bad --override JSON")
 			quit(2)
 			return
+		FarmSuite.base = o
 		FE.reload_cfg(o)
 		print("override: ", JSON.stringify(o))
+	if args.has("bias"):
+		FarmBot.bias = float(args["bias"])
 	if args.has("all") or args.has("ci"):
 		var s = FarmSuite.new()
 		if args.has("all"):
@@ -124,7 +127,7 @@ func run_all(s, args: Dictionary) -> void:
 	if args.has("only"):
 		_only = str(args["only"]).split(",")
 	var dm := {"active": 22, "class": 24, "casual": 22}
-	if _on("main") or _on("sd8") or _on("sd9") or _on("sd5"):
+	if _on("main") or _on("sd8") or _on("sd9") or _on("sd5") or _on("feelplus") or _on("feel"):
 		s.run_main(dm)
 	if _on("main"):
 		s.print_milestones()
@@ -134,6 +137,8 @@ func run_all(s, args: Dictionary) -> void:
 			s.print_daily(s.main[p])
 	if _on("feel"):
 		s.feel()
+	if _on("feelplus"):
+		s.feel_plus(14)
 	if _on("sdfix"):
 		s.sd_fixtures(FarmSuite.ALL4)
 	if _on("sd4"):
@@ -149,6 +154,7 @@ func run_all(s, args: Dictionary) -> void:
 	if _on("inv"):
 		s.invariants()
 	if _on("bank"):
+		s.verbose_bank = args.has("verbose")
 		s.bankroll({"active": 10, "class": 10, "casual": 10})
 	if _on("vet"):
 		s.veteran(14)

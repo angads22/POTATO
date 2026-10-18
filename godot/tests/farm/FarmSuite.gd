@@ -44,6 +44,9 @@ const MS := [
 const CAL := {"soil": ["L40/L44", "L40/L42", "L40/L44"], "income": ["9.2M", "5.1M", "9.0M"],
 		"hand": ["89%", "86%", "61%"]}
 
+# farm_sim --override: every section that reloads the config re-applies it.
+static var base: Dictionary = {}
+
 var fails: Array = []
 var main: Dictionary = {}          # profile -> FarmBot (ROI, fresh start)
 var t_section := 0
@@ -94,10 +97,23 @@ func bot(profile: String, strat := "roi", planting := "greedy") -> RefCounted:
 	b.planting = planting
 	return b
 
+# farm.json plus the run's --override (FarmSuite.base).
+static func restore() -> void:
+	FE.reload_cfg(base)
+
+static func merged(a: Dictionary, b: Dictionary) -> Dictionary:
+	var out := a.duplicate(true)
+	for k in b:
+		if out.get(k) is Dictionary and b[k] is Dictionary:
+			out[k] = merged(out[k], b[k])
+		else:
+			out[k] = b[k].duplicate(true) if (b[k] is Dictionary or b[k] is Array) else b[k]
+	return out
+
 # Neutral config: deterministic stars at the same EV (every plot a x1.25
 # silver), Favorite x1.0, and optionally the Catalog frozen at its current page.
 static func neutral_override(freeze_catalog := false) -> Dictionary:
-	FE.reload_cfg()
+	restore()
 	var c: Dictionary = FE.cfg()
 	var tools: Array = c["tools"].duplicate(true)
 	for t in tools:
@@ -110,7 +126,7 @@ static func neutral_override(freeze_catalog := false) -> Dictionary:
 			for k in pg["needs"]:
 				pg["needs"][k] = 1000000000000
 		o["catalog"] = cat
-	return o
+	return merged(base, o)
 
 # A fixture bot: no buying, no butterflies, no Catalog policy, a 110 s
 # keep-alive (still present: clock-in is 120 s), and a deep wallet.
@@ -242,10 +258,44 @@ func print_milestones(assert_it := true) -> void:
 	say(r2)
 	say(r3)
 	say(r4)
+	var r5 := pad("Crop mix, last 3d", 18)
+	var r6 := pad("Your-crop share", 18)
+	for k in 3:
+		var cm := crop_mix(main[MAIN[k]], 3)
+		r5 += "| " + pad(cm["top"], 40)
+		r6 += "| " + pad("%d%% of harvest coins from crops you planted" % int(round(cm["you"] * 100)), 40)
+	say(r5)
+	say(r6)
 	say("   active times show (played time); class/casual show #check-in. 'open' = window extends past the run.")
 
+# Harvest coins by crop over the run's last `nd` days, from the bot's daily
+# mix snapshots: {top: "red 54% king 30% ...", share: {crop: frac}, you: frac}.
+static func crop_mix(b, nd: int) -> Dictionary:
+	var tot := {}
+	var you := 0.0
+	var all := 0.0
+	for d in range(maxi(1, b.days - nd + 1), b.days + 1):
+		var sn: Dictionary = b.snap(d + 1)
+		if sn.is_empty():
+			continue
+		var m: Dictionary = sn.get("mix_prev", {})
+		for c in m:
+			var v := float(m[c][0]) + float(m[c][1])
+			tot[c] = float(tot.get(c, 0.0)) + v
+			you += float(m[c][0])
+			all += v
+	var keys: Array = tot.keys()
+	keys.sort_custom(func(x, y): return tot[x] > tot[y])
+	var parts: Array = []
+	var share := {}
+	for c in keys:
+		share[c] = tot[c] / maxf(1.0, all)
+		if parts.size() < 3:
+			parts.append("%s %d%%" % [str(c).replace("_gold", "").replace("_edward", ""), int(round(share[c] * 100))])
+	return {"top": " ".join(parts), "share": share, "you": you / maxf(1.0, all)}
+
 func print_daily(b) -> void:
-	say("   day  wallet    income/day  hand  spud   soil fields huts page tool")
+	say("   day  wallet    income/day  hand  spud   soil fields huts page tool  crops (harvest coins)")
 	for d in range(1, b.days + 1):
 		var s: Dictionary = b.snap(d)
 		var inc: Dictionary = b.day_income(d)
@@ -255,8 +305,17 @@ func print_daily(b) -> void:
 		var nx: Dictionary = b.snap(d + 1)
 		if not nx.is_empty() and inc["coins"] > 0:
 			sp = float(int(nx["spud"]) - int(s["spud"])) / float(inc["coins"])
-		say("   d%-3d %-9s %-11s %3d%%  %3d%%  L%-3d %d      %d    %d    %d" % [d, coins(s["wallet"]), coins(inc["coins"]),
-				int(round(inc["hand"] * 100)), int(round(sp * 100)), s["soil"], s["fields"], s["huts"], s["page"], s["tool"]])
+		var mx: Dictionary = nx.get("mix_prev", {}) if not nx.is_empty() else {}
+		var tot := 0.0
+		for c in mx:
+			tot += float(mx[c][0]) + float(mx[c][1])
+		var ks: Array = mx.keys()
+		ks.sort_custom(func(x, y): return float(mx[x][0]) + float(mx[x][1]) > float(mx[y][0]) + float(mx[y][1]))
+		var cm := ""
+		for c in ks.slice(0, 3):
+			cm += "%s %d%% " % [str(c).substr(0, 4), int(round((float(mx[c][0]) + float(mx[c][1])) / maxf(1.0, tot) * 100))]
+		say("   d%-3d %-9s %-11s %3d%%  %3d%%  L%-3d %d      %d    %d    %d     %s" % [d, coins(s["wallet"]), coins(inc["coins"]),
+				int(round(inc["hand"] * 100)), int(round(sp * 100)), s["soil"], s["fields"], s["huts"], s["page"], s["tool"], cm])
 
 # ════════════════════════════════════════════════════════ §6.2 feel targets
 
@@ -327,6 +386,110 @@ func feel() -> void:
 	check(shown > 0, "feel class Spudling coins", "next check-in after Pip shows %d" % shown)
 	done()
 
+# The lead's play-feel judgments (beyond the §6.2 table), measured on the
+# main profile runs: purchase rhythm in the first active half hour, something
+# happening at every class check-in on day 1, purchase droughts, income still
+# rising late, and how much huts matter (ROI vs ROI with at most one hut).
+# assert_it asserts the first two (stable, cheap); the rest is evidence.
+func feel_plus(ndays := 14, assert_it := false) -> void:
+	section("FEEL+ (purchase rhythm, check-ins, droughts, late growth, huts)")
+	if main.has("active"):
+		var b = main["active"]
+		var t0: int = b.t_start
+		var times: Array = []
+		for p in b.purchases:
+			if int(p["t"]) - t0 <= 30 * MIN:
+				times.append(int(p["t"]) - t0)
+		var gaps: Array = [0] + times + [30 * MIN]
+		var mg := 0
+		for k in range(1, gaps.size()):
+			mg = maxi(mg, int(gaps[k]) - int(gaps[k - 1]))
+		var tr: Array = []
+		for x in times:
+			tr.append(_mmss(x))
+		var mean: float = 30.0 / maxf(1.0, times.size())
+		var ok: bool = times.size() >= 10 and mean <= 3.0 and mg <= 5 * MIN
+		say("   active first 30 min: %d purchases (one per %.1f min), longest wait %s (want >= 10, <= 3 min apart on average, no wait > 5m)  %s" % [
+				times.size(), mean, _mmss(mg), pf(ok)])
+		say("     at " + " ".join(tr))
+		if assert_it:
+			check(ok, "feel+ active 30 min", "%d purchases, max gap %s" % [times.size(), _mmss(mg)])
+	if main.has("class"):
+		var b = main["class"]
+		var n := 0
+		var busy := 0
+		var idle: Array = []
+		for a in b.arrivals:
+			if int(b.wins[int(a["wi"])][2]) != 1:
+				continue
+			n += 1
+			var bought := false
+			for p in b.purchases:
+				if int(p["wi"]) == int(a["wi"]):
+					bought = true
+					break
+			if int(a["hand"]) > 0 or int(a["spud"]) > 0 or bought:
+				busy += 1
+			else:
+				idle.append("#%d" % (int(a["wi"]) + 1))
+		say("   class day 1: %d/%d check-ins with a harvest, Pip's coins or a purchase  %s %s" % [busy, n, pf(busy == n),
+				" ".join(idle)])
+		if assert_it:
+			check(busy == n, "feel+ class d1 check-ins", "nothing at " + " ".join(idle))
+	for p in MAIN:
+		if not main.has(p):
+			continue
+		var b = main[p]
+		var worst := 0
+		var at := ""
+		var prev: int = b.t_start
+		for q in b.purchases:
+			if int(q["t"]) - prev > worst:
+				worst = int(q["t"]) - prev
+				at = "%s -> %s" % [b.fmt_t(prev), b.fmt_t(int(q["t"]))]
+			prev = int(q["t"])
+		# longest run of calendar days without a purchase, to day 14 and overall
+		var run14 := 0
+		var run_all := 0
+		var cur := 0
+		for d in range(1, b.days + 1):
+			var any := false
+			for q in b.purchases:
+				if b.day_of(int(q["t"])) == d:
+					any = true
+					break
+			cur = 0 if any else cur + 1
+			run_all = maxi(run_all, cur)
+			if d <= 14:
+				run14 = run_all
+		# income still rising: 4-day sums against the 4 days before, from day 8
+		var dips: Array = []
+		for d in range(8, b.days + 1):
+			var a4 := 0.0
+			var p4 := 0.0
+			for j in 4:
+				a4 += b.day_income(d - j)["coins"]
+				p4 += b.day_income(d - 4 - j)["coins"]
+			if a4 < p4:
+				dips.append("d%d" % d)
+		var d1: Dictionary = b.day_income(maxi(1, b.days - 6))
+		var d2: Dictionary = b.day_income(b.days)
+		say("   %-7s longest purchase wait %s (%s); dry days in a row: %d to d14, %d overall; 4-day income below the previous 4 days at: %s; income d%d %s -> d%d %s" % [
+				p, dur(worst), at, run14, run_all, "none" if dips.is_empty() else " ".join(dips),
+				maxi(1, b.days - 6), coins(d1["coins"]), b.days, coins(d2["coins"])])
+	# huts: ROI vs the same buyer held to one hut
+	var line := ""
+	for p in MAIN:
+		var g = main[p] if main.has(p) and main[p].days == ndays else null
+		if g == null:
+			g = bot(p)
+			g.run(ndays)
+		var h = bot(p, "h1")
+		h.run(ndays)
+		line += "%s %s  " % [SHORT[p], pct(float(h.earned()) / maxf(1.0, g.earned()) - 1.0)]
+	say("   ROI buyer held to 1 hut vs ROI, %d days from a fresh start: %s(late-game hut value per field: SD4 'all' row)" % [ndays, line])
+	done()
+
 static func _mmss(ms: int) -> String:
 	if ms >= 1 << 60 or ms < 0:
 		return "never"
@@ -353,7 +516,7 @@ func hand_fixtures(profiles: Array, fdays := 3) -> Dictionary:
 		sp.run(fdays)
 		row["sprinkler"] = sp.fixture_rate()
 		out[p] = row
-	FE.reload_cfg()
+	restore()
 	return out
 
 # Day (same local day) vs night cycles of a greedy hand field.
@@ -471,15 +634,21 @@ func sd4(profiles: Array, fdays := 3) -> void:
 			var hv: float = base.fixture_rate()
 			var line := pad(STAGES[st], 8) + pad(p, 9) + lpad(coins(hv), 12)
 			for t in TIERS:
-				var hb = fixture_bot(p, {"page": st + 1, "owned": [0], "huts": [0], "share": t[0], "quick": t[1], "house": t[2]})
+				# A hut must not make the field earn less: the better of planning
+				# for Pip and simply ignoring him (planting as on a hand field).
+				var fx := {"page": st + 1, "owned": [0], "huts": [0], "share": t[0], "quick": t[1], "house": t[2]}
+				var hb = fixture_bot(p, fx)
 				hb.run(fdays)
-				var v: float = hb.fixture_rate() / hv - 1.0 if hv > 0 else 0.0
+				var hi = fixture_bot(p, fx)
+				hi.ignore_huts = true
+				hi.run(fdays)
+				var v: float = maxf(hb.fixture_rate(), hi.fixture_rate()) / hv - 1.0 if hv > 0 else 0.0
 				if v < worst:
 					worst = v
 					worst_at = "%s %s %s" % [STAGES[st], p, t[3]]
 				line += lpad(pct(v), 14)
 			say(line)
-	FE.reload_cfg()
+	restore()
 	var ok := worst >= -0.02
 	say("SD4 min hut value %s at %s (>= -2%%)  %s" % [pct(worst), worst_at, pf(ok)])
 	check(ok, "SD4", "hut value %s at %s" % [pct(worst), worst_at])
@@ -489,14 +658,28 @@ func sd4(profiles: Array, fdays := 3) -> void:
 
 const STRATS := [["s1", "S1 Hands-on"], ["s2", "S2 Spudling boss"], ["s3", "S3 Long-crop"], ["s4", "S4 Soil-only"], ["roi", "S5 ROI buyer"]]
 
-func sd3(profiles: Array, ndays: int) -> void:
+# SD3 tournament. full = the design's clauses over all five strategies (farm_sim
+# --all). CI (full = false, lead ruling 4): S5, the ROI buyer, is a generalist
+# by construction and is left out of the "within 5% everywhere" clause. The
+# "winners differ" clause is printed, not asserted, in CI: with the Farm Book
+# priced for each player's own schedule (ruling 2), the Book-reading S5 wins
+# (or ties S2, whose Spudling tilt is what the Book buys anyway) on every
+# profile, so the clause contradicts ruling 2 (see tests/farm/BALANCE.md).
+# CI also skips S4 (Soil-only scores 0-4%; it can never be within 5%) and
+# reuses the main ROI runs when their length matches, to stay in budget.
+func sd3(profiles: Array, ndays: int, full := true) -> void:
 	section("SD3 tournament: 5 strategies x %d profiles x %d days (net coins earned, %% of best)" % [profiles.size(), ndays])
 	var score := {}
 	for s in STRATS:
 		score[s[0]] = {}
 		for p in profiles:
-			var b = bot(p, s[0])
-			b.run(ndays)
+			if not full and s[0] == "s4":
+				score[s[0]][p] = 0.0
+				continue
+			var b = main[p] if s[0] == "roi" and main.has(p) and main[p].days == ndays else null
+			if b == null:
+				b = bot(p, s[0])
+				b.run(ndays)
 			score[s[0]][p] = float(b.earned())
 	var hdr := pad("strategy", 18)
 	for p in profiles:
@@ -518,8 +701,11 @@ func sd3(profiles: Array, ndays: int) -> void:
 			var v: float = score[s[0]][p]
 			var r: float = v / best[p] if best[p] > 0 else 0.0
 			all_close = all_close and r >= 0.95
+			if not full and s[0] == "s4":
+				line += lpad("(skipped in CI)", 18)
+				continue
 			line += lpad("%s %3d%%%s" % [coins(v), int(round(r * 100)), "*" if winner[p] == s[0] else " "], 18)
-		if all_close:
+		if all_close and (full or s[0] != "roi"):
 			close_all.append(s[1])
 		say(line)
 	var wset := {}
@@ -527,10 +713,12 @@ func sd3(profiles: Array, ndays: int) -> void:
 		wset[winner[p]] = true
 	var ok_a := close_all.is_empty()
 	var ok_b := wset.size() >= 2
-	say("SD3 no strategy within 5%% of best everywhere: %s %s · distinct winners %d (>=2): %s" % [pf(ok_a),
-			", ".join(close_all), wset.size(), pf(ok_b)])
+	say("SD3 no strategy%s within 5%% of best everywhere: %s %s · distinct winners %d (>=2): %s%s" % [
+			"" if full else " but S5", pf(ok_a), ", ".join(close_all), wset.size(), pf(ok_b) if full else ("info (" + pf(ok_b) + ")"),
+			"" if full else "  [CI form, lead ruling 4]"])
 	check(ok_a, "SD3", "within 5% of the best on every profile: " + ", ".join(close_all))
-	check(ok_b, "SD3", "one strategy wins every profile: " + str(winner))
+	if full:
+		check(ok_b, "SD3", "one strategy wins every profile: " + str(winner))
 	done()
 
 func sd5(profiles: Array, ndays: int) -> void:
@@ -642,7 +830,7 @@ const T0 := 1792044000000      # 2026-10-15 06:00 UTC
 
 func invariants() -> void:
 	section("§5.12 INVARIANTS 2-8")
-	FE.reload_cfg()
+	restore()
 	inv_bulk_stepped()
 	inv_shift_cap()
 	inv_nothing_lost()
@@ -787,17 +975,15 @@ func inv_nothing_lost() -> void:
 		say("     " + b)
 	check(ok, "inv4 nothing lost", "; ".join(bad.slice(0, 5)))
 
-# Hut safety, for every crop, helper tier set and absence: hand-plant at T0,
-# be away `gap`, come back and tend. Value = wallet change + the crop in the
-# ground at its pro-rated hand value. EV-exact stars, Favorite x1.0.
-# Asserted bound (restated §5.12.5, for the lead to confirm): per absence,
-#   value(hut) >= value(no hut) - (star_ev - 1) x gross(picked crop)
-# A Spudling picks your crop at full value without stars (§5.6 rule 3) and
-# replants for free, so when it picks just before you return the hut loses
-# exactly the star bonus and saves the replant seed: -0.25 x gross + seed,
-# which is -0.04 of a hand harvest for a seeded crop (seed ~0.2 x gross, the
-# design's "-5%", still checked against -0.06 below) but -0.20 for Russet
-# (seed 0), so §5.12.5's flat -0.06 cannot hold for every crop.
+# Hut safety (§5.12.5), for every crop, helper tier set and absence: hand-plant
+# at T0, be away `gap`, come back and tend. Value = wallet change + the crop in
+# the ground at its pro-rated hand value. EV-exact stars, Favorite x1.0.
+# Asserted: value(hut) >= value(no hut) - 0.06 x one hand harvest, for every
+# crop. (Phase A restated it as -(star_ev - 1) x gross because a Spudling
+# picked your crop at 1.0 x gross, losing the stars: -0.20 of a harvest for
+# Russet. Since phase B the crop in the ground when you left is picked at your
+# star average, so the design's flat bound holds again; the star bound is
+# still printed.)
 func inv_hut_safety() -> void:
 	FE.reload_cfg(neutral_override(true))
 	var worst := INF
@@ -856,11 +1042,11 @@ func inv_hut_safety() -> void:
 				if FE.crop_info(c)["seed"] > 0 and m < worst_seeded:
 					worst_seeded = m
 					seeded_at = "%s tiers %s gap %s" % [c, str(tr), dur(gap)]
-	FE.reload_cfg()
-	var ok := n_bad == 0 and worst_seeded >= -0.06
-	say("   5 hut safety: %d cases, %d below hut - hand >= -(star_ev - 1) x gross; worst %+.3f hand harvests at %s; seeded crops worst %+.3f (>= -0.06) at %s  %s" % [
-			cases, n_bad, worst, worst_at, worst_seeded, seeded_at, pf(ok)])
-	check(ok, "inv5 hut safety", "%d below the star bound (%s); seeded worst %+.3f at %s" % [n_bad, bad_at, worst_seeded, seeded_at])
+	restore()
+	var ok := n_bad == 0 and worst >= -0.06
+	say("   5 hut safety: %d cases; worst %+.3f hand harvests at %s (>= -0.06 for every crop); %d below the star bound; seeded crops worst %+.3f  %s" % [
+			cases, worst, worst_at, n_bad, worst_seeded, pf(ok)])
+	check(ok, "inv5 hut safety", "worst %+.3f at %s; %d below the star bound (%s)" % [worst, worst_at, n_bad, bad_at])
 
 func inv_no_deadlock() -> void:
 	var f := FE.new_farm()
@@ -939,35 +1125,68 @@ func inv_determinism() -> void:
 
 # ════════════════════════════════════════════════════════ bankroll, magnitudes, veteran
 
+# Kitchen bankroll (§6.3): a 10,000 c start may move Catalog pages at most
+# 25% earlier in elapsed calendar time. One start is a chaotic trajectory
+# (stars, butterflies and the Favorite follow the start time, and a class
+# page lands at the 08:00 check-in after the night that finished it), so each
+# profile is played from BANK_STARTS different start days and the medians are
+# compared.
+const BANK_STARTS := 3
+var verbose_bank := false
+
 func bankroll(days_map: Dictionary) -> void:
-	section("BANKROLL: a 10,000 c start moves Catalog pages <= 25% earlier (elapsed calendar time)")
+	section("BANKROLL: a 10,000 c start moves Catalog pages <= 25%% earlier (median of %d starts)" % BANK_STARTS)
 	var ok := true
 	for p in MAIN:
 		var nd := int(days_map[p])
-		var base = main[p] if main.has(p) and main[p].days >= nd else null
-		if base == null:
-			base = bot(p)
-			base.run(nd)
-		var bk = bot(p)
-		bk.start_wallet = 10000
-		bk.run(nd)
+		var eb := {}
+		var ek := {}
+		for k in range(1, 7):
+			eb[k] = []
+			ek[k] = []
+		for st in BANK_STARTS:
+			var base = main[p] if st == 0 and main.has(p) and main[p].days >= nd else null
+			if base == null:
+				base = bot(p)
+				base.day0 = FarmBot.DAY0 + st
+				base.run(nd)
+			var bk = bot(p)
+			bk.day0 = FarmBot.DAY0 + st
+			bk.start_wallet = 10000
+			bk.run(nd)
+			for k in range(1, 7):
+				var id := "page%d" % k
+				if base.milestones.has(id):
+					eb[k].append(int(base.milestones[id]["t"]) - int(base.t_start))
+				if bk.milestones.has(id):
+					ek[k].append(int(bk.milestones[id]["t"]) - int(bk.t_start))
 		var line: String = "   %-7s" % p
 		for k in range(1, 7):
-			var id := "page%d" % k
-			if not base.milestones.has(id) or not bk.milestones.has(id):
+			if eb[k].size() < BANK_STARTS or ek[k].size() < BANK_STARTS:
 				line += "  p%d -" % k
 				continue
-			var eb: int = int(base.milestones[id]["t"]) - int(base.t_start)
-			var ek: int = int(bk.milestones[id]["t"]) - int(bk.t_start)
-			var r: float = float(ek) / float(maxi(1, eb)) - 1.0
+			var mb := _median(eb[k])
+			var mk := _median(ek[k])
+			var r: float = float(mk) / float(maxi(1, mb)) - 1.0
 			var good := r >= -0.25
 			ok = ok and good
-			line += "  p%d %s→%s %s%s" % [k, dur(eb), dur(ek), pct(r), "" if good else "!"]
+			line += "  p%d %s→%s %s%s" % [k, dur(mb), dur(mk), pct(r), "" if good else "!"]
 			if not good:
-				fail("bankroll %s page %d" % [p, k], "%s -> %s (%s)" % [dur(eb), dur(ek), pct(r)])
+				fail("bankroll %s page %d" % [p, k], "median %s -> %s (%s)" % [dur(mb), dur(mk), pct(r)])
 		say(line)
+		if verbose_bank:
+			for k in range(1, 7):
+				var xs: Array = []
+				for j in eb[k].size():
+					xs.append("%s/%s" % [dur(eb[k][j]), dur(ek[k][j]) if j < ek[k].size() else "-"])
+				say("      p%d base/10K by start: %s" % [k, "  ".join(xs)])
 	say("BANKROLL %s   [cal: page 6 same day; worst active p2 38m→30m -21%%]" % pf(ok))
 	done()
+
+static func _median(a: Array) -> int:
+	var b := a.duplicate()
+	b.sort()
+	return int(b[b.size() / 2])
 
 func magnitudes(ndays: int) -> void:
 	section("MAGNITUDES: %d-day class run" % ndays)
@@ -1030,7 +1249,8 @@ static func run_ci_set(s) -> void:
 	s.feel()
 	s.sd_fixtures(ALL4)
 	s.sd4(ALL4)
-	s.sd3(MAIN, 7)
+	s.sd3(ALL4, 14, false)
+	s.feel_plus(14, true)
 	s.sd8()
 	s.invariants()
 	s.bankroll(CI_DAYS)

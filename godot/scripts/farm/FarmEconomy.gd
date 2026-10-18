@@ -159,7 +159,8 @@ static func crop_info(id: String) -> Dictionary:
 # clock epoch 0 means "not started" so start() runs on the first visit.
 # Beyond §9.1: field.hut_k (hire index -> Spudling name), up.sprinklers
 # (owned count; placed ones are `sprinklers`), extra stats, buffs.welcome /
-# butterfly_field, presence entries hold milliseconds.
+# butterfly_field, presence entries hold milliseconds, mix (per-crop harvest
+# milli-coins of the current and previous UTC day; prices Prize Strain rows).
 static func new_farm() -> Dictionary:
 	var k := _kk()
 	var fields: Array = []
@@ -182,6 +183,7 @@ static func new_farm() -> Dictionary:
 		"stats": {"lifetime_coins": 0, "hand_picks": 0, "spud_picks": 0, "butterflies": 0, "stars": 0,
 				"hand_coins": 0, "spud_coins": 0, "penny_coins": 0},
 		"income": {"hour0": 0, "buckets": buckets},
+		"mix": {"day": 0, "cur": {}, "prev": {}},
 		"absences": [], "presence": [],
 		"buffs": {"bumper_until_ms": 0, "next_butterfly_ms": 0, "butterfly_field": 0, "welcome": false},
 		"report": {},
@@ -275,6 +277,16 @@ static func normalize(farm: Dictionary) -> void:
 	bk.resize(24)
 	for h in 24:
 		bk[h] = int(bk[h]) if bk[h] != null else 0
+	var mix: Dictionary = farm["mix"]
+	mix["day"] = int(mix["day"])
+	for key in ["cur", "prev"]:
+		var m: Dictionary = mix[key]
+		for c in m.keys():
+			var e = m[c]
+			if _crop.has(str(c)) and e is Array and e.size() == 2:
+				m[c] = [int(e[0]), int(e[1])]
+			else:
+				m.erase(c)
 	farm["absences"] = _int_pairs(farm["absences"])
 	farm["presence"] = _int_pairs(farm["presence"])
 	var bf: Dictionary = farm["buffs"]
@@ -301,7 +313,8 @@ static func normalize(farm: Dictionary) -> void:
 # always runs the full pass; call it after editing a farm dict by hand.
 static func _ensure(farm: Dictionary) -> void:
 	if typeof(farm.get("wallet")) == TYPE_INT and typeof(farm.get("g_offset_ms")) == TYPE_INT \
-			and farm.get("schema") is int and farm["schema"] == SCHEMA and farm.has("migration"):
+			and farm.get("schema") is int and farm["schema"] == SCHEMA and farm.has("migration") \
+			and farm.has("mix"):
 		var fl = farm.get("fields")
 		var ck = farm.get("clock")
 		if fl is Array and fl.size() == FIELDS and ck is Dictionary \
@@ -446,7 +459,7 @@ static func _star_ev(farm: Dictionary) -> float:
 	var t: Dictionary = _cfg["tools"][clampi(int(farm["up"]["tool"]), 0, _cfg["tools"].size() - 1)]
 	return 1.0 + float(t["silver"]) * (k.silver_mult - 1.0) + float(t["gold"]) * (k.gold_mult - 1.0)
 
-# Value multiplier of a crop: 1.05^soil × 1.5^strain.
+# Value multiplier of a crop: soil_mult^soil × strain_mult^strain.
 static func _mult(farm: Dictionary, crop: String) -> float:
 	var k := _kk()
 	return pow(k.soil_mult, int(farm["up"]["soil"])) * pow(k.strain_mult, int(farm["up"]["strains"].get(crop, 0)))
@@ -547,6 +560,52 @@ static func _income_advance(farm: Dictionary, hour: int) -> void:
 			bk[posmod(h, 24)] = 0
 	inc["hour0"] = hour
 
+# Harvest mix (prices the Prize Strain rows, design §3 D10 "worth 0.5 x f_c"):
+# milli-coins per crop of the current and the previous UTC day, split into
+# crops you planted and crops the Spudlings planted ([you, spud]), because a
+# Strain multiplies the two differently. Like the income buckets, every pick
+# lands on the day it happened, so bulk and stepped settles agree.
+static func _mix_add(farm: Dictionary, t: int, crop: String, milli: int, spud: bool) -> void:
+	var mix: Dictionary = farm["mix"]
+	var d := _fdiv(t, DAY_MS)
+	var d0 := int(mix["day"])
+	if d > d0:
+		mix["prev"] = mix["cur"] if d == d0 + 1 else {}
+		mix["cur"] = {}
+		mix["day"] = d
+		d0 = d
+	var m: Dictionary
+	if d == d0:
+		m = mix["cur"]
+	elif d == d0 - 1:
+		m = mix["prev"]
+	else:
+		return
+	var e: Array = m.get(crop, [0, 0])
+	e[1 if spud else 0] = int(e[1 if spud else 0]) + milli
+	m[crop] = e
+
+# Per-crop harvest income over today and yesterday (UTC), coins per second,
+# as {crop: [you, spud]}.
+static func _mix_rates(farm: Dictionary, now_ms: int) -> Dictionary:
+	var mix: Dictionary = farm["mix"]
+	var dn := _fdiv(now_ms, DAY_MS)
+	var d0 := int(mix["day"])
+	var maps: Array = []
+	if d0 == dn:
+		maps = [mix["cur"], mix["prev"]]
+	elif d0 == dn - 1:
+		maps = [mix["cur"]]
+	var span := float(maxi(HOUR_MS, now_ms - maxi(int(farm["clock"]["epoch_ms"]), (dn - 1) * DAY_MS)))
+	var out := {}
+	for m in maps:
+		for c in m:
+			var e: Array = out.get(c, [0.0, 0.0])
+			e[0] += float(m[c][0]) / span
+			e[1] += float(m[c][1]) / span
+			out[c] = e
+	return out
+
 # Farm coins per second over the last 24 h (0 before any income).
 static func income_rate(farm: Dictionary, now_ms: int) -> float:
 	var inc: Dictionary = farm["income"]
@@ -645,12 +704,14 @@ static func _rebase(farm: Dictionary, now: int, back: int) -> void:
 #   / c). A replant carries the Favorite flag of its own local day, so picks
 #   are summed per hour bucket and the Favorite plantings counted per local
 #   day by floor division.
-# Wages: a crop that was already in the ground when this absence began (wall
-# planting time <= l_in, the last input) is picked at full value, whoever
-# planted it: yours, or a Spudling crop that was still growing through your
-# check-in, so a hut never takes a cut of a crop you would have hand-picked
-# (§5.6 "the first pick of an absence (your crop) is worth 1.0 x gross").
-# Only crops the Spudlings plant during this absence pay the share.
+# Wages (pick 1 is the crop standing when the window opened): a crop that was
+# already in the ground when this absence began (wall planting time <= l_in,
+# the last input), whoever planted it, is picked as carefully as you would:
+# full value × your hoe's star EV, no Bumper (A3 rule, with the star average:
+# at 1.0 × gross, Pip picking your Golden two hours before a casual check-in
+# cost the star bonus, SD4 -7%; a Spudling crop that grew through your visit
+# counts as yours). Only a crop the Spudlings planted during this absence
+# pays the share.
 static func _settle_hut(farm: Dictionary, i: int, l_in: int, w0: int, hi: int, tz: int, res: Dictionary) -> void:
 	var f: Dictionary = farm["fields"][i]
 	var plan: String = f["plan"]
@@ -671,14 +732,17 @@ static func _settle_hut(farm: Dictionary, i: int, l_in: int, w0: int, hi: int, t
 	var cyc := ge_plan + walk
 	var n := 1 + (hi - p1) / cyc                 # hi >= p1, so no negative division
 	var share := _share(farm)
+	var ev := _star_ev(farm)
 	var plots: int = _kk().plots
-	var full1: bool = f["by"] == "you" or int(f["planted_g"]) - goff <= l_in
-	var v1 := _pick_milli(_tile_milli(farm, crop1, f["fav"]), full1, share, plots)
+	var spud1: bool = f["by"] == "spud"
+	var w1v := share if spud1 and int(f["planted_g"]) - goff > l_in else ev
+	var v1 := int(round(float(_tile_milli(farm, crop1, f["fav"]) * plots) * w1v))
 	_income_add(farm, _hour(p1), v1)
+	_mix_add(farm, p1, crop1, v1, spud1)
 	var total := v1
 	if n >= 2:
-		var pm_plain := _pick_milli(_tile_milli(farm, plan, false), false, share, plots)
-		var pm_fav := _pick_milli(_tile_milli(farm, plan, true), false, share, plots)
+		var pm_plain := int(round(float(_tile_milli(farm, plan, false) * plots) * share))
+		var pm_fav := int(round(float(_tile_milli(farm, plan, true) * plots) * share))
 		# Picks k = 2..n at p1 + (k-1)c, walked one hour bucket at a time; pick k
 		# harvests planting j = k-1 (made at p1 + (j-1)c).
 		var kk := 2
@@ -689,6 +753,7 @@ static func _settle_hut(farm: Dictionary, i: int, l_in: int, w0: int, hi: int, t
 			var nf := _count_fav(plan, p1, cyc, kk - 1, k_end - 1, tz)
 			var m := (cnt - nf) * pm_plain + nf * pm_fav
 			_income_add(farm, h, m)
+			_mix_add(farm, h * HOUR_MS, plan, m, true)
 			total += m
 			kk = k_end + 1
 	var pn := p1 + (n - 1) * cyc
@@ -718,12 +783,6 @@ static func _spud_plant(f: Dictionary, plan: String, t: int, goff: int, tz: int,
 	f["by"] = "spud"
 	f["seed_paid"] = 0
 	f["fav"] = _is_fav(plan, t, tz)
-
-# Wages: full value, or the share for a crop planted during this absence.
-static func _pick_milli(tile: int, full: bool, share: float, plots: int) -> int:
-	if full:
-		return tile * plots
-	return int(round(float(tile * plots) * share))
 
 # Count plantings j in [j_lo, j_hi] (planting j at p1 + (j-1)c) that fall on a
 # local day whose Favorite is `plan`: per day d, j-1 runs from
@@ -780,7 +839,10 @@ static func _note_input(farm: Dictionary, now: int, tz: int) -> Dictionary:
 		while ab.size() > int(_cfg["log"]["absences_max"]):
 			ab.pop_front()
 		res["absence_s"] = gap / 1000
-	_log_presence(farm, day_index(now, tz), mini(gap, k.clockin_ms))
+	# Present time is the gap between two inputs less than the clock-in apart.
+	# An absence adds nothing: its first 120 s are the Spudlings' clock-in
+	# wait, not play, and counting them tripled a check-in player's 'here'.
+	_log_presence(farm, day_index(now, tz), gap if gap < k.clockin_ms else 0)
 	if now > last_in:
 		clock["last_input_ms"] = now
 	# Butterflies are online-only: a stale or missed one is rescheduled from now.
@@ -818,6 +880,44 @@ static func _recent_absences(farm: Dictionary, now_ms: int) -> Array:
 		if int(a[0]) >= cut:
 			lens.append(int(a[1]))
 	return lens
+
+# The away schedule the Farm Book prices against (lead ruling 2a): the
+# absences logged in the last 7 days as [[gap_ms, count], ...], gaps within 3%
+# of a cluster's shortest merged into it (the shortest kept, so a crop that
+# fits it fits the whole cluster) and at most 8 clusters (closest neighbours
+# merged). Fewer than 3 logged: farm.json log.default_schedule. A log younger
+# than log.min_history_s (20 h) hasn't seen your night yet, so one night of
+# log.assumed_night_s (12 h) is added to it.
+static func _schedule(farm: Dictionary, now_ms: int) -> Array:
+	var lens := _recent_absences(farm, now_ms)
+	var lg: Dictionary = cfg()["log"]
+	var out: Array = []
+	if lens.size() < int(lg["min_absences"]):
+		for e in lg.get("default_schedule", [[lg["typical_default_s"], 1]]):
+			out.append([int(e[0]) * 1000, maxi(1, int(e[1]))])
+		return out
+	if now_ms - int(farm["clock"]["epoch_ms"]) < int(lg.get("min_history_s", 0)) * 1000:
+		lens.append(int(lg.get("assumed_night_s", 43200)))
+	lens.sort()
+	var tol := 1.0 + float(lg.get("cluster_tol", 0.03))
+	for g in lens:
+		var gm := maxi(1, int(g)) * 1000
+		if not out.is_empty() and float(gm) <= float(out[-1][0]) * tol:
+			out[-1][1] += 1
+		else:
+			out.append([gm, 1])
+	var kmax := maxi(1, int(lg.get("max_clusters", 8)))
+	while out.size() > kmax:
+		var at := 0
+		var best := INF
+		for j in out.size() - 1:
+			var r := float(out[j + 1][0]) / float(out[j][0])
+			if r < best:
+				best = r
+				at = j
+		out[at][1] += out[at + 1][1]
+		out.remove_at(at + 1)
+	return out
 
 # Fraction of the last 7 days spent present (0.10 until 3 absences are logged).
 static func f_here(farm: Dictionary, now_ms: int) -> float:
@@ -923,6 +1023,7 @@ static func _harvest(farm: Dictionary, i: int, now: int, rec: Dictionary) -> voi
 	var k := _kk()
 	var f: Dictionary = farm["fields"][i]
 	var crop: String = f["crop"]
+	var spud: bool = f["by"] == "spud"
 	var tile := _tile_milli(farm, crop, f["fav"])
 	var odds := star_odds(farm)
 	var stars: Array = []
@@ -938,6 +1039,7 @@ static func _harvest(farm: Dictionary, i: int, now: int, rec: Dictionary) -> voi
 	if now < int(farm["buffs"]["bumper_until_ms"]):
 		milli *= 2
 	_income_add(farm, _hour(now), milli)
+	_mix_add(farm, now, crop, milli, spud)
 	var coins := _credit_field(farm, f, milli)
 	farm["shipped"][crop] = int(farm["shipped"].get(crop, 0)) + k.plots
 	var st: Dictionary = farm["stats"]
@@ -1214,9 +1316,16 @@ static func _cost(farm: Dictionary, it: String, a) -> int:
 	return -1
 
 # Why a purchase is gated ("" when it isn't): Catalog pages, a field you don't
-# own yet, a Strain threshold.
+# own yet, a Strain threshold. Land grants: the n-th deed opens with Catalog
+# page deed_pages[n] (farm.json), so kitchen money buys land no faster than
+# the Catalog grows.
 static func _lock_reason(farm: Dictionary, it: String, a) -> String:
 	match it:
+		"deed":
+			var dp: Array = _cfg.get("deed_pages", [])
+			var n := _owned_count(farm) - 1
+			if n >= 0 and n < dp.size():
+				return _page_reason(farm, int(dp[n]))
 		"greenhouse":
 			return _page_reason(farm, int(_cfg["greenhouse"]["page"]))
 		"hut":
@@ -1583,30 +1692,62 @@ static func _field_away(farm: Dictionary, i: int, gap: int, ev: float) -> float:
 # its full value if span <= gap, else value / ceil(span / gap), the share of
 # it one gap-long absence of a steady schedule brings in.
 #   no hut (or gap <= clock-in): hand_net per the rule above (span = grow_eff);
-#   hut: first pick at full value + share × gross per further cycle until the
-#   shift ends − seed, plus the last Spudling crop (planted at p_last, hand-
-#   picked with stars) per the same rule with span = p_last + grow_eff.
+#   hut: first pick of your crop at full value × star EV, + share × gross of
+#   a Spudling-planted crop per further cycle until the shift ends − seed,
+#   plus the last Spudling crop (planted at p_last, hand-picked with stars)
+#   per the same rule with span = p_last + grow_eff.
 # Speed upgrades therefore pay only when they move a crop across a gap boundary.
 static func _away_value(farm: Dictionary, i: int, c: String, gap: int, ev := -1.0) -> float:
-	var k := _kk()
 	if ev < 0.0:
 		ev = _star_ev(farm)
+	return _away_eval(_away_params(farm, i, c, ev), gap)
+
+# The gap-independent part of _away_value for field i and crop c, so a
+# schedule of many gaps costs one pass of arithmetic per gap:
+# [grow_eff, hand_net] without a hut, plus [first pick − seed, share × gross,
+# gross × EV, walk, clock-in + shift] with one.
+static func _away_params(farm: Dictionary, i: int, c: String, ev: float) -> Array:
+	var k := _kk()
 	var ge := grow_eff_ms(farm, c, i)
 	var hn := _hand_net(farm, i, c, false, ev)
-	var f: Dictionary = farm["fields"][i]
-	var no_hut := _per_absence(hn, ge, gap)
-	if not f["hut"] or gap <= k.clockin_ms:
+	if not farm["fields"][i]["hut"]:
+		return [ge, hn]
+	var gross := float(k.plots * _tile_milli(farm, c, false))
+	return [ge, hn, gross * ev - k.plots * _crop[c]["seed"] * 1000.0, _share(farm) * gross, gross * ev,
+			_walk_ms(farm), k.clockin_ms + _shift_ms(farm)]
+
+static func _away_eval(p: Array, gap: int) -> float:
+	var ge: int = p[0]
+	var no_hut := _per_absence(p[1], ge, gap)
+	var ck: int = _k.clockin_ms
+	if p.size() == 2 or gap <= ck:
 		return no_hut
-	var walk := _walk_ms(farm)
-	var e := mini(gap, k.clockin_ms + _shift_ms(farm))
-	var p1 := maxi(ge, k.clockin_ms) + walk
+	var walk: int = p[5]
+	var e := mini(gap, p[6])
+	var p1 := maxi(ge, ck) + walk
 	if p1 > e:
 		return no_hut
-	var gross := float(k.plots * _tile_milli(farm, c, false))
-	var cycles := (e - p1) / (ge + walk)
-	var v: float = gross + _share(farm) * gross * cycles - k.plots * _crop[c]["seed"] * 1000.0
-	var p_last := p1 + cycles * (ge + walk)
-	return v + _per_absence(gross * ev, p_last + ge, gap)
+	var cyc := ge + walk
+	var cycles := (e - p1) / cyc
+	return p[2] + p[3] * cycles + _per_absence(p[4], p1 + cycles * cyc + ge, gap)
+
+# Away value of field i over a whole schedule ([[gap_ms, count], ...]): each
+# absence with the crop that is best for that gap (what a sensible player
+# plants before leaving), summed. 0 when unowned.
+static func _field_away_sched(farm: Dictionary, i: int, sched: Array, ev: float) -> float:
+	if not farm["fields"][i]["owned"]:
+		return 0.0
+	var best: Array = []
+	best.resize(sched.size())
+	best.fill(0.0)
+	for c in farm["unlocked"]:
+		var p := _away_params(farm, i, c, ev)
+		for j in sched.size():
+			best[j] = maxf(best[j], _away_eval(p, sched[j][0]))
+	var sum := 0.0
+	for j in sched.size():
+		sum += best[j] * sched[j][1]
+	return sum
 
 # Breakpoint share of a value that becomes ripe `span` ms into an absence.
 static func _per_absence(value: float, span: int, gap: int) -> float:
@@ -1645,7 +1786,8 @@ static func field_view(farm: Dictionary, i: int, now_ms: int) -> Dictionary:
 			"working": false, "napping": false, "fav": f["fav"], "by": f["by"],
 			"seed_paid": f["seed_paid"], "refund": int(f["seed_paid"]) / 2,
 			"cost": _cost(farm, "deed", i) if i < k.field_count else _cost(farm, "greenhouse", null),
-			"locked_reason": "" if f["owned"] or i < k.field_count else _lock_reason(farm, "greenhouse", null)}
+			"locked_reason": "" if f["owned"] else (_lock_reason(farm, "deed", i) if i < k.field_count \
+						else _lock_reason(farm, "greenhouse", null))}
 	for s in farm["sprinklers"]:
 		if i in k.fences.get(s, []):
 			v["sockets"].append(s)
@@ -1693,15 +1835,18 @@ static func plan_options(farm: Dictionary, i: int, now_ms: int, tz_s: int) -> Ar
 #   logged schedule. A new field is projected with its best crop for you.
 static func book(farm: Dictionary, now_ms: int, tz_s: int) -> Array:
 	_ensure(farm)
-	var typ := typical_absence_s(farm, now_ms)
-	var gap := typ * 1000
+	var sched := _schedule(farm, now_ms)
+	var wsum := 0.0
+	for e in sched:
+		wsum += float(e[0]) * float(e[1])
 	var fh := f_here(farm, now_ms)
 	var ev0 := _star_ev(farm)
 	var here0: Array = []
 	var away0: Array = []
 	for i in FIELDS:
 		here0.append(_field_here(farm, i, ev0))
-		away0.append(_field_away(farm, i, gap, ev0))
+		away0.append(_field_away_sched(farm, i, sched, ev0))
+	var mixr := {}
 	var rows: Array = []
 	for cand in _candidates(farm):
 		var it: String = cand[0]
@@ -1710,21 +1855,30 @@ static func book(farm: Dictionary, now_ms: int, tz_s: int) -> Array:
 		if cost < 0:
 			continue
 		var why := _lock_reason(farm, it, a)
-		# Rates are sums over fields, so only the fields this purchase touches
-		# are recomputed on the copy (a hut row's d_here is exactly 0).
-		var aff := _affected(farm, it, a)
-		var cp := _proj_copy(farm, aff)
-		_apply(cp, it, a, [])
-		if it == "deed" or it == "greenhouse":
-			var ni: int = a if it == "deed" else GREENHOUSE
-			cp["fields"][ni]["plan"] = _best_plan_for(cp, ni, fh, typ)
-		var ev1 := _star_ev(cp)
 		var dh := 0.0
 		var da := 0.0
-		for i in aff:
-			dh += _field_here(cp, i, ev1) - here0[i]
-			da += _field_away(cp, i, gap, ev1) - away0[i]
-		da /= float(gap)
+		if it == "strain":
+			# Priced from what you actually harvest (design D10: a Strain is
+			# worth 0.5 × f_c of income), not from today's plans.
+			if mixr.is_empty():
+				mixr = _mix_rates(farm, now_ms)
+				mixr["_"] = true
+			dh = _strain_gain(farm, a, mixr)
+			da = dh
+		else:
+			# Rates are sums over fields, so only the fields this purchase
+			# touches are recomputed on the copy (a hut row's d_here is exactly 0).
+			var aff := _affected(farm, it, a)
+			var cp := _proj_copy(farm, aff)
+			_apply(cp, it, a, [])
+			if it == "deed" or it == "greenhouse":
+				var ni: int = a if it == "deed" else GREENHOUSE
+				cp["fields"][ni]["plan"] = _best_plan_for(cp, ni, fh, sched, wsum)
+			var ev1 := _star_ev(cp)
+			for i in aff:
+				dh += _field_here(cp, i, ev1) - here0[i]
+				da += _field_away_sched(cp, i, sched, ev1) - away0[i]
+			da /= maxf(1.0, wsum)
 		var denom := dh * fh + da * (1.0 - fh)
 		var d := _describe(farm, it, a)
 		var id := row_id(it, a)
@@ -1734,6 +1888,12 @@ static func book(farm: Dictionary, now_ms: int, tz_s: int) -> Array:
 				"payback_s": float(cost) / denom if denom > 1e-9 else -1.0,
 				"pinned": farm["goal"]["pinned"] == id})
 	return rows
+
+# Coins per second the next Strain tier of crop c adds at your recent harvest
+# mix: (strain_mult − 1) × that crop's harvest income.
+static func _strain_gain(farm: Dictionary, c: String, mixr: Dictionary) -> float:
+	var e: Array = mixr.get(c, [0.0, 0.0])
+	return (float(e[0]) + float(e[1])) * (_kk().strain_mult - 1.0)
 
 # Every purchase that could be a row: [item, arg].
 static func _candidates(farm: Dictionary) -> Array:
@@ -1787,15 +1947,20 @@ static func _affected(farm: Dictionary, it: String, a) -> Array:
 		out.append(i)
 	return out
 
-# Crop with the best blended value for this schedule on field i.
-static func _best_plan_for(farm: Dictionary, i: int, fh: float, typ: int) -> String:
+# Crop with the best blended value for this schedule on field i (the plan a
+# new field is projected with): here rate × f_here + its away value over the
+# schedule × (1 − f_here).
+static func _best_plan_for(farm: Dictionary, i: int, fh: float, sched: Array, wsum: float) -> String:
 	var ev := _star_ev(farm)
 	var best := FREE_CROP
 	var best_v := -INF
 	for c in farm["unlocked"]:
 		var here := _hand_net(farm, i, c, false, ev) / float(grow_eff_ms(farm, c, i) + _kk().reaction_ms)
-		var away := _away_value(farm, i, c, typ * 1000, ev) / float(typ * 1000)
-		var v := fh * here + (1.0 - fh) * away
+		var p := _away_params(farm, i, c, ev)
+		var away := 0.0
+		for e in sched:
+			away += _away_eval(p, e[0]) * e[1]
+		var v := fh * here + (1.0 - fh) * away / maxf(1.0, wsum)
 		if v > best_v:
 			best_v = v
 			best = c

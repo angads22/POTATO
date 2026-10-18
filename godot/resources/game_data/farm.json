@@ -27,10 +27,11 @@
 		            "1-4": [510, 1070], "2-5": [1280, 1070], "3-6": [2050, 1070]}
 	},
 
-	"deeds": [100, 1000, 12000, 250000, 3000000],
+	"deeds": [50, 1000, 12000, 250000, 3000000],
+	"deed_pages": [0, 2, 3, 4, 5],
 	"greenhouse": {"cost": 6000000, "grow_mult": 0.5333, "page": 6},
 	"sprinklers": {"costs": [300, 20000, 1000000], "grow_mult": 0.8, "page": 1},
-	"huts": {"costs": [25, 200, 2500, 25000, 300000, 3000000, 8000000],
+	"huts": {"costs": [25, 100, 2500, 25000, 300000, 3000000, 8000000],
 	         "names": ["Pip", "Dot", "Rusty", "Tater", "Bea", "Moss", "Nib"],
 	         "hats": ["#e05a47", "#4a90d9", "#e0a030", "#5cb85c", "#b06ab3", "#4ac0c0", "#d46a9a"]},
 	"share": [[0.5, 0], [0.6, 40000], [0.7, 2000000]],
@@ -45,7 +46,7 @@
 	],
 	"stars": {"silver_mult": 1.5, "gold_mult": 2.0},
 	"soil": {"base": 100, "growth": 1.32, "mult": 1.05},
-	"strains": {"costs": [5000, 50000, 500000, 5000000], "mult": 1.5, "page": 3,
+	"strains": {"costs": [5000, 50000, 500000, 5000000], "mult": 1.25, "page": 3,
 	            "ribbons": ["bronze", "silver", "gold", "blue"]},
 	"favorite": {"mult": 1.4, "salt": 1592614637,
 	             "even": ["yukon_gold", "purple", "king_edward"], "odd": ["red", "fingerling", "golden"]},
@@ -79,7 +80,8 @@
 		{"id": "page1",   "label": "Ship 120 Russet: Yukon page",   "hint": "Catalog pages unlock new crops",   "done": {"page": 1}}
 	],
 
-	"log": {"absences_max": 64, "presence_days": 7, "min_absences": 3, "typical_default_s": 10800, "f_here_default": 0.10},
+	"log": {"absences_max": 64, "presence_days": 7, "min_absences": 3, "typical_default_s": 10800, "f_here_default": 0.10,
+	        "default_schedule": [[10800, 4], [43200, 1]], "min_history_s": 72000, "assumed_night_s": 43200, "cluster_tol": 0.03, "max_clusters": 8},
 	"picnic": {"max_min": 15, "factor": 0.5},
 	"kitchen": {"golden_per_ribbon": 0.004, "golden_cap": 0.10},
 	"start": {"wallet_if_new": 50, "plan": "russet", "zoom": 0.45},

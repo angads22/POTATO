@@ -17,7 +17,7 @@ extends RefCounted
 # Usage:
 #   const FarmBot = preload("res://tests/farm/FarmBot.gd")
 #   var b = FarmBot.new("class")          # profile
-#   b.strategy = "roi"                    # roi|tutorial|s1|s2|s3|s4|none
+#   b.strategy = "roi"                    # roi|tutorial|s1|s2|s3|s4|h1|none (h1 = roi, at most 1 hut)
 #   b.planting = "greedy"                 # greedy|naive|fixed (fixed_crop)
 #   b.run(14)
 #   b.milestones / b.purchases / b.snaps / b.summary()
@@ -34,7 +34,7 @@ const TZ := 0
 const DAY0 := 20740                 # local day index of sim day 1 (2026-10-14)
 
 const PROFILES := ["active", "class", "casual", "class+eve"]
-const STRATEGIES := ["roi", "tutorial", "s1", "s2", "s3", "s4", "none"]
+const STRATEGIES := ["roi", "tutorial", "s1", "s2", "s3", "s4", "h1", "none"]
 
 # ── configuration (set before run) ─────────────────────────────────────────
 var profile := "class"
@@ -50,6 +50,9 @@ var day0 := DAY0
 var fixture := {}                  # applied to the new farm before the first visit
 var metric_afford := false         # day-1 "something useful affordable" per arrival
 var track_cycles := false          # per-planting accounting (SD1 / SD7)
+var ignore_huts := false
+var debug := false
+static var bias := 0.25             # S1-S3: payback weight of the favoured rows           # plan every field as if it had no hut (SD4: a player who ignores Pip)
 var max_book_age_ms := 10 * MIN    # re-read the Farm Book at least this often
 
 # ── state / results ────────────────────────────────────────────────────────
@@ -82,6 +85,7 @@ var _clockin := 120000
 var _report_min := 120000
 var _life := 12000
 var _fav_mult := 1.4
+
 var _plant_rec: Dictionary = {}    # field -> {t, crop, seed, wi}
 var _book_t := -1
 var _next_wallet := 0
@@ -164,6 +168,7 @@ func run(n_days: int) -> void:
 	_report_min = int(c["clock"]["report_min_s"]) * SEC
 	_life = int(c["butterflies"]["life_s"]) * SEC
 	_fav_mult = float(c["favorite"]["mult"])
+
 	farm = FE.new_farm()
 	farm["wallet"] = start_wallet
 	_apply_fixture()
@@ -239,7 +244,8 @@ func _visit(k: int) -> void:
 	if not started or gap >= _report_min:
 		r = FE.collect(farm, t, TZ)
 		var rep: Dictionary = r.get("report", {})
-		arrivals.append({"wi": k, "t": t, "spud": int(rep.get("coins", 0)), "absence_s": gap / SEC})
+		arrivals.append({"wi": k, "t": t, "spud": int(rep.get("coins", 0)), "absence_s": gap / SEC,
+				"hand": int(r.get("coins", 0))})
 		var pk: Dictionary = rep.get("picks", {})
 		for c in pk:
 			spud_picks[c] = int(spud_picks.get(c, 0)) + int(pk[c])
@@ -457,7 +463,7 @@ func _greedy(opts: Array, i: int, t: int) -> String:
 	var c: Dictionary = FE.cfg()
 	var up: Dictionary = farm["up"]
 	var ev: float = FE.star_odds(farm)["ev"]
-	var hut: bool = farm["fields"][i]["hut"]
+	var hut: bool = farm["fields"][i]["hut"] and not ignore_huts
 	var share := float(c["share"][int(up["share"])][0])
 	var walk := int(c["quick"]["walk_s"][int(up["quick"])]) * SEC
 	var shift := int(round(float(c["house"]["shift_h"][int(up["house"])]) * HOUR))
@@ -478,8 +484,9 @@ func _greedy(opts: Array, i: int, t: int) -> String:
 # Coins per ms from planting at t until this field's next hand harvest.
 # Pure planning model of the bot's own schedule; it follows the economy's
 # wage rule: a Spudling pick of a crop that was already in the ground when the
-# absence began (planted at or before the departure) is at full value, a crop
-# planted during the same absence pays the share.
+# absence began (planted at or before the departure) is at full value × star
+# EV, a crop planted during the same absence pays the share. gf is the gross
+# of the crop planted at t, gp of a Spudling replant (no Favorite).
 func forward_rate(t: int, g: int, gf: float, gp: float, seed: int, ev: float, hut: bool,
 		share: float, walk: int, shift: int) -> float:
 	var val := -float(seed)
@@ -504,7 +511,7 @@ func forward_rate(t: int, g: int, gf: float, gp: float, seed: int, ev: float, hu
 			var hi := mini(w1, an)
 			if pick <= hi:
 				var n := 1 + (hi - pick) / (g + walk)
-				val += gross * (1.0 if cur <= end_in else share) + gp * share * (n - 1)
+				val += gross * (ev if cur <= end_in else share) + gp * share * (n - 1)
 				cur = pick + (n - 1) * (g + walk)
 				gross = gp
 				continue
@@ -517,7 +524,7 @@ func forward_rate(t: int, g: int, gf: float, gp: float, seed: int, ev: float, hu
 # crop from the pick time to the bot's next hand harvest (same look-ahead as
 # a hand planting, free seed, Spudling share). Page fields keep the page crop.
 func _depart_plans(t_dep: int) -> void:
-	if planting != "greedy" or wi + 1 >= wins.size():
+	if planting != "greedy" or ignore_huts or wi + 1 >= wins.size():
 		return
 	var c: Dictionary = FE.cfg()
 	var up: Dictionary = farm["up"]
@@ -533,6 +540,10 @@ func _depart_plans(t_dep: int) -> void:
 		if not f["owned"] or not f["hut"] or f["crop"] == "":
 			continue
 		if page_policy and _is_page_field(i) and _page_need() != "":
+			# The Catalog policy holds on hut fields too: the Spudlings replant
+			# the plan, so a page field's plan is the page crop.
+			if f["plan"] != _page_need():
+				FE.set_plan(farm, i, _page_need())
 			continue
 		var ra: int = int(f["planted_g"]) + _crop_grow(i) - goff
 		var pick := maxi(ra, w0) + walk
@@ -546,6 +557,8 @@ func _depart_plans(t_dep: int) -> void:
 			var gf := float(int(o["net"]) + int(o["seed_cost"])) / ev
 			var gp := gf / _fav_mult if o["fav"] else gf
 			var r := forward_rate(pick, int(o["grow_ms"]), gf, gp, 0, ev, true, share, walk, shift)
+			if debug:
+				print("    depart %s F%d %s pick %s: %s %.1f/h" % [fmt_t(t_dep), i + 1, f["crop"], fmt_t(pick), o["crop"], r * HOUR])
 			if r > best_r:
 				best_r = r
 				best = o["crop"]
@@ -634,6 +647,9 @@ func _allowed(r: Dictionary) -> bool:
 				return false
 		"s4":
 			return r["item"] == "soil"
+		"h1":
+			if r["item"] == "hut" and huts >= 1:
+				return false
 	return true
 
 func _weight(r: Dictionary) -> float:
@@ -641,13 +657,13 @@ func _weight(r: Dictionary) -> float:
 	match strategy:
 		"s1":
 			if it in ["tool", "soil"]:
-				return 0.25
+				return bias
 		"s2":
 			if it in ["hut", "share", "quick", "house"]:
-				return 0.25
+				return bias
 		"s3":
 			if it in ["sprinkler", "greenhouse"]:
-				return 0.25
+				return bias
 	return 1.0
 
 # The Farm Book decision: best (weighted) payback for the bot's own schedule
@@ -749,7 +765,15 @@ func _snapshot(day: int, t: int, pre_wallet: int) -> void:
 			owned += 1
 	while snaps.size() < day - 1:
 		snaps.append({})
-	snaps.append({"day": day, "t": t, "pre_wallet": pre_wallet, "wallet": int(farm["wallet"]),
+	# Per-crop harvest milli-coins of the previous UTC day ({crop: [you, spud]}).
+	var mx: Dictionary = farm["mix"]
+	var dn := int(floor(float(t) / DAY))
+	var yday: Dictionary = {}
+	if int(mx["day"]) == dn:
+		yday = mx["prev"].duplicate(true)
+	elif int(mx["day"]) == dn - 1:
+		yday = mx["cur"].duplicate(true)
+	snaps.append({"day": day, "t": t, "pre_wallet": pre_wallet, "wallet": int(farm["wallet"]), "mix_prev": yday,
 			"lifetime": int(st["lifetime_coins"]), "hand": int(st["hand_coins"]), "spud": int(st["spud_coins"]),
 			"penny": int(st["penny_coins"]), "soil": int(farm["up"]["soil"]), "fields": owned,
 			"huts": int(farm["up"]["huts"]), "page": int(farm["page"]), "tool": int(farm["up"]["tool"]),
