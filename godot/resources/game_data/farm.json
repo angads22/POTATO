@@ -2,7 +2,8 @@
 	"version": 1,
 	"_comment": "Spudling Acres balance source (design §5.14). FarmEconomy.gd reads every farm number from here; the GDScript balance test (tests/farm/) runs the real economy on this file. Times are seconds unless named *_ms; coins are integers; crop ids reuse potatoes.json.",
 
-	"clock": {"clockin_s": 120, "report_min_s": 120, "welcome_butterfly_min_s": 600, "reaction_s": 5, "rollback_tolerance_s": 60},
+	"clock": {"clockin_s": 120, "report_min_s": 120, "welcome_butterfly_min_s": 600, "reaction_s": 5, "rollback_tolerance_s": 60,
+	          "your_crop_grace_s": 600},
 	"plots": {"cols": 4, "rows": 3, "per_field": 12, "w": 140, "h": 110},
 
 	"crops": [
@@ -36,7 +37,7 @@
 	         "hats": ["#e05a47", "#4a90d9", "#e0a030", "#5cb85c", "#b06ab3", "#4ac0c0", "#d46a9a"]},
 	"share": [[0.5, 0], [0.6, 40000], [0.7, 2000000]],
 	"quick": {"walk_s": [60, 30, 15], "costs": [0, 6000, 500000], "page": 2},
-	"house": {"shift_h": [2, 4, 8, 12], "costs": [0, 800, 15000, 300000],
+	"house": {"shift_h": [2, 4, 8, 12], "costs": [0, 500, 15000, 300000],
 	          "names": ["Cabin", "Cottage", "House", "Manor"]},
 	"tools": [
 		{"id": "basic",  "name": "Basic Hoe",  "cost": 0,       "silver": 0.30, "gold": 0.10},
@@ -45,7 +46,7 @@
 		{"id": "gold",   "name": "Gold Hoe",   "cost": 5000000, "silver": 0.40, "gold": 0.20, "page": 6, "butterfly_rate": 1.5}
 	],
 	"stars": {"silver_mult": 1.5, "gold_mult": 2.0},
-	"soil": {"base": 100, "growth": 1.32, "mult": 1.05},
+	"soil": {"base": 100, "growth": 1.28, "mult": 1.045},
 	"strains": {"costs": [5000, 50000, 500000, 5000000], "mult": 1.25, "page": 3,
 	            "ribbons": ["bronze", "silver", "gold", "blue"]},
 	"favorite": {"mult": 1.4, "salt": 1592614637,

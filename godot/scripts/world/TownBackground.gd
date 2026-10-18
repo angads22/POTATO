@@ -2,13 +2,13 @@ extends Node2D
 class_name TownBackground
 
 # The town backdrop: a cobbled plaza with a fountain at its heart, the
-# championship kitchen at the head of the square, the seed/knife/tool stalls
-# around it, a couple of cottages for dressing and the Concert Hall
-# bandstand on the south side. (Selling moved to the farm's market truck, so
-# there's no market stall here.) All procedural, like the rest of the game.
-# Geometry constants here are the single source of truth; TownController
-# reads them for collision and interaction points. A gate in the west
-# hedge leads back to the farm.
+# championship kitchen at the head of the square, the seed stall and tool
+# shed (storefronts that open the Farm Book), the knife stand, a couple of
+# cottages for dressing and the Concert Hall bandstand on the south side. All
+# procedural, like the rest of the game. Geometry constants here are the
+# single source of truth; TownController reads them for collision, clicks and
+# interaction points. A gate in the west hedge leads back to the farm.
+# night01 follows the real local clock (set by the controller).
 
 const WORLD = Vector2(1920, 1080)
 
@@ -225,10 +225,11 @@ func _draw_stall(r: Rect2, stripe: Color, label: String):
 	# wares on the back board
 	match label:
 		"SEEDS":
-			for i in range(3):
-				var px = r.position.x + 22 + i * 36
+			for i in range(2):
+				var px = r.position.x + 18 + i * 36
 				draw_rect(Rect2(px, r.position.y + 16, 24, 32), Color(0.92, 0.88, 0.78))
-				draw_circle(Vector2(px + 12, r.position.y + 30), 7.0, Color(0.72, 0.45, 0.2).lightened(i * 0.2))
+				draw_circle(Vector2(px + 12, r.position.y + 30), 7.0, Color(0.72, 0.45, 0.2).lightened(i * 0.25))
+			WorldHUD.icon_book(self, Vector2(r.position.x + 108, r.position.y + 30), 13.0)
 		"KNIVES":
 			for i in range(3):
 				var px = r.position.x + 26 + i * 36
@@ -238,21 +239,18 @@ func _draw_stall(r: Rect2, stripe: Color, label: String):
 				]), Color(0.85, 0.87, 0.92))
 				draw_rect(Rect2(px + 3, r.position.y + 6, 8, 9), Color(0.35, 0.22, 0.12))
 		"TOOLS":
-			# a plow blade, a gear and a fertilizer sack on the board
-			var cx = r.position.x + 26
-			draw_line(Vector2(cx, r.position.y + 16), Vector2(cx + 18, r.position.y + 34), Color(0.6, 0.45, 0.28), 4.0)
+			# a hoe, a sprinkler head and the Farm Book on the board
+			var cx = r.position.x + 22
+			draw_line(Vector2(cx, r.position.y + 48), Vector2(cx + 22, r.position.y + 12), Color(0.6, 0.45, 0.28), 4.0)
 			draw_colored_polygon(PackedVector2Array([
-				Vector2(cx + 14, r.position.y + 30), Vector2(cx + 28, r.position.y + 30),
-				Vector2(cx + 19, r.position.y + 46)
-			]), Color(0.7, 0.72, 0.78))
-			var gc = Vector2(r.position.x + 84, r.position.y + 30)
-			draw_circle(gc, 12.0, Color(0.7, 0.72, 0.78))
-			for k in range(6):
-				var a = k * TAU / 6.0
-				draw_circle(gc + Vector2(cos(a), sin(a)) * 12.0, 3.5, Color(0.7, 0.72, 0.78))
-			draw_circle(gc, 5.0, Color(0.45, 0.47, 0.52))
-			draw_rect(Rect2(r.position.x + 110, r.position.y + 16, 24, 32), Color(0.78, 0.7, 0.5))
-			draw_circle(Vector2(r.position.x + 122, r.position.y + 30), 7.0, Color(0.45, 0.62, 0.3))
+				Vector2(cx + 16, r.position.y + 8), Vector2(cx + 34, r.position.y + 14),
+				Vector2(cx + 28, r.position.y + 24)
+			]), Color(0.85, 0.55, 0.3))
+			var sc = Vector2(r.position.x + 78, r.position.y + 34)
+			draw_line(sc + Vector2(0, 14), sc + Vector2(0, -6), Color(0.66, 0.72, 0.78), 4.0)
+			draw_circle(sc + Vector2(0, -8), 6.0, Color(0.66, 0.72, 0.78))
+			draw_arc(sc + Vector2(0, -8), 13.0, -2.6, -0.5, 8, Color(0.5, 0.8, 1.0), 2.5)
+			WorldHUD.icon_book(self, Vector2(r.position.x + 120, r.position.y + 30), 12.0)
 	# name plate
 	var font = ThemeDB.fallback_font
 	var ls = font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 15)
@@ -326,8 +324,11 @@ func _draw_concert_hall():
 	if on_beat:
 		var ph := fposmod(beat / 4.0, 1.0)
 		var nx := r.get_center().x + sin(beat) * 40.0
-		draw_string(font, Vector2(nx, r.position.y + 20 - ph * 60.0), "♪", HORIZONTAL_ALIGNMENT_LEFT, -1, 20,
-				Color(1.0, 0.9, 0.6, 1.0 - ph))
+		var np := Vector2(nx, r.position.y + 14 - ph * 60.0)
+		var ncol := Color(1.0, 0.9, 0.6, 1.0 - ph)
+		draw_circle(np, 4.5, ncol)
+		draw_line(np + Vector2(4, 0), np + Vector2(4, -16), ncol, 2.0)
+		draw_line(np + Vector2(4, -16), np + Vector2(10, -11), ncol, 2.0)
 
 func _draw_tree(pos: Vector2, s: float, ph: float):
 	var sway = sin(t * 0.8 + ph) * 3.0 * s
@@ -349,9 +350,11 @@ func _draw_farm_gate():
 	draw_rect(Rect2(sp.x - 42, sp.y - 78, 84, 30), Color(0.55, 0.4, 0.24))
 	draw_rect(Rect2(sp.x - 42, sp.y - 78, 84, 4), Color(0.65, 0.5, 0.3))
 	var font = ThemeDB.fallback_font
-	var label = "< FARM"
-	var ls = font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 15)
-	draw_string(font, Vector2(sp.x - ls.x / 2, sp.y - 56), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.95, 0.9, 0.8))
+	var label = "FARM"
+	var ls = font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 17)
+	draw_string(font, Vector2(sp.x - ls.x / 2 + 8, sp.y - 57), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color(0.95, 0.9, 0.8))
+	draw_colored_polygon(PackedVector2Array([Vector2(sp.x - ls.x / 2 + 2, sp.y - 72), Vector2(sp.x - ls.x / 2 - 12, sp.y - 64),
+			Vector2(sp.x - ls.x / 2 + 2, sp.y - 56)]), Color(0.95, 0.9, 0.8))
 
 func _draw_hedge_border():
 	var hedge = Color(0.16, 0.3, 0.14)

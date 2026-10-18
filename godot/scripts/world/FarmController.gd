@@ -1,47 +1,59 @@
 extends WorldController
 class_name FarmController
 
-# The farm: walk the chef potato around the homestead and work the land. The
-# whole pasture is one free-form grid — plow any patch of grass (the plow wears
-# out), plant and water crops, and haul the harvest to the market TRUCK by the
-# top hedge to ship it for coins. Tiles are sparse: a FarmTile exists only once
-# a cell is plowed or holds a sprinkler. Progression runs on the RESEARCH SHED
-# (research points + coins buy permanent upgrades and unlock new crops). Two
-# order depots in the yard — the SEED CO-OP and the SUPPLY DEPOT — let the
-# player schedule the automation standing orders, but stay shuttered until the
-# matching automation research is bought. Coins
-# persist in SaveDataManager.farm and flow both ways — slicing runs bank coins,
-# the farm grows potatoes, and better knives multiply slicing scores.
+# Spudling Acres (design §2, §5, §7): six fenced fields of 12 plots plus the
+# Greenhouse, one verb (Tend) per whole field, Spudlings that work while
+# you're away, Pip's note on return, the Farm Book and the Next Goal. All
+# economy lives in FarmEconomy (pure, static); this scene only reads
+# SaveDataManager.farm (fresh every tick), calls FarmEconomy actions with
+# FarmClock time, reacts to their events and asks for a debounced save.
+#
+# Routing (WorldController.handle_input): Pip's note (modal) -> HUD hit
+# regions -> the drawer -> the world. Keys (§7.1): WASD/arrows move; E/Space
+# tend the field you stand in or use the station you stand at; F field card
+# of that field; 1-7 field card from anywhere; T Tend All; B Farm Book;
+# Q buy the Next Goal; G catch the butterfly; Z zoom; M mute; Esc closes the
+# drawer/note, else back to the menu. Mouse: click a ripe or empty field to
+# tend it, a growing or unowned one (or any field sign) for its card; click
+# the butterfly, a hut, the farmhouse or the gate; wheel / pinch / two-finger
+# scroll zoom between overview (0.45) and follow (1.0).
 
-# Open-grid geometry: cell size matches the FarmTile art (130x90 on a 140x110
-# cell); the grid is conceptual, no node exists for plain grass.
-const CELL := Vector2(140, 110)
-const GRID_ORIGIN := Vector2(70, 70)   # world position of cell (0,0)'s centre
-# interior bounds a cell centre must sit inside to be plowable (off the hedge)
-const FARM_MARGIN := Vector2(110, 120)
-# coins charged to cover a plowed plot back over once the free covers run out
-const COVER_COST := 25
-# base seconds between auto-farming ticks; the auto_speed research shortens it
-const AUTO_BASE_INTERVAL := 1.0
-# research shed overlay tabs: the full progression tree and the automation track
-const RESEARCH_TABS := ["progression", "automation"]
+const CATCH_RADIUS := 60.0
 
 var bg: FarmBackground
+var fields: Array = []           # FarmField x7 (index = field index)
+var critters: FarmCritters
 var fireflies: CPUParticles2D
-var tiles: Array[FarmTile] = []
-var tile_map: Dictionary = {}      # "col:row" -> FarmTile
-var plant_target: FarmTile = null
-var enhance_target: FarmTile = null
-var prompt_tile: FarmTile = null   # tile the current prompt refers to (or null)
-var prompt_cell := Vector2i.ZERO   # grid cell the prompt refers to
-var prompt_cell_valid := false     # true when prompt_cell is virgin grass
-var auto_t := 0.0                  # auto-farming tick accumulator
-var research_sel_id := ""          # id of the highlighted node on the research map
-var research_tab := "progression"  # active research shed tab (see RESEARCH_TABS)
+var views: Array = []            # FarmEconomy.field_view per field, refreshed every frame
+var note_open := false
+var note: Dictionary = {}        # {report}: what the open note shows
+var pending_collect := false     # "Change plans first" left ripe fields: T / [Collect] tends them
+var arrange: Dictionary = {}     # sprinkler arrange mode: {active, field, mode, sel, from, was_overview}
+var hud_dirty := true
+var last_result: Dictionary = {} # the last FarmEconomy action result (test hook)
+var _note_t := 0.0
+var _note_tick := 0.0
 
 func _ready():
+	var f := farm()
+	if not FarmView.started(f):
+		# first visit (or a freshly migrated farm): stamp the clock
+		FarmEconomy.start(f, now_ms(), tz())
+		SaveDataManager.request_farm_save()
 	super._ready()
-	_show_banner("POTATO FARM")
+	settle_now()
+	_refresh_views()
+	if FarmView.note_pending(farm(), now_ms()):
+		open_note()
+	else:
+		_show_banner("SPUDLING ACRES", _welcome_sub())
+	_check_achievements()
+
+func _welcome_sub() -> String:
+	var g := FarmEconomy.next_goal(farm(), now_ms())
+	if g["kind"] == "tutorial":
+		return "%s: %s" % [g["label"], g["hint"]]
+	return "Fields, Spudlings and the Farm Book: click anything!"
 
 func _world_size() -> Vector2:
 	return FarmBackground.WORLD
@@ -49,26 +61,43 @@ func _world_size() -> Vector2:
 func _spawn_point() -> Vector2:
 	if WorldController.travel_spawn == "from_town":
 		WorldController.travel_spawn = ""
-		return Vector2(2350, 760)
-	return Vector2(1280, 950)
+		return FarmBackground.FROM_TOWN_SPAWN
+	return FarmBackground.HOUSE_DOOR + Vector2(0, 70)
+
+func _make_hud() -> WorldHUD:
+	return FarmHud.new()
+
+func overview_zoom() -> float:
+	return float(FarmEconomy.cfg()["start"].get("zoom", 0.45))
+
+func _initial_overview() -> bool:
+	var ui = farm().get("ui", {})
+	var z := float(ui.get("zoom", overview_zoom())) if ui is Dictionary else overview_zoom()
+	return z < 0.7
+
+func _on_zoom_changed():
+	var f := farm()
+	if not f.has("ui") or not (f["ui"] is Dictionary):
+		f["ui"] = {}
+	f["ui"]["zoom"] = overview_zoom() if overview else FOLLOW_ZOOM
+	SaveDataManager.request_farm_save()
 
 func _build_world():
 	bg = FarmBackground.new()
 	add_child(bg)
 	world_bg = bg
-
+	for i in FarmEconomy.FIELDS:
+		var ff := FarmField.new()
+		ff.setup(i)
+		add_child(ff)
+		fields.append(ff)
+	critters = FarmCritters.new()
+	critters.ctrl = self
+	add_child(critters)
 	blockers = [
-		FarmBackground.HOUSE_WALL.grow(6),
+		FarmBackground.HOUSE_WALL.grow(4),
 		Rect2(FarmBackground.WELL_POS - Vector2(55, 45), Vector2(110, 90)),
-		FarmBackground.TRUCK_RECT.grow(6),
-		FarmBackground.RESEARCH_WALL.grow(6),
-		FarmBackground.SEED_DEPOT_WALL.grow(6),
-		FarmBackground.FERT_DEPOT_WALL.grow(6),
 	]
-
-	_restore_tiles()
-
-	# fireflies wake up at night around the pond
 	fireflies = CPUParticles2D.new()
 	fireflies.position = FarmBackground.POND_C + Vector2(0, -60)
 	fireflies.amount = 26
@@ -84,1027 +113,575 @@ func _build_world():
 	fireflies.emitting = false
 	fireflies.z_index = 3
 	add_child(fireflies)
-
-# Rebuild the sparse tile nodes from the save (only plowed/planted/sprinkler
-# cells were ever stored), so crops kept growing while away.
-func _restore_tiles():
-	var saved: Dictionary = SaveDataManager.farm.get("tiles", {})
-	for k in saved:
-		if not (saved[k] is Dictionary) or saved[k].is_empty():
-			continue
-		var c = key_to_cell(k)
-		var tile := FarmTile.new()
-		tile.col = c.x
-		tile.row = c.y
-		tile.position = cell_center(c)
-		tile.from_dict(saved[k])
-		add_child(tile)
-		tiles.append(tile)
-		tile_map[tile.key()] = tile
-
-# ── grid helpers ──
-
-func cell_of(world: Vector2) -> Vector2i:
-	return Vector2i(int(round((world.x - GRID_ORIGIN.x) / CELL.x)),
-			int(round((world.y - GRID_ORIGIN.y) / CELL.y)))
-
-func cell_center(c: Vector2i) -> Vector2:
-	return GRID_ORIGIN + Vector2(c.x * CELL.x, c.y * CELL.y)
-
-func cell_key(c: Vector2i) -> String:
-	return "%d:%d" % [c.x, c.y]
-
-func key_to_cell(k: String) -> Vector2i:
-	var parts = k.split(":")
-	return Vector2i(int(parts[0]), int(parts[1]))
-
-# Farmland-shaped ground: the open pasture below the dividing path — inside the
-# interior bounds, clear of the top farmyard strip, and walkable (so not under
-# the house, well, truck, shed or pond). is_plowable_cell adds the path rule on
-# top to decide where a brand-new plot may actually be opened.
-func is_farmable_cell(c: Vector2i) -> bool:
-	var p = cell_center(c)
-	if p.x < FARM_MARGIN.x or p.x > world_size.x - FARM_MARGIN.x:
-		return false
-	if p.y < FARM_MARGIN.y or p.y > world_size.y - FARM_MARGIN.y:
-		return false
-	if p.y <= FarmBackground.FIELD_TOP_Y:
-		return false  # the top farmyard strip isn't farmland
-	return _walkable(p)
-
-# Like is_farmable_cell, but also refuses the dirt paths: a brand-new plot
-# (plowed soil or a dropped sprinkler) can't be created on a track, so the
-# walkways stay clear. Already-worked tiles aren't gated by this, so crops that
-# predate the rule (or sit on a path in an old save) stay fully workable.
-func is_plowable_cell(c: Vector2i) -> bool:
-	return is_farmable_cell(c) and not FarmBackground.on_path(cell_center(c))
-
-func _ensure_tile(c: Vector2i) -> FarmTile:
-	var k = cell_key(c)
-	if tile_map.has(k):
-		return tile_map[k]
-	var tile := FarmTile.new()
-	tile.col = c.x
-	tile.row = c.y
-	tile.position = cell_center(c)
-	add_child(tile)
-	tiles.append(tile)
-	tile_map[k] = tile
-	return tile
-
-# Drop a tile that has reverted to plain grass (unplowed, no sprinkler, no crop)
-# so the sparse map and the save don't accumulate empty cells.
-func _drop_tile(tile: FarmTile):
-	if not tile.to_dict().is_empty():
-		return
-	tiles.erase(tile)
-	tile_map.erase(tile.key())
-	tile.queue_free()
-
-func _tick(delta):
-	fireflies.emitting = night01 > 0.5
-	truck_tick()
-	# auto-farming gear works the land on a tick the auto_speed research shortens
-	auto_t += delta
-	if auto_t >= auto_interval():
-		auto_t = 0.0
-		_auto_farm()
+	_refresh_stations()
 
 func _walkable(p: Vector2) -> bool:
 	if not super._walkable(p):
 		return false
+	var f := farm()
+	for i in FarmEconomy.FIELDS:
+		if f["fields"][i]["hut"] and FarmView.hut_rect(i).grow(-8).has_point(p):
+			return false
 	var d = (p - FarmBackground.POND_C) / (FarmBackground.POND_R + Vector2(28, 30))
 	return d.length() > 1.0
 
-# ────────────────────────────────────────────────────────
-#  Interactions
-# ────────────────────────────────────────────────────────
+# ── per-frame ──
+
+func _tick(delta: float):
+	var f := farm()
+	var now := now_ms()
+	_refresh_views()
+	critters.tick(delta, f, now)
+	if critters.bf_active and not note_open and player.position.distance_to(critters.bf_pos) <= CATCH_RADIUS:
+		catch_butterfly()
+	fireflies.emitting = night01 > 0.5
+	_refresh_stations()
+	if note_open:
+		_note_t += delta
+		var coins := int(note.get("report", {}).get("coins", 0))
+		if coins > 0 and _note_t < 1.2:
+			_note_tick -= delta
+			if _note_tick <= 0.0:
+				_note_tick = 0.25
+				AudioManager.play_sfx("coin_tick")
+
+func _refresh_views():
+	var f := farm()
+	if not f.has("fields"):
+		return
+	var now := now_ms()
+	var screen := Rect2(-40, -40, 1360, 800)
+	views.resize(FarmEconomy.FIELDS)
+	for i in FarmEconomy.FIELDS:
+		views[i] = FarmEconomy.field_view(f, i, now)
+		if i < fields.size():
+			fields[i].refresh(views[i], field_screen_rect(i).intersects(screen))
+
+func _on_settle(res: Dictionary):
+	if not res.is_empty():
+		hud_dirty = true
+
+func _refresh_stations():
+	stations = [
+		{"id": "house", "pos": FarmBackground.HOUSE_DOOR, "r": 95.0, "rect": FarmBackground.HOUSE_WALL,
+			"text": "[E] The %s: hire and upgrade Spudlings (Farm Book)" % FarmView.house_name(FarmView.house_tier(farm())),
+			"act": func(): open_book("helpers")},
+		{"id": "gate", "pos": FarmBackground.TOWN_GATE_POS, "r": 120.0, "rect": Rect2(2400, 540, 160, 150),
+			"text": "[E] Take the road into town", "act": goto_town},
+	]
+	var f := farm()
+	for i in FarmEconomy.FIELDS:
+		if f["fields"][i]["owned"] and f["fields"][i]["hut"]:
+			var idx := i
+			stations.append({"id": "hut:%d" % i, "pos": FarmView.hut_pos(i) + Vector2(0, 40), "r": 70.0,
+				"rect": FarmView.hut_rect(i),
+				"text": "[E] %s's hut: %s card" % [str(views[i]["hut_name"]) if views.size() > i else "Spudling",
+						FarmView.field_name(i)],
+				"act": func(): open_field_card(idx)})
+
+# ── geometry helpers (test hooks) ──
+
+func field_screen_rect(i: int) -> Rect2:
+	return world_rect_to_screen(FarmView.field_rect(i))
+
+func field_at(world_pos: Vector2, pad := 18.0) -> int:
+	for i in FarmEconomy.FIELDS:
+		if FarmView.field_rect(i).grow(pad).has_point(world_pos):
+			return i
+	return -1
+
+func socket_screen_pos(s: String) -> Vector2:
+	return world_to_screen(FarmView.socket_pos(s))
+
+func player_present() -> bool:
+	return FarmEconomy.is_present(farm(), now_ms())
+
+func ui_blocking() -> bool:
+	return super.ui_blocking() or note_open or arrange_active()
+
+# ── prompt ──
 
 func _scan_interactions():
-	prompt = ""
-	prompt_action = Callable()
-	prompt_tile = null
-	prompt_cell_valid = false
-	if open_shop != "":
+	super._scan_interactions()
+	if prompt != "" or ui_blocking():
 		return
-
-	# Stations first — the player is always standing over some grid cell now,
-	# so a cell prompt would otherwise mask the well/truck/shed/gate prompts.
-	var stations = [
-		{"pos": FarmBackground.WELL_POS + Vector2(0, 50), "r": 110.0,
-			"text": "[E] Draw water — refill the can", "act": fill_water},
-		{"pos": FarmBackground.TRUCK_POS, "r": 130.0, "act": _truck_station},
-		{"pos": FarmBackground.RESEARCH_POS, "r": 120.0,
-			"text": "[E] Open the Research Shed", "act": _open_research},
-		{"pos": FarmBackground.SEED_ORDER_POS, "r": 115.0, "act": _seed_depot_station},
-		{"pos": FarmBackground.FERT_ORDER_POS, "r": 115.0, "act": _fert_depot_station},
-		{"pos": Vector2(FarmBackground.HOUSE_WALL.get_center().x, FarmBackground.HOUSE_WALL.end.y + 25), "r": 100.0,
-			"text": "[E] Nap until morning", "act": _nap},
-		{"pos": FarmBackground.TOWN_GATE_POS, "r": 120.0,
-			"text": "[E] Take the road into town", "act": _goto_town},
-	]
-	for s in stations:
-		if player.position.distance_to(s.pos) < s.r:
-			if s.has("act") and (s["act"] as Callable).is_valid() and not s.has("text"):
-				s["act"].call()  # station builds its own prompt (the truck)
-			else:
-				prompt = s.text
-				prompt_action = s.act
-			return
-
-	# Otherwise act on the cell under the player's feet
-	var c = cell_of(player.position)
-	var existing = tile_map.get(cell_key(c))
-	if existing != null:
-		_set_tile_prompt(existing)   # already-worked tiles stay workable
+	var i := field_at(player.position)
+	if i < 0 or views.size() <= i:
 		return
-	if not is_farmable_cell(c):
-		return
-	# Brand-new plots can't be opened on a dirt path — keep the tracks clear
-	if FarmBackground.on_path(cell_center(c)):
-		prompt = "A well-worn path — the soil here is too packed to plow"
-		return
-	_set_grass_prompt(c)
-
-# Virgin grass: offer to plow it (and to drop a sprinkler on it)
-func _set_grass_prompt(c: Vector2i):
-	prompt_cell = c
-	prompt_cell_valid = true
-	if plow_uses() > 0:
-		prompt = _plow_prompt()
-		prompt_action = func(): plow_cell(c)
+	var v: Dictionary = views[i]
+	var nm := FarmView.field_name(i)
+	if not v["owned"]:
+		prompt = "%s is for sale (%s c) · [E] or [F] details" % [nm, NumFmt.coins(int(v["cost"]))] if int(v["cost"]) >= 0 \
+				else "%s · [F] details" % nm
+		prompt_action = func(): open_field_card(i)
+	elif v["ripe"]:
+		prompt = "[E] Tend %s: %s is ripe!  ·  [F] Field card" % [nm, FarmView.crop_name(str(v["crop"]))]
+		prompt_action = func(): tend_field(i)
+	elif v["empty"]:
+		var plan := str(v["plan"])
+		var seed := 12 * int(FarmEconomy.crop_info(plan).get("seed", 0))
+		prompt = "[E] Plant %s with %s (%s)  ·  [F] Field card" % [nm, FarmView.crop_name(plan),
+				"free" if seed == 0 else NumFmt.coins(seed) + " c"]
+		prompt_action = func(): tend_field(i)
 	else:
-		prompt = "Wild soil — your plow is broken; buy a new one in town"
-	if sprinkler_stock() > 0:
-		prompt += "  ·  [F] Place sprinkler"
+		prompt = "%s · %s · ready at %s (in %s)  ·  [F] Field card" % [nm, FarmView.crop_name(str(v["crop"])),
+				NumFmt.clock(int(v["ready_at_ms"]), tz()), NumFmt.dur(int(v["left_ms"]) / 1000.0)]
+		prompt_action = func(): tend_field(i)
 
-# The "[E] Plow…" line, including the active size + [X] toggle once a wider plow
-# has been researched.
-func _plow_prompt() -> String:
-	if max_plow_radius() > 0:
-		return "[E] Plow %s — plow has %d uses left  ·  [X] Plow size" % [plow_size_label(), plow_uses()]
-	return "[E] Plow the soil — plow has %d uses left" % plow_uses()
+# ── input ──
 
-func _set_tile_prompt(tile: FarmTile):
-	prompt_tile = tile
-	prompt_cell = Vector2i(tile.col, tile.row)
-	if tile.has_sprinkler:
-		prompt = "Sprinkler — waters the tiles around it  ·  [F] Pick up"
+# Pip's note owns every input while it is open (and doesn't stamp presence:
+# its buttons do, through Collect / note_input). An input that ends an
+# absence of report_min_s or more while the scene is open opens the note
+# and is consumed.
+func _modal_input(event: InputEvent) -> bool:
+	if note_open:
+		if event is InputEventKey:
+			if event.echo:
+				return true
+			match event.keycode:
+				KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+					collect()
+				KEY_ESCAPE:
+					close_note_change_plans()
+				KEY_M:
+					toggle_mute()
+		elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+			match (hud as FarmHud).note_regions.hit_id(event.position):
+				"note:collect":
+					collect()
+				"note:change":
+					close_note_change_plans()
+		return true
+	var f := farm()
+	var now := now_ms()
+	if FarmView.started(f) and FarmView.idle_ms(f, now) >= FarmView.report_min_ms():
+		FarmEconomy.settle(f, now, tz())
+		if FarmView.note_pending(f, now):
+			open_note()
+			return true
+	return false
+
+func _key_input(event: InputEventKey):
+	if arrange_active():
+		_arrange_key(event)
 		return
-	match tile.state:
-		FarmTile.TState.UNPLOWED:
-			if plow_uses() > 0:
-				prompt = _plow_prompt()
-				prompt_action = func(): plow_tile(tile)
-			else:
-				prompt = "Wild soil — your plow is broken; buy a new one in town"
-			if sprinkler_stock() > 0:
-				prompt += "  ·  [F] Place sprinkler"
-		FarmTile.TState.PLOWED:
-			if _total_seeds() > 0:
-				prompt = "[E] Plant a seed"
-				prompt_action = func(): _open_plant_menu(tile)
-			else:
-				prompt = "Plowed soil — buy seeds at the town seed shop"
-			if sprinkler_stock() > 0:
-				prompt += "  ·  [F] Place sprinkler"
-			prompt += "  ·  [C] Cover (%s)" % _cover_hint()
-		FarmTile.TState.PLANTED:
-			var pct = int(tile.progress() * 100.0)
-			var nm = GameData.potato_by_id(tile.potato_id).get("name", "?")
-			if not tile.watered and int(SaveDataManager.farm.get("water", 0)) > 0:
-				prompt = "[E] Water the %s — %d%% grown" % [nm, pct]
-				prompt_action = func(): _water_tile(tile)
-			elif tile.watered:
-				prompt = "%s growing fast — %d%%" % [nm, pct]
-			else:
-				prompt = "%s growing — %d%% (fetch water to speed up)" % [nm, pct]
-			if tile.boost >= 1.0 and _total_enhancers() > 0:
-				prompt += "  ·  [F] Fertilize"
-		FarmTile.TState.READY:
-			var nm2 = GameData.potato_by_id(tile.potato_id).get("name", "?")
-			prompt = "[E] Harvest the %s!" % nm2
-			prompt_action = func(): _harvest_tile(tile)
+	super._key_input(event)
 
-# [F]: pick up / place sprinklers, or open the fertilizer menu on a crop
-func _on_alt_interact():
-	if prompt_tile != null:
-		var tile = prompt_tile
-		if tile.has_sprinkler:
-			pickup_sprinkler(tile)
-			return
-		match tile.state:
-			FarmTile.TState.UNPLOWED, FarmTile.TState.PLOWED:
-				if sprinkler_stock() > 0:
-					place_sprinkler(tile)
-			FarmTile.TState.PLANTED:
-				if tile.boost >= 1.0 and _total_enhancers() > 0:
-					enhance_target = tile
-					open_shop = "enhance"
-	elif prompt_cell_valid and sprinkler_stock() > 0:
-		place_sprinkler_cell(prompt_cell)
-
-# [C]: cover a plowed plot back over to wild grass
-func _on_cover_interact():
-	if prompt_tile != null and not prompt_tile.has_sprinkler \
-			and prompt_tile.state == FarmTile.TState.PLOWED:
-		cover_tile(prompt_tile)
-
-func _shop_input(key: Key):
-	var idx = key - KEY_1  # 0-based row number
-	match open_shop:
-		"plant":
-			var farmables = plantable_potatoes()
-			if idx >= 0 and idx < farmables.size() and plant_target:
-				if plant_on(plant_target, farmables[idx]["id"]):
-					open_shop = ""
-					plant_target = null
-		"enhance":
-			var owned_enh = owned_enhancers()
-			if idx >= 0 and idx < owned_enh.size() and enhance_target:
-				if apply_enhancer(enhance_target, owned_enh[idx]["id"]):
-					open_shop = ""
-					enhance_target = null
-		"truck":
-			if key == KEY_A:
-				truck_load_all()
-			elif key == KEY_S:
-				truck_send()
+func _scene_key(event: InputEventKey) -> bool:
+	var k := event.keycode
+	match k:
+		KEY_F:
+			var i := field_at(player.position)
+			if i < 0:
+				_popup("Stand in a field for F, or press 1-7", WorldHUD.INK_DIM)
+			elif book.is_card() and book.field == i:
+				book.close()
 			else:
-				var sellable = GameData.farmable_potatoes()
-				if idx >= 0 and idx < sellable.size():
-					truck_load(sellable[idx]["id"])
-		"research":
-			# the node map navigates with arrows and buys the selected node
-			match key:
-				KEY_UP:
-					research_select_dir(Vector2.UP)
-				KEY_DOWN:
-					research_select_dir(Vector2.DOWN)
-				KEY_LEFT:
-					research_select_dir(Vector2.LEFT)
-				KEY_RIGHT:
-					research_select_dir(Vector2.RIGHT)
-				KEY_E, KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
-					if research_sel_id != "":
-						buy_research(research_sel_id)
-				KEY_TAB:
-					research_cycle_tab()
-		"seed_order":
-			match key:
-				KEY_T, KEY_SPACE:
-					toggle_order_enabled("seed_order")
-				KEY_EQUAL, KEY_KP_ADD, KEY_UP:
-					adjust_order_stock("seed_order", 1)
-				KEY_MINUS, KEY_KP_SUBTRACT, KEY_DOWN:
-					adjust_order_stock("seed_order", -1)
-				_:
-					var crops = plantable_potatoes()
-					if idx >= 0 and idx < crops.size():
-						toggle_seed_order_crop(crops[idx]["id"])
-		"fertilizer_order":
-			match key:
-				KEY_T, KEY_SPACE:
-					toggle_order_enabled("fertilizer_order")
-				KEY_EQUAL, KEY_KP_ADD, KEY_UP:
-					adjust_order_stock("fertilizer_order", 1)
-				KEY_MINUS, KEY_KP_SUBTRACT, KEY_DOWN:
-					adjust_order_stock("fertilizer_order", -1)
-				_:
-					var grades = GameData.enhancers()
-					if idx >= 0 and idx < grades.size():
-						set_fertilizer_order_grade(grades[idx]["id"])
+				open_field_card(i)
+		KEY_T:
+			tend_all()
+		KEY_B:
+			if book.open and book.mode == "book":
+				book.close()
+				AudioManager.play_sfx("menu_back")
+			else:
+				open_book("")
+		KEY_Q:
+			buy_goal()
+		KEY_G:
+			catch_butterfly()
 		_:
-			super._shop_input(key)
-
-func _on_shop_closed():
-	plant_target = null
-	enhance_target = null
-
-# ────────────────────────────────────────────────────────
-#  Working the land (public so the smoke test can drive them)
-# ────────────────────────────────────────────────────────
-
-# Plow a virgin grass cell (creating the tile). With the Wide Plow research a
-# 3x3 patch is broken at once, spending one plow use per tile actually tilled.
-func plow_cell(c: Vector2i) -> bool:
-	if plow_uses() <= 0:
-		_popup("The plow is broken — the town tool shed sells new ones", Color.ORANGE_RED)
-		return false
-	var radius = plow_radius()
-	if radius <= 0:
-		if not is_plowable_cell(c):
-			return false
-		return plow_tile(_ensure_tile(c))
-	var any := false
-	for dr in range(-radius, radius + 1):
-		for dc in range(-radius, radius + 1):
-			if plow_uses() <= 0:
-				break
-			var nc = Vector2i(c.x + dc, c.y + dr)
-			if not is_plowable_cell(nc):
-				continue
-			var t = _ensure_tile(nc)
-			if t.state == FarmTile.TState.UNPLOWED and not t.has_sprinkler:
-				if plow_tile(t):
-					any = true
+			var idx := int(k) - KEY_1
+			if idx >= 0 and idx < FarmEconomy.FIELDS:
+				open_field_card(idx)
 			else:
-				_drop_tile(t)  # nothing to do here — don't leave an empty node
-	return any
+				return false
+	return true
 
-func plow_tile(tile: FarmTile) -> bool:
-	# Farmhand AI: a worn-out plow is auto-replaced so field work never stalls
-	if plow_uses() <= 0 and SaveDataManager.research_flag("auto_buy_plow"):
-		buy_plow()
-	if plow_uses() <= 0:
-		_popup("The plow is broken — the town tool shed sells new ones", Color.ORANGE_RED)
-		return false
-	if not tile.plow():
-		return false
-	SaveDataManager.farm["plow_uses"] = plow_uses() - 1
-	_sync_tiles()
-	AudioManager.play_sfx_varied("plow", 0.08)
-	if plow_uses() <= 0:
-		_popup("CRACK! The plow gave out on that one", Color.ORANGE_RED)
+func escape():
+	if arrange_active():
+		cancel_arrange()
 	else:
-		_popup("Soil plowed — ready for a seed", Color.LIGHT_GREEN)
-	if SaveDataManager.settings.get("particle_effects", true):
-		Fx.burst(self, tile.position, Color(0.46, 0.32, 0.18), 10, 160.0)
+		super.escape()
+
+func _on_hud(id: String, data) -> bool:
+	match id:
+		"btn:book", "btn:book_bar":
+			if book.open and book.mode == "book":
+				book.close()
+				AudioManager.play_sfx("menu_back")
+			else:
+				open_book("")
+		"btn:tend_all":
+			tend_all()
+		"goal":
+			goal_click()
+		"bf:catch", "bf:arrow":
+			catch_butterfly()
+		"arrange:cancel":
+			cancel_arrange()
+		_:
+			if id.begins_with("sign:"):
+				field_click(int(data))
+			elif id.begins_with("socket:"):
+				arrange_pick(str(data))
+			else:
+				return false
 	return true
 
-# Free "cover plot" uses left; once spent, covering costs COVER_COST coins.
-func cover_freebies() -> int:
-	return int(SaveDataManager.farm.get("cover_freebies", 0))
+func _world_click(world_pos: Vector2, screen_pos: Vector2) -> bool:
+	if arrange_active():
+		return true
+	if critters.bf_active and world_pos.distance_to(critters.bf_pos) <= maxf(44.0, 30.0 / zoom_now):
+		catch_butterfly()
+		return true
+	if super._world_click(world_pos, screen_pos):
+		return true
+	var i := field_at(world_pos, 10.0)
+	if i >= 0:
+		field_click(i)
+		return true
+	return false
 
-# 0 while freebies remain, otherwise the coin price for one cover
-func cover_cost() -> int:
-	return 0 if cover_freebies() > 0 else COVER_COST
+# ── field actions ──
 
-func _cover_hint() -> String:
-	return ("%d free" % cover_freebies()) if cover_freebies() > 0 else ("%d c" % COVER_COST)
-
-# Cover a plowed plot back over to wild grass. Spends a freebie (9 to start),
-# or COVER_COST coins once those run out. The plow is NOT refunded and there's
-# no undo — the cell drops back to plain grass and must be plowed again to use.
-func cover_tile(tile: FarmTile) -> bool:
-	if tile == null or tile.has_sprinkler or tile.state != FarmTile.TState.PLOWED:
-		return false
-	var free = cover_freebies()
-	if free <= 0 and not SaveDataManager.spend_coins(COVER_COST):
-		_popup("Need %d coins to cover this plot" % COVER_COST, Color.ORANGE_RED)
-		return false
-	if free > 0:
-		SaveDataManager.farm["cover_freebies"] = free - 1
-	var pos = tile.position
-	# back to virgin grass: clear the soil so to_dict() empties and the sparse
-	# tile node is dropped — no plow refund, no last-crop memory to replant.
-	tile.state = FarmTile.TState.UNPLOWED
-	tile.last_potato_id = ""
-	_drop_tile(tile)
-	_sync_tiles()
-	if free > 0:
-		_popup("Plot covered over — %d free %s left" % [free - 1, ("cover" if free - 1 == 1 else "covers")], Color(0.72, 0.62, 0.48))
+# A click on a field (or its sign): tend a ripe or empty field, otherwise
+# open its card. Acts at any distance; the avatar turns and swings.
+func field_click(i: int):
+	if views.size() <= i:
+		_refresh_views()
+	var v: Dictionary = views[i]
+	if v["owned"] and (v["empty"] or v["ripe"]):
+		tend_field(i)
 	else:
-		_popup("Plot covered over for %d coins" % COVER_COST, Color(0.72, 0.62, 0.48))
-	AudioManager.play_sfx("cover")
-	if SaveDataManager.settings.get("particle_effects", true):
-		Fx.burst(self, pos, Color(0.5, 0.46, 0.28), 10, 150.0)
-	return true
+		open_field_card(i)
 
-func place_sprinkler_cell(c: Vector2i) -> bool:
-	if sprinkler_stock() <= 0 or not is_plowable_cell(c):
-		return false
-	return place_sprinkler(_ensure_tile(c))
+func open_field_card(i: int):
+	arrange = {}
+	book.open_card(i)
+	face_toward(FarmView.field_rect(i).get_center())
+	AudioManager.play_sfx("menu_select")
 
-func place_sprinkler(tile: FarmTile) -> bool:
-	if sprinkler_stock() <= 0 or tile.has_sprinkler:
-		return false
-	if tile.state == FarmTile.TState.PLANTED or tile.state == FarmTile.TState.READY:
-		_popup("There's a crop in the way!", Color.ORANGE_RED)
-		return false
-	tile.has_sprinkler = true
-	SaveDataManager.farm["sprinkler_stock"] = sprinkler_stock() - 1
-	_sync_tiles()
-	_popup("Sprinkler placed — it waters the tiles around it", Color(0.5, 0.8, 1.0))
-	AudioManager.play_sfx("sprinkler")
-	return true
+func tend_field(i: int) -> Dictionary:
+	face_toward(FarmView.field_rect(i).get_center())
+	var res := FarmEconomy.tend(farm(), i, now_ms(), tz())
+	last_result = res
+	_after_action(res)
+	if res["ok"]:
+		_tend_feedback(res, false)
+	elif res.has("ready_at_ms"):
+		_popup(str(res["msg"]), WorldHUD.INK_DIM)
+	else:
+		_popup(str(res["msg"]), WorldHUD.WARN)
+	return res
 
-func pickup_sprinkler(tile: FarmTile) -> bool:
-	if not tile.has_sprinkler:
-		return false
-	tile.has_sprinkler = false
-	SaveDataManager.farm["sprinkler_stock"] = sprinkler_stock() + 1
-	_popup("Sprinkler packed up", Color(0.5, 0.8, 1.0))
-	AudioManager.play_sfx("menu_back")
-	# if it sat on never-plowed ground, the cell goes back to plain grass
-	_drop_tile(tile)
-	_sync_tiles()
-	return true
+func tend_all() -> Dictionary:
+	if pending_collect:
+		return collect()
+	var res := FarmEconomy.tend_all(farm(), now_ms(), tz())
+	last_result = res
+	_after_action(res)
+	if not res["ok"]:
+		_popup(str(res["msg"]), WorldHUD.WARN)
+	elif int(res.get("tended", 0)) == 0:
+		_popup("Nothing to tend: every field is growing", WorldHUD.INK_DIM)
+	else:
+		_tend_feedback(res, true)
+	return res
 
-func plant_on(tile: FarmTile, id: String) -> bool:
-	if SaveDataManager.item_count("seeds", id) <= 0:
-		_popup("No %s seeds!" % GameData.potato_by_id(id).get("name", id), Color.ORANGE_RED)
-		return false
-	if not tile.plant(id):
-		_popup("That soil needs plowing first!", Color.ORANGE_RED)
-		return false
-	SaveDataManager.add_item("seeds", id, -1)
-	_sync_tiles()
-	_popup("Planted %s" % GameData.potato_by_id(id).get("name", id), Color.LIGHT_GREEN)
-	AudioManager.play_sfx_varied("plant", 0.1)
-	return true
-
-func fill_water():
-	SaveDataManager.farm["water"] = water_capacity()
-	SaveDataManager.save_game()
-	_popup("Watering can filled!", Color(0.5, 0.8, 1.0))
-	AudioManager.play_sfx("water", -3.0, 0.8)
-
-# Charges a full watering can holds: the base 4 plus any researched water branch.
-func water_capacity() -> int:
-	return 4 + int(SaveDataManager.research_bonus("water_capacity"))
-
-func _water_tile(tile: FarmTile):
-	var water = int(SaveDataManager.farm.get("water", 0))
-	if water <= 0 or tile.watered:
-		return
-	SaveDataManager.farm["water"] = water - 1
-	tile.water()
-	_sync_tiles()
-	_popup("Watered — growing fast!", Color(0.5, 0.8, 1.0))
-	AudioManager.play_sfx_varied("water", 0.08)
-
-# quiet=true (the auto-harvest drone) skips the popup/SFX/particles so a fast
-# tick clearing a whole field doesn't spam feedback.
-func _harvest_tile(tile: FarmTile, quiet := false):
-	var id = tile.potato_id
-	var data = GameData.potato_by_id(id)
-	var n = tile.harvest(rng) + int(SaveDataManager.research_bonus("bonus_yield"))
-	SaveDataManager.add_item("spuds", id, n)
-	# harvesting yields a trickle of research points (rare crops give more), lifted
-	# by the science branch's harvest_rp upgrades
-	var rp = (3 if data.get("rare", false) else 1) + int(SaveDataManager.research_bonus("harvest_rp"))
-	SaveDataManager.add_research_points(rp)
-	_sync_tiles()
-	if quiet:
-		return
-	_popup("+%d %s!" % [n, data.get("name", id)], Color.GOLD if data.get("rare", false) else Color.LIGHT_GREEN)
-	if SaveDataManager.settings.get("particle_effects", true):
-		if data.get("rare", false):
-			Fx.sparkle(self, tile.position)
-		else:
-			Fx.burst(self, tile.position + Vector2(0, -10), Color(data.get("color", "#b87333")), 12, 180.0)
-	AudioManager.play_sfx_varied("harvest", 0.08)
-	if data.get("rare", false):
-		AudioManager.play_sfx("golden")
-
-# Spends one fertilizer charge on a planted tile; one application per crop
-func apply_enhancer(tile: FarmTile, id: String) -> bool:
-	if SaveDataManager.item_count("items", id) <= 0:
-		return false
-	var e = GameData.enhancer_by_id(id)
-	if not tile.enhance(float(e.get("grow_mult", 1.0)), int(e.get("bonus_yield", 0))):
-		_popup("Already fertilized!", Color.ORANGE_RED)
-		return false
-	SaveDataManager.add_item("items", id, -1)
-	_sync_tiles()
-	_popup("%s worked into the soil! (%d charges left)" % [e.get("name", id), SaveDataManager.item_count("items", id)], Color(0.55, 0.95, 0.4))
-	AudioManager.play_sfx("fertilize")
-	if SaveDataManager.settings.get("particle_effects", true):
-		Fx.sparkle(self, tile.position)
-	return true
-
-# ────────────────────────────────────────────────────────
-#  Market truck — load spuds, ship them, coins + RP come back later
-# ────────────────────────────────────────────────────────
-
-func _truck() -> Dictionary:
-	return SaveDataManager.farm.get("truck", {})
-
-func truck_capacity() -> int:
-	return 20 + int(SaveDataManager.research_bonus("truck_capacity"))
-
-func truck_trip_seconds() -> float:
-	return maxf(20.0, 120.0 + SaveDataManager.research_bonus("truck_trip_delta"))
-
-func truck_price_mult() -> float:
-	return 1.0 + SaveDataManager.research_bonus("truck_price_mult")
-
-func truck_cargo_count() -> int:
-	var n = 0
-	for v in _truck().get("cargo", {}).values():
-		n += int(v)
-	return n
-
-func truck_status() -> String:
-	return str(_truck().get("status", "idle"))
-
-func truck_load(id: String) -> bool:
-	var tr = _truck()
-	if tr.get("status", "idle") != "idle":
-		return false
-	if SaveDataManager.item_count("spuds", id) <= 0 or truck_cargo_count() >= truck_capacity():
-		return false
-	var cargo: Dictionary = tr.get("cargo", {})
-	cargo[id] = int(cargo.get(id, 0)) + 1
-	tr["cargo"] = cargo
-	SaveDataManager.farm["truck"] = tr
-	SaveDataManager.add_item("spuds", id, -1)  # also saves
-	return true
-
-func truck_load_all():
-	var added := 0
-	for p in GameData.farmable_potatoes():
-		while SaveDataManager.item_count("spuds", p["id"]) > 0 and truck_cargo_count() < truck_capacity():
-			if not truck_load(p["id"]):
-				break
-			added += 1
-	if added > 0:
-		_popup("Loaded %d spuds onto the truck" % added, Color.LIGHT_GREEN)
-	elif truck_cargo_count() >= truck_capacity():
-		_popup("The truck is full!", Color(0.85, 0.7, 0.4))
-
-func truck_send() -> bool:
-	var tr = _truck()
-	if tr.get("status", "idle") != "idle" or truck_cargo_count() <= 0:
-		_popup("Load some spuds first!", Color.ORANGE_RED)
-		return false
-	var coins = 0
-	var rp = 0
-	for id in tr.get("cargo", {}):
-		var cnt = int(tr["cargo"][id])
-		coins += int(round(cnt * int(GameData.potato_by_id(id).get("sell_value", 0)) * truck_price_mult()))
-		rp += cnt
-	tr["pending_coins"] = coins
-	tr["pending_rp"] = maxi(1, rp / 5)   # a research point per 5 spuds shipped
-	tr["return_at"] = Time.get_unix_time_from_system() + truck_trip_seconds()
-	tr["status"] = "away"
-	SaveDataManager.farm["truck"] = tr
-	SaveDataManager.save_game()
-	_popup("Truck off to market — back in %ds" % int(truck_trip_seconds()), Color.GOLD)
-	AudioManager.play_sfx("truck_horn")
-	open_shop = ""
-	return true
-
-# Wall-clock based, so a truck sent before quitting still arrives on return.
-func truck_tick():
-	var tr = _truck()
-	if tr.get("status", "") != "away":
-		return
-	if Time.get_unix_time_from_system() < float(tr.get("return_at", 0.0)):
-		return
-	var coins = int(tr.get("pending_coins", 0))
-	var rp = int(tr.get("pending_rp", 0))
-	# reset the truck atomically before paying out, so we can't double-deposit
-	SaveDataManager.farm["truck"] = {"status": "idle", "cargo": {}, "return_at": 0.0,
-			"pending_coins": 0, "pending_rp": 0}
-	if coins > 0:
-		SaveDataManager.add_coins(coins)
-	if rp > 0:
-		SaveDataManager.add_research_points(rp)
-	SaveDataManager.save_game()
-	_popup("Truck's back! +%d coins, +%d research" % [coins, rp], Color.GOLD)
+# Pip's note [Collect]: FarmEconomy.collect (take_report + a Tend All that
+# needs no hoe), the coin shower, and the welcome butterfly it schedules.
+func collect() -> Dictionary:
+	var res := FarmEconomy.collect(farm(), now_ms(), tz())
+	last_result = res
+	note_open = false
+	pending_collect = false
+	_after_action(res)
+	_tend_feedback(res, true)
 	AudioManager.play_sfx("coin_collect")
-	AudioManager.play_sfx("level_complete")
+	return res
 
-func _truck_station():
-	if truck_status() == "away":
-		var left = int(float(_truck().get("return_at", 0.0)) - Time.get_unix_time_from_system())
-		prompt = "Truck is at market — back in %ds" % maxi(0, left)
-		prompt_action = Callable()
-	else:
-		prompt = "[E] Load the market truck"
-		prompt_action = _open_truck
+# Pip's note [Change plans first]: the note closes WITHOUT collecting (the
+# report is read, the absence ends; ripe fields stay ripe, nothing rots), and
+# the card of the first ripe field opens. T / the [Collect] button tends later.
+func close_note_change_plans():
+	var f := farm()
+	note_open = false
+	# stamp first (its settle closes the absence into the report), then read
+	# and clear the report, so no new note is pending until the next absence
+	note_real_input()
+	FarmEconomy.take_report(f)
+	SaveDataManager.request_farm_save()
+	hud_dirty = true
+	_refresh_views()
+	var first := -1
+	for i in FarmEconomy.FIELDS:
+		if views[i]["owned"] and views[i]["ripe"]:
+			first = i
+			break
+	pending_collect = first >= 0
+	open_field_card(maxi(0, first))
 
-# ────────────────────────────────────────────────────────
-#  Research shed
-# ────────────────────────────────────────────────────────
+func _tend_feedback(res: Dictionary, many: bool):
+	var harvested := 0
+	var planted := 0
+	var gold := false
+	var golden := false
+	for rec in res.get("fields", []):
+		if str(rec["crop"]) != "":
+			harvested += 1
+			critters.pop_field(int(rec["field"]), int(rec["coins"]), rec["stars"])
+			if 2 in rec["stars"]:
+				gold = true
+			if bool(FarmEconomy.crop_info(str(rec["crop"])).get("rare", false)):
+				golden = true
+		elif str(rec["planted"]) != "":
+			planted += 1
+			critters.pop_text(FarmView.field_rect(int(rec["field"])).get_center(), "planted %s" % FarmView.crop_name(str(rec["planted"])))
+	if harvested > 0:
+		AudioManager.play_sfx_varied("harvest", 0.08)
+		if gold:
+			AudioManager.play_sfx("star")
+		if golden:
+			AudioManager.play_sfx("golden")
+	elif planted > 0:
+		AudioManager.play_sfx_varied("tend_pop", 0.08)
+	if many and harvested + planted > 0:
+		var coins := int(res.get("coins", 0))
+		if coins > 0:
+			_popup("+%s c · %d field%s tended" % [NumFmt.coins(coins), harvested + planted, "" if harvested + planted == 1 else "s"], WorldHUD.GOLD)
 
-func has_research(id: String) -> bool:
-	return SaveDataManager.has_research(id)
+func _after_action(res: Dictionary):
+	hud_dirty = true
+	super._after_action(res)
+	_refresh_views()
 
-# The widest plow the player has researched (0 = single tile, 1 = 3x3, 2 = 5x5).
-func max_plow_radius() -> int:
-	return int(SaveDataManager.research_bonus("plow_radius"))
+# ── goal, butterfly ──
 
-# The plow size currently in use: the player's chosen mode clamped to what's
-# been researched. Defaults to the widest available (the old behaviour) until
-# the player picks a smaller one with [X].
-func plow_radius() -> int:
-	return clampi(int(SaveDataManager.farm.get("plow_mode", 99)), 0, max_plow_radius())
+func buy_goal() -> Dictionary:
+	var res := farm_buy_goal()
+	last_result = res
+	return res
 
-# "1×1" / "3×3" / "5×5" for a radius (defaults to the active one).
-func plow_size_label(r := -1) -> String:
-	var n = (r if r >= 0 else plow_radius()) * 2 + 1
-	return "%d×%d" % [n, n]
-
-# Cycle through the researched plow sizes (1×1 → 3×3 → 5×5 → 1×1), so small
-# fixes don't force the whole wide square. No-op until a wider plow is researched.
-func cycle_plow_mode():
-	var m = max_plow_radius()
-	if m <= 0:
+func goal_click():
+	var g := FarmEconomy.next_goal(farm(), now_ms())
+	if g["can_buy"]:
+		buy_goal()
 		return
-	SaveDataManager.farm["plow_mode"] = (plow_radius() + 1) % (m + 1)
-	SaveDataManager.save_game()
-	_popup("Plow size: %s" % plow_size_label(), Color(0.85, 0.7, 0.4))
+	match str(g["kind"]):
+		"page":
+			open_book("catalog")
+		"done":
+			open_book("soil")
+		"tutorial":
+			if str(g["item"]) == "":
+				if str(g["id"]).begins_with("page") or int(g["step"]) >= 6:
+					open_book("catalog")
+				else:
+					_popup(str(g["hint"]), WorldHUD.INK_DIM)
+			else:
+				_popup(str(g["locked_reason"]) if str(g["locked_reason"]) != "" else "Needs %s c more" % NumFmt.coins(int(g["cost"]) - SaveDataManager.wallet()), WorldHUD.WARN)
+		_:
+			book.show_row(str(g["id"]))
+			AudioManager.play_sfx("menu_select")
+			if str(g["locked_reason"]) != "":
+				_popup(str(g["locked_reason"]), WorldHUD.WARN)
+			elif int(g["cost"]) > SaveDataManager.wallet():
+				_popup("Needs %s c more" % NumFmt.coins(int(g["cost"]) - SaveDataManager.wallet()), WorldHUD.WARN)
 
-# [X] while walking the farm
-func _on_tool_cycle():
-	cycle_plow_mode()
+# G, a click or walking into it. forced_outcome is a test hook (skips the due check).
+func catch_butterfly(forced_outcome := "") -> Dictionary:
+	var f := farm()
+	var now := now_ms()
+	if forced_outcome == "" and not FarmEconomy.butterfly_due(f, now):
+		_popup("No butterfly right now: they visit every few minutes", WorldHUD.INK_DIM)
+		return {"ok": false, "msg": "No butterfly"}
+	var where: Vector2 = critters.bf_pos if critters.bf_active else player.position
+	face_toward(where)
+	var res := FarmEconomy.catch_butterfly(f, now, false, forced_outcome)
+	last_result = res
+	_after_action(res)
+	if res["ok"]:
+		critters.bf_active = false
+		AudioManager.play_sfx("butterfly_catch")
+		_popup(FarmView.butterfly_text(str(res["outcome"]), int(res["coins"])), WorldHUD.GOLD)
+		critters.pop_text(where, "caught!")
+	return res
 
-func sprinkler_reach() -> int:
-	return 1 + int(SaveDataManager.research_bonus("sprinkler_reach"))
+# ── Pip's note ──
 
-# A node is buyable once every prerequisite is owned and it isn't owned yet
-func research_available(node: Dictionary) -> bool:
-	if has_research(node.get("id", "")):
-		return false
-	for req in node.get("requires", []):
-		if not has_research(req):
-			return false
-	return true
+func open_note():
+	note = {"report": FarmView.peek_report(farm())}
+	note_open = true
+	_note_t = 0.0
+	_note_tick = 0.0
+	book.close()
+	arrange = {}
+	AudioManager.play_sfx("note_open")
 
-# The actionable frontier: not-yet-owned nodes whose prerequisites are met,
-# in data order, so the overlay's [1..N] indices stay stable.
-func research_menu_nodes() -> Array:
-	return GameData.research_nodes().filter(research_available)
-
-func can_afford_research(node: Dictionary) -> bool:
-	return SaveDataManager.wallet() >= int(node.get("cost_coins", 0)) \
-			and SaveDataManager.research_points() >= int(node.get("cost_rp", 0))
-
-func buy_research(id: String) -> bool:
-	var node = GameData.research_by_id(id)
-	if node.is_empty() or not research_available(node):
-		return false
-	if not can_afford_research(node):
-		_popup("Need %d coins + %d research" % [int(node.get("cost_coins", 0)), int(node.get("cost_rp", 0))], Color.ORANGE_RED)
-		return false
-	SaveDataManager.spend_coins(int(node.get("cost_coins", 0)))
-	SaveDataManager.add_research_points(-int(node.get("cost_rp", 0)))
-	SaveDataManager.unlock_research(id)
-	_popup("Researched: %s!" % node.get("name", id), Color.GOLD)
-	AudioManager.play_sfx("research")
-	return true
-
-# ── research map: the whole graph, plus node state + keyboard navigation ──
-
-# Every node, owned or not, in data order — what the node-map renderer draws.
-func research_all_nodes() -> Array:
-	return GameData.research_nodes()
-
-# The nodes on one research shed tab (defaults missing "tab" to "progression").
-func research_nodes_for_tab(tab: String) -> Array:
-	return research_all_nodes().filter(func(n): return str(n.get("tab", "progression")) == tab)
-
-# Flip to the next tab and re-home the selection on its first actionable node.
-func research_cycle_tab():
-	research_tab = RESEARCH_TABS[(RESEARCH_TABS.find(research_tab) + 1) % RESEARCH_TABS.size()]
-	research_sel_id = _default_research_sel()
-
-# A node the player can see but can't buy yet: not owned and still missing a
-# prerequisite. (research_available is the buyable frontier; this is its inverse
-# for the not-yet-owned nodes.)
-func research_locked(node: Dictionary) -> bool:
-	return not has_research(node.get("id", "")) and not research_available(node)
-
-# Grid coordinate the renderer and navigation lay the node out on.
-func _node_pos(node: Dictionary) -> Vector2:
-	var p = node.get("pos", [0, 0])
-	if p is Array and p.size() >= 2:
-		return Vector2(float(p[0]), float(p[1]))
-	return Vector2.ZERO
-
-# Land the selection on the active tab's first actionable node, falling back to
-# its first node once everything on the tab is researched.
-func _default_research_sel() -> String:
-	var nodes = research_nodes_for_tab(research_tab)
-	var frontier = nodes.filter(research_available)
-	if not frontier.is_empty():
-		return str(frontier[0].get("id", ""))
-	return str(nodes[0].get("id", "")) if not nodes.is_empty() else ""
-
-# Move the highlight to the nearest node in the pressed direction. Among nodes
-# on the correct side, the off-axis distance is weighted heavily so UP/DOWN
-# prefer column-aligned nodes and LEFT/RIGHT prefer row-aligned ones.
-func research_select_dir(dir: Vector2):
-	var cur = GameData.research_by_id(research_sel_id)
-	if cur.is_empty():
-		research_sel_id = _default_research_sel()
-		return
-	var cp = _node_pos(cur)
-	var best := ""
-	var best_score := INF
-	for node in research_nodes_for_tab(research_tab):
-		var nid = str(node.get("id", ""))
-		if nid == research_sel_id:
-			continue
-		var d = _node_pos(node) - cp
-		if d.dot(dir) <= 0.01:
-			continue
-		var along = absf(d.dot(dir))
-		var across = absf(d.dot(Vector2(dir.y, dir.x)))
-		var score = along + across * 3.0
-		if score < best_score:
-			best_score = score
-			best = nid
-	if best != "":
-		research_sel_id = best
-
-# ── auto-farming: sprinklers and researched gear work the land on a tick ──
-
-# Seconds between auto-farming ticks: each auto_speed research tier halves it,
-# down to a floor so a fully-upgraded farm stays snappy without thrashing.
-func auto_interval() -> float:
-	return maxf(0.25, AUTO_BASE_INTERVAL * pow(0.5, SaveDataManager.research_bonus("auto_speed")))
-
-func _neighbours(tile: FarmTile) -> Array:
+# The note's lines: [{icon, text}], counting the coin line up over 1.2 s.
+func note_lines() -> Array:
+	var rep: Dictionary = note.get("report", {})
 	var out: Array = []
-	var r = sprinkler_reach()
-	for dr in range(-r, r + 1):
-		for dc in range(-r, r + 1):
-			if dr == 0 and dc == 0:
-				continue
-			var k = "%d:%d" % [tile.col + dc, tile.row + dr]
-			if tile_map.has(k):
-				out.append(tile_map[k])
+	var helpers: Array = rep.get("helpers", [])
+	var baskets := int(rep.get("baskets", 0))
+	if baskets > 0:
+		var shown := int(round(int(rep.get("coins", 0)) * clampf(_note_t / 1.2, 0.0, 1.0)))
+		var picks: Dictionary = rep.get("picks", {})
+		var keys := picks.keys()
+		keys.sort_custom(func(a, b): return int(picks[a]) > int(picks[b]))
+		var parts: PackedStringArray = []
+		for c in keys:
+			parts.append("%s ×%d" % [FarmView.crop_name(str(c)), int(picks[c])])
+		out.append({"icon": "potato", "text": "We picked %d basket%s while you were gone: +%s c (%s)" % [baskets,
+				"" if baskets == 1 else "s", NumFmt.coins(shown), ", ".join(parts)]})
+	if not helpers.is_empty():
+		var who := _names(helpers)
+		var worked := int(rep.get("worked_ms", 0)) / 1000
+		var away := int(rep.get("away_ms", 0)) / 1000
+		if bool(rep.get("napped", false)):
+			out.append({"icon": "moon", "text": "%s worked %s of your %s, then napped. A bigger farmhouse covers more." % [who,
+					NumFmt.dur(worked), NumFmt.dur(away)]})
+		elif worked > 0:
+			out.append({"icon": "moon", "text": "%s worked %s while you were away." % [who, NumFmt.dur(worked)]})
+	var ripe := int(rep.get("ripe", 0))
+	if ripe > 0:
+		out.append({"icon": "wheat", "text": "%d field%s ripe and waiting (≈ +%s c)" % [ripe, " is" if ripe == 1 else "s are",
+				NumFmt.coins(int(rep.get("waiting_coins", 0)))]})
+	else:
+		out.append({"icon": "wheat", "text": "Every field is still growing."})
+	var pages: Array = rep.get("pages", [])
+	if not pages.is_empty():
+		var cat := FarmEconomy.catalog_view(farm())
+		var p := int(pages[-1])
+		out.append({"icon": "book", "text": "New Catalog page: %s!" % FarmView.crop_name(str(cat[p - 1]["crop"]))})
+	else:
+		for pg in FarmEconomy.catalog_view(farm()):
+			if pg["current"]:
+				for nd in pg["needs"]:
+					if int(nd["have"]) < int(nd["need"]):
+						out.append({"icon": "book", "text": "%s page: %s / %s %s" % [FarmView.crop_name(str(pg["crop"])),
+								NumFmt.coins(int(nd["have"])), NumFmt.coins(int(nd["need"])), nd["name"]]})
+						break
+				break
+	var mig = rep.get("migration", {})
+	if mig is Dictionary and not mig.is_empty():
+		out.append({"icon": "star", "text": "The farm got a makeover! Refunded %s c for retired gear; your crops, unlocks and Spudlings came with you." % NumFmt.coins(int(mig.get("refund", 0)))})
 	return out
 
-func _auto_farm():
-	var changed := false
-	# each placed sprinkler waters the tiles around it
-	for tile in tiles:
-		if not tile.has_sprinkler:
-			continue
-		for n in _neighbours(tile):
-			if n.state == FarmTile.TState.PLANTED and not n.watered:
-				n.water()
-				changed = true
-	# Drip Irrigation: water every dry crop, farm-wide (quiet, like a sprinkler)
-	if SaveDataManager.research_flag("auto_water"):
-		for tile in tiles:
-			if tile.state == FarmTile.TState.PLANTED and not tile.watered:
-				tile.water()
-				changed = true
-	# Nutrient Injector: fertilize every fresh crop (auto-buying a bag if needed)
-	if SaveDataManager.research_flag("auto_fertilize"):
-		for tile in tiles:
-			if tile.state == FarmTile.TState.PLANTED and tile.boost >= 1.0:
-				if _auto_fertilize_tile(tile):
-					changed = true
-	# Spud-Bot Harvester: collect all ready crops this tick (quiet, no popup spam)
-	if SaveDataManager.research_flag("auto_harvest"):
-		for tile in tiles:
-			if tile.state == FarmTile.TState.READY:
-				_harvest_tile(tile, true)  # syncs the save itself
-	# Auto-Seeder: replant every plowed plot that remembers its crop, restocking
-	# seeds via the standing order when the pouch runs dry
-	if SaveDataManager.research_flag("auto_seed"):
-		var buy_seeds = SaveDataManager.research_flag("auto_buy_seeds")
-		for tile in tiles:
-			if tile.has_sprinkler or tile.state != FarmTile.TState.PLOWED:
-				continue
-			var last = tile.last_potato_id
-			if last == "":
-				continue
-			if not (last in SaveDataManager.unlocked_crops()) and not (last in GameData.STARTER_CROPS):
-				continue
-			if SaveDataManager.item_count("seeds", last) <= 0:
-				if not (buy_seeds and _auto_restock_seed(last)):
-					continue
-			SaveDataManager.add_item("seeds", last, -1)
-			tile.plant(last)
-			changed = true
-	# Standing orders keep scheduled supplies topped up to their target each tick
-	if SaveDataManager.research_flag("auto_buy_seeds"):
-		_process_seed_order()
-	if SaveDataManager.research_flag("auto_buy_fertilizer"):
-		_process_fertilizer_order()
-	# Auto-Dispatch: load and ship the market truck the moment it's idle
-	if SaveDataManager.research_flag("auto_truck") and truck_status() == "idle":
-		truck_load_all()
-		if truck_cargo_count() > 0:
-			truck_send()
-	if changed:
-		_sync_tiles()
+static func _names(helpers: Array) -> String:
+	if helpers.size() == 1:
+		return str(helpers[0])
+	if helpers.size() == 2:
+		return "%s and %s" % [helpers[0], helpers[1]]
+	if helpers.size() == 3:
+		return "%s, %s and %s" % [helpers[0], helpers[1], helpers[2]]
+	return "%s and %d friends" % [helpers[0], helpers.size() - 1]
 
-# Seed standing order: buy one seed of a crop the player can grow, quietly (no
-# popup/sfx), respecting the wallet, the order schedule and the delivery premium.
-# Returns true once the seed is in the pouch.
-func _auto_restock_seed(id: String) -> bool:
-	if not (id in SaveDataManager.unlocked_crops()) and not (id in GameData.STARTER_CROPS):
-		return false
-	if not seed_order_allows(id):
-		return false
-	if not SaveDataManager.spend_coins(seed_order_price(id)):
-		return false
-	SaveDataManager.add_item("seeds", id, 1)
-	return true
+# ── sprinkler arrange mode ──
 
-# What the standing order pays for one seed: the (discounted) shop price plus the
-# delivery premium. Hands-on buying at the stall skips the premium.
-func seed_order_price(id: String) -> int:
-	return int(ceil(seed_price(id) * ORDER_SURCHARGE))
+func arrange_active() -> bool:
+	return bool(arrange.get("active", false))
 
-# Cheapest fertilizer the player already owns charges of (empty dict if none).
-func _cheapest_owned_enhancer() -> Dictionary:
-	var best := {}
-	for e in GameData.enhancers():
-		if SaveDataManager.item_count("items", e["id"]) > 0:
-			if best.is_empty() or int(e.get("cost", 0)) < int(best.get("cost", 0)):
-				best = e
-	return best
-
-# Fertilizer subscription: buy a bag per the standing order, quietly. The order
-# picks the grade (an empty grade falls back to the cheapest bag, the original
-# behaviour); a paused order buys nothing. The delivery premium applies. Returns
-# the enhancer dict (now with charges in stock), or empty if it can't be bought.
-func _auto_buy_cheapest_enhancer() -> Dictionary:
-	var o = fertilizer_order()
-	if not o["enabled"]:
-		return {}
-	var pick := {}
-	if o["grade"] != "":
-		pick = GameData.enhancer_by_id(o["grade"])
+# mode: "place" (one in stock), "buy" (buy one at the chosen socket), "move".
+func begin_arrange(i: int, mode: String):
+	var f := farm()
+	var mine := FarmView.sockets_of(i)
+	var sel := ""
+	var from := ""
+	if mode == "move":
+		for s in f["sprinklers"]:
+			if s in mine:
+				from = s
+				break
+		if from == "" and not f["sprinklers"].is_empty():
+			from = str(f["sprinklers"][0])
+		sel = from
 	else:
-		for e in GameData.enhancers():
-			if pick.is_empty() or int(e.get("cost", 0)) < int(pick.get("cost", 0)):
-				pick = e
-	if pick.is_empty():
-		return {}
-	var price = int(ceil(int(pick.get("cost", 9999)) * ORDER_SURCHARGE))
-	if not SaveDataManager.spend_coins(price):
-		return {}
-	SaveDataManager.add_item("items", pick["id"], int(pick.get("charges", 1)))
-	return pick
+		for s in mine:
+			if not s in f["sprinklers"]:
+				sel = s
+				break
+		if sel == "":
+			sel = str(FarmView.sockets()[0])
+	arrange = {"active": true, "field": i, "mode": mode, "sel": sel, "from": from, "was_overview": overview}
+	book.close()
+	set_overview(true, true)
+	AudioManager.play_sfx("menu_select")
 
-# Standing seed order: keep each scheduled crop topped up to its stock target,
-# at most one seed per crop per tick (a throttle, so the order can't drain the
-# wallet at once). Only crops explicitly scheduled at the Seed Co-op are
-# pre-bought — an unrestricted order still restocks reactively as plots replant.
-func _process_seed_order():
-	var o = seed_order()
-	if not o["enabled"]:
+func arrange_hint() -> String:
+	var m := str(arrange.get("mode", ""))
+	if str(arrange.get("from", "")) != "":
+		return "Now click a free socket to move the sprinkler from fence %s" % arrange["from"]
+	match m:
+		"buy":
+			return "Buy a sprinkler (%s c): click a fence socket · it waters both fields" % NumFmt.coins(FarmView.sprinkler_cost(farm()))
+		"move":
+			return "Click a placed sprinkler, then a free socket"
+	return "Click a fence socket for your sprinkler · it waters both fields"
+
+func arrange_pick(s: String) -> Dictionary:
+	if not arrange_active():
+		return {"ok": false}
+	var f := farm()
+	arrange["sel"] = s
+	if s in f["sprinklers"]:
+		arrange["from"] = "" if str(arrange.get("from", "")) == s else s
+		AudioManager.play_sfx("menu_move")
+		return {"ok": true, "picked": s}
+	var res: Dictionary
+	var from := str(arrange.get("from", ""))
+	if from != "":
+		res = FarmEconomy.place_sprinkler(f, s, from, now_ms(), tz())
+		_after_action(res)
+	elif FarmView.sprinklers_in_stock(f) > 0:
+		res = FarmEconomy.place_sprinkler(f, s, "", now_ms(), tz())
+		_after_action(res)
+	else:
+		res = farm_buy("sprinkler", s)
+	last_result = res
+	if res["ok"]:
+		AudioManager.play_sfx_varied("tend_pop", 0.05)
+		_end_arrange()
+	elif from != "" or FarmView.sprinklers_in_stock(f) > 0:
+		_popup(str(res["msg"]), WorldHUD.WARN)
+	return res
+
+func cancel_arrange():
+	if arrange_active():
+		AudioManager.play_sfx("menu_back")
+		_end_arrange()
+
+func _end_arrange():
+	var i := int(arrange.get("field", 0))
+	var was: bool = arrange.get("was_overview", true)
+	arrange = {}
+	set_overview(was, true)
+	book.open_card(i)
+
+func _arrange_key(event: InputEventKey):
+	if event.echo and not event.keycode in [KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT]:
 		return
-	for id in o["crops"]:
-		if SaveDataManager.item_count("seeds", id) < o["stock_target"]:
-			_auto_restock_seed(id)
+	var socks := FarmView.sockets()
+	var k := socks.find(str(arrange.get("sel", "")))
+	match event.keycode:
+		KEY_LEFT, KEY_UP, KEY_A, KEY_W:
+			arrange["sel"] = socks[posmod(k - 1, socks.size())]
+			AudioManager.play_sfx("menu_move")
+		KEY_RIGHT, KEY_DOWN, KEY_D, KEY_S, KEY_TAB:
+			arrange["sel"] = socks[posmod(k + 1, socks.size())]
+			AudioManager.play_sfx("menu_move")
+		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE, KEY_E:
+			arrange_pick(str(arrange["sel"]))
+		KEY_ESCAPE:
+			cancel_arrange()
+		KEY_M:
+			toggle_mute()
 
-# Standing fertilizer order: keep the chosen grade topped up to its target, one
-# bag per tick. Only runs when a specific grade is scheduled at the Supply Depot.
-func _process_fertilizer_order():
-	var o = fertilizer_order()
-	if not o["enabled"] or o["grade"] == "":
-		return
-	if SaveDataManager.item_count("items", o["grade"]) < o["stock_target"]:
-		_auto_buy_cheapest_enhancer()
+# ── travel ──
 
-# Apply one fertilizer charge to a fresh crop, auto-buying a bag first when the
-# subscription is researched and the shed is empty. Quiet (no popup/sfx).
-func _auto_fertilize_tile(tile: FarmTile) -> bool:
-	var e := _cheapest_owned_enhancer()
-	if e.is_empty() and SaveDataManager.research_flag("auto_buy_fertilizer"):
-		e = _auto_buy_cheapest_enhancer()
-	if e.is_empty():
-		return false
-	if not tile.enhance(float(e.get("grow_mult", 1.0)), int(e.get("bonus_yield", 0))):
-		return false
-	SaveDataManager.add_item("items", e["id"], -1)
-	return true
-
-func _open_plant_menu(tile: FarmTile):
-	plant_target = tile
-	open_shop = "plant"
-
-func _open_truck():
-	open_shop = "truck"
-
-func _open_research():
-	open_shop = "research"
-	research_tab = "progression"
-	research_sel_id = _default_research_sel()
-
-# ────────────────────────────────────────────────────────
-#  Standing-order depots — schedule what the farm auto-restocks
-# ────────────────────────────────────────────────────────
-#
-# Two yard buildings let the player manage the automation purchase orders the
-# Seed Standing Order / Fertilizer Subscription research unlocks. Until that
-# research is bought the depot is shuttered (the station only shows a hint).
-# Orders pay a delivery premium over the shop price, so a fully-automated farm
-# runs at a thinner margin than buying by hand — automation is convenience, not
-# free money.
-
-# Markup the standing orders pay over the shop/seed price for the convenience of
-# never visiting a stall — keeps hands-on buying the cheaper option.
-const ORDER_SURCHARGE := 1.25
-
-func _seed_depot_station():
-	if SaveDataManager.research_flag("auto_buy_seeds"):
-		prompt = "[E] Seed Co-op — manage standing seed orders"
-		prompt_action = _open_seed_order
-	else:
-		prompt = "Seed Co-op — shuttered (research the Seed Standing Order to open it)"
-		prompt_action = Callable()
-
-func _fert_depot_station():
-	if SaveDataManager.research_flag("auto_buy_fertilizer"):
-		prompt = "[E] Supply Depot — manage standing fertilizer orders"
-		prompt_action = _open_fertilizer_order
-	else:
-		prompt = "Supply Depot — shuttered (research the Fertilizer Subscription to open it)"
-		prompt_action = Callable()
-
-func _open_seed_order():
-	open_shop = "seed_order"
-
-func _open_fertilizer_order():
-	open_shop = "fertilizer_order"
-
-# The seed order with its fields defaulted. An empty/absent "crops" list means
-# "no restriction" (every plantable crop is restocked) so old saves and the
-# smoke test, which don't configure an order, keep the original auto-buy.
-func seed_order() -> Dictionary:
-	var o: Dictionary = SaveDataManager.farm.get("seed_order", {})
-	return {
-		"enabled": bool(o.get("enabled", true)),
-		"crops": o.get("crops", []),
-		"stock_target": int(o.get("stock_target", 5)),
-	}
-
-# The fertilizer order defaulted. An empty "grade" means "buy the cheapest bag"
-# (the original behaviour), so unconfigured saves keep working.
-func fertilizer_order() -> Dictionary:
-	var o: Dictionary = SaveDataManager.farm.get("fertilizer_order", {})
-	return {
-		"enabled": bool(o.get("enabled", true)),
-		"grade": str(o.get("grade", "")),
-		"stock_target": int(o.get("stock_target", 3)),
-	}
-
-# True when the seed standing order is allowed to restock this crop: enabled,
-# and either unrestricted or with the crop on its schedule.
-func seed_order_allows(id: String) -> bool:
-	var o = seed_order()
-	if not o["enabled"]:
-		return false
-	var crops: Array = o["crops"]
-	return crops.is_empty() or id in crops
-
-# ── order config mutators (driven by the depot overlays) ──
-
-func toggle_seed_order_crop(id: String):
-	var o: Dictionary = SaveDataManager.farm.get("seed_order", {}).duplicate(true)
-	var crops: Array = o.get("crops", [])
-	if id in crops:
-		crops.erase(id)
-	else:
-		crops.append(id)
-	o["crops"] = crops
-	o["enabled"] = bool(o.get("enabled", true))
-	o["stock_target"] = int(o.get("stock_target", 5))
-	SaveDataManager.farm["seed_order"] = o
-	SaveDataManager.save_game()
-
-func set_fertilizer_order_grade(id: String):
-	var o: Dictionary = SaveDataManager.farm.get("fertilizer_order", {}).duplicate(true)
-	# selecting the active grade again clears it (back to "cheapest bag")
-	o["grade"] = "" if str(o.get("grade", "")) == id else id
-	o["enabled"] = bool(o.get("enabled", true))
-	o["stock_target"] = int(o.get("stock_target", 3))
-	SaveDataManager.farm["fertilizer_order"] = o
-	SaveDataManager.save_game()
-
-func toggle_order_enabled(which: String):
-	var o: Dictionary = SaveDataManager.farm.get(which, {}).duplicate(true)
-	o["enabled"] = not bool(o.get("enabled", true))
-	SaveDataManager.farm[which] = o
-	SaveDataManager.save_game()
-	_popup("%s %s" % ["Seed order" if which == "seed_order" else "Fertilizer order",
-			"resumed" if o["enabled"] else "paused"], Color(0.8, 0.85, 0.6))
-
-func adjust_order_stock(which: String, delta: int):
-	var o: Dictionary = SaveDataManager.farm.get(which, {}).duplicate(true)
-	var cap = 30 if which == "seed_order" else 12
-	o["stock_target"] = clampi(int(o.get("stock_target", 5)) + delta, 0, cap)
-	SaveDataManager.farm[which] = o
-	SaveDataManager.save_game()
-
-func _goto_town():
+func goto_town():
 	WorldController.travel_spawn = "from_farm"
-	WorldController.carry_day_t = day_t
 	AudioManager.play_sfx("gate")
 	get_tree().change_scene_to_file("res://scenes/Town/TownScene.tscn")
-
-func _nap():
-	day_t = 0.2
-	_popup("Good morning!", Color(1.0, 0.9, 0.5))
-
-func _sync_tiles():
-	var d = {}
-	for tile in tiles:
-		var td = tile.to_dict()
-		if not td.is_empty():
-			d[tile.key()] = td
-	SaveDataManager.farm["tiles"] = d
-	SaveDataManager.save_game()

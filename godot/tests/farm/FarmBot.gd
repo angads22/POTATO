@@ -50,9 +50,10 @@ var day0 := DAY0
 var fixture := {}                  # applied to the new farm before the first visit
 var metric_afford := false         # day-1 "something useful affordable" per arrival
 var track_cycles := false          # per-planting accounting (SD1 / SD7)
-var ignore_huts := false
-var debug := false
-static var bias := 0.25             # S1-S3: payback weight of the favoured rows           # plan every field as if it had no hut (SD4: a player who ignores Pip)
+var ignore_huts := false           # plan every field as if it had no hut (SD4: a player who ignores Pip)
+var debug := false                 # print plantings and departure plans
+static var s2_items := ["hut", "share", "quick", "house"]   # S2's favoured Farm Book rows
+static var bias := 0.25             # S1-S3: payback weight of the favoured rows
 var max_book_age_ms := 10 * MIN    # re-read the Farm Book at least this often
 
 # ── state / results ────────────────────────────────────────────────────────
@@ -82,6 +83,7 @@ var t_start := 0
 var book_calls := 0
 
 var _clockin := 120000
+var _grace := 0                    # clock.your_crop_grace_s: Spudlings leave your ripe crop alone this long
 var _report_min := 120000
 var _life := 12000
 var _fav_mult := 1.4
@@ -165,6 +167,7 @@ func run(n_days: int) -> void:
 		planting = "naive"          # the long-crop timer plants by the clock
 	var c: Dictionary = FE.cfg()
 	_clockin = int(c["clock"]["clockin_s"]) * SEC
+	_grace = int(c["clock"].get("your_crop_grace_s", 0)) * SEC
 	_report_min = int(c["clock"]["report_min_s"]) * SEC
 	_life = int(c["butterflies"]["life_s"]) * SEC
 	_fav_mult = float(c["favorite"]["mult"])
@@ -389,6 +392,9 @@ func _after_tend(r: Dictionary, t: int, before: Dictionary) -> void:
 				cycles.append({"crop": rec["crop"], "t0": p["t"], "t1": t, "net": int(rec["coins"]) - int(p["seed"]),
 						"here": int(p["wi"]) == wi, "night": day_of(int(p["t"])) != day_of(t)})
 		if rec["planted"] != "":
+			if debug:
+				print("  %s F%d %s -> plant %s%s" % [fmt_t(t), i + 1, rec["crop"] if rec["crop"] != "" else "-",
+						rec["planted"], " (hut)" if farm["fields"][i]["hut"] else ""])
 			_plant_rec[i] = {"t": t, "crop": rec["planted"], "seed": int(farm["fields"][i]["seed_paid"]), "wi": wi}
 			hand_plants[rec["planted"]] = int(hand_plants.get(rec["planted"], 0)) + 1
 		else:
@@ -485,8 +491,9 @@ func _greedy(opts: Array, i: int, t: int) -> String:
 # Pure planning model of the bot's own schedule; it follows the economy's
 # wage rule: a Spudling pick of a crop that was already in the ground when the
 # absence began (planted at or before the departure) is at full value × star
-# EV, a crop planted during the same absence pays the share. gf is the gross
-# of the crop planted at t, gp of a Spudling replant (no Favorite).
+# EV after a grace of min(your_crop_grace_s, grow) past ripe, a crop planted
+# during the same absence pays the share (no grace). gf is the gross of the
+# crop planted at t, gp of a Spudling replant (no Favorite).
 func forward_rate(t: int, g: int, gf: float, gp: float, seed: int, ev: float, hut: bool,
 		share: float, walk: int, shift: int) -> float:
 	var val := -float(seed)
@@ -507,11 +514,12 @@ func forward_rate(t: int, g: int, gf: float, gp: float, seed: int, ev: float, hu
 		if hut:
 			var w0 := end_in + _clockin
 			var w1 := w0 + shift
-			var pick := maxi(ripe, w0) + walk
+			var full := cur <= end_in
+			var pick := maxi(ripe + (mini(_grace, g) if full else 0), w0) + walk
 			var hi := mini(w1, an)
 			if pick <= hi:
 				var n := 1 + (hi - pick) / (g + walk)
-				val += gross * (ev if cur <= end_in else share) + gp * share * (n - 1)
+				val += gross * (ev if full else share) + gp * share * (n - 1)
 				cur = pick + (n - 1) * (g + walk)
 				gross = gp
 				continue
@@ -546,6 +554,7 @@ func _depart_plans(t_dep: int) -> void:
 				FE.set_plan(farm, i, _page_need())
 			continue
 		var ra: int = int(f["planted_g"]) + _crop_grow(i) - goff
+		ra += mini(_grace, _crop_grow(i))      # standing crops wait out the grace
 		var pick := maxi(ra, w0) + walk
 		if pick > hi:
 			continue
@@ -613,6 +622,12 @@ func _shop(t: int, force: bool) -> void:
 		_dirty = false
 		if n == 0 and force and metric_afford and int(wins[wi][2]) == 1:
 			afford.append([wi, _useful(rows)])
+			if debug:
+				var cheap := ""
+				for rr in rows:
+					if not rr["locked"] and float(rr["payback_s"]) > 0.0 and float(rr["payback_s"]) < 86400.0:
+						cheap += " %s:%d/%s" % [rr["id"], int(rr["cost"]), Fmt.dur(float(rr["payback_s"]))]
+				print("  afford #%d %s wallet %d useful%s" % [wi + 1, fmt_t(t), int(farm["wallet"]), cheap])
 		var pick := choose_row(rows)
 		if pick.is_empty():
 			return
@@ -659,7 +674,7 @@ func _weight(r: Dictionary) -> float:
 			if it in ["tool", "soil"]:
 				return bias
 		"s2":
-			if it in ["hut", "share", "quick", "house"]:
+			if it in s2_items:
 				return bias
 		"s3":
 			if it in ["sprinkler", "greenhouse"]:

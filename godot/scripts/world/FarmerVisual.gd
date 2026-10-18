@@ -2,14 +2,20 @@ extends Node2D
 class_name FarmerVisual
 
 # The player: a potato in a chef's toque. Hops while walking, breathes
-# while idle, flips to face its travel direction, and shows the watering
-# can in hand whenever there's water in it.
+# while idle, flips to face its travel direction, and swings a little hoe
+# (a quick swing/toss) whenever it tends, catches or clicks something, so a
+# click at any distance still reads as the farmer doing it.
+
+const SWING_S := 0.32
 
 var walk_t := 0.0
 var idle_t := 0.0
 var moving := false
-var face := 1.0  # 1 = right, -1 = left
-var carrying_water := false
+var face := 1.0      # 1 = right, -1 = left
+var swing_t := 0.0   # > 0 while the swing/toss pose plays
+
+func swing():
+	swing_t = SWING_S
 
 func _process(delta):
 	if moving:
@@ -17,11 +23,14 @@ func _process(delta):
 	else:
 		walk_t = 0.0
 		idle_t += delta
+	swing_t = maxf(0.0, swing_t - delta)
 	queue_redraw()
 
 func _draw():
 	var hop = absf(sin(walk_t)) * 7.0 if moving else 0.0
 	var breathe = 1.0 + (0.0 if moving else sin(idle_t * 2.0) * 0.02)
+	var sw := swing_t / SWING_S          # 1 -> 0 over the swing
+	var lean := sin(sw * PI) * 0.12      # lean into the swing
 
 	# ground shadow shrinks as the hop lifts off
 	draw_set_transform(Vector2(0, 36), 0.0, Vector2(1.0 - hop * 0.01, 0.35))
@@ -35,7 +44,7 @@ func _draw():
 		draw_circle(Vector2.ZERO, 8.0, Color(0.4, 0.26, 0.14))
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
-	draw_set_transform(Vector2(0, -hop), 0.0, Vector2(face * breathe, 2.0 - breathe))
+	draw_set_transform(Vector2(0, -hop), lean * face, Vector2(face * breathe, 2.0 - breathe))
 
 	# potato body
 	var body = Color(0.78, 0.55, 0.3)
@@ -51,13 +60,23 @@ func _draw():
 	for s in [Vector2(-12, 8), Vector2(14, 2), Vector2(-4, 18)]:
 		draw_circle(s, 3.0, body.darkened(0.3))
 
-	# arms
+	# arms; while swinging, the front arm carries a small hoe through an arc
 	draw_circle(Vector2(-24, 2), 6.0, body.darkened(0.1))
-	draw_circle(Vector2(24, 2), 6.0, body.darkened(0.1))
-	if carrying_water:
-		draw_rect(Rect2(26, -6, 18, 14), Color(0.55, 0.62, 0.68))
-		draw_line(Vector2(44, -2), Vector2(54, -8), Color(0.55, 0.62, 0.68), 4.0)
-		draw_arc(Vector2(35, -8), 8.0, PI, TAU, 10, Color(0.45, 0.52, 0.58), 3.0)
+	if swing_t > 0.0:
+		var ang := lerpf(1.1, -1.4, sw)          # raised -> down in front
+		var hand := Vector2(24, 2) + Vector2(cos(ang), sin(ang)) * 8.0
+		var tip := hand + Vector2(cos(ang - 0.25), sin(ang - 0.25)) * 30.0
+		draw_line(hand, tip, Color(0.55, 0.38, 0.2), 3.5)
+		var blade_dir := Vector2(cos(ang + 1.3), sin(ang + 1.3))
+		draw_colored_polygon(PackedVector2Array([tip, tip + blade_dir * 11.0, tip + blade_dir * 7.0 + (tip - hand).normalized() * 5.0]),
+				Color(0.75, 0.77, 0.82))
+		draw_circle(hand, 6.0, body.darkened(0.1))
+		# a little toss of dirt at the end of the swing
+		if sw < 0.45:
+			for k in 3:
+				draw_circle(tip + Vector2(6 + k * 5, -4 - k * 4 - (0.45 - sw) * 20.0), 2.2, Color(0.45, 0.3, 0.16, 0.8))
+	else:
+		draw_circle(Vector2(24, 2), 6.0, body.darkened(0.1))
 
 	# face
 	draw_circle(Vector2(-7, -10), 4.5, Color.WHITE)

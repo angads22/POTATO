@@ -123,6 +123,7 @@ static func _index() -> void:
 		fav_days.append(lst if not lst.is_empty() else FAV_DEFAULT[fav_days.size()].duplicate())
 	_k = {
 		"clockin_ms": int(ck["clockin_s"]) * 1000,
+		"grace_ms": int(ck.get("your_crop_grace_s", 0)) * 1000,
 		"report_min_ms": int(ck["report_min_s"]) * 1000,
 		"welcome_min_ms": int(ck["welcome_butterfly_min_s"]) * 1000,
 		"reaction_ms": int(ck["reaction_s"]) * 1000,
@@ -698,8 +699,8 @@ static func _rebase(farm: Dictionary, now: int, back: int) -> void:
 			bf[key] = maxi(1, int(bf[key]) - back)
 
 # One hut field over the work window up to `hi` (§5.6). Closed form:
-#   pick 1 at p1 = max(ripe_wall, w0) + P harvests the stored crop and
-#   replants the plan for free; every later pick k comes one cycle
+#   pick 1 at p1 = max(ripe_wall [+ grace], w0) + P harvests the stored crop
+#   and replants the plan for free; every later pick k comes one cycle
 #   c = grow_eff(plan) + P after the previous one, so n = 1 + floor((hi - p1)
 #   / c). A replant carries the Favorite flag of its own local day, so picks
 #   are summed per hour bucket and the Favorite plantings counted per local
@@ -712,6 +713,11 @@ static func _rebase(farm: Dictionary, now: int, back: int) -> void:
 # cost the star bonus, SD4 -7%; a Spudling crop that grew through your visit
 # counts as yours). Only a crop the Spudlings planted during this absence
 # pays the share.
+# Grace (phase B): such a crop also waits min(clock.your_crop_grace_s, its
+# grow time) past ripe before the Spudlings pick it, so a check-in player's
+# Red is still there at the next bell (hand-led by day) while a long absence
+# loses at most the grace. It depends only on the stored field and l_in, so
+# bulk == stepped still holds.
 static func _settle_hut(farm: Dictionary, i: int, l_in: int, w0: int, hi: int, tz: int, res: Dictionary) -> void:
 	var f: Dictionary = farm["fields"][i]
 	var plan: String = f["plan"]
@@ -725,7 +731,16 @@ static func _settle_hut(farm: Dictionary, i: int, l_in: int, w0: int, hi: int, t
 			return
 		_spud_plant(f, plan, tp, goff, tz, ge_plan)
 	var crop1: String = f["crop"]
-	var ripe_wall := int(f["planted_g"]) + _ge_of(farm, i) - goff
+	var ge1 := _ge_of(farm, i)
+	var ripe_wall := int(f["planted_g"]) + ge1 - goff
+	# A crop that was in the ground when you left is yours: it waits for you
+	# for a grace of min(clock.your_crop_grace_s, its grow time) after it
+	# ripens (a check-in player comes back and picks it with stars), and then
+	# the Spudlings pick it at full value × your star EV. Only a crop they
+	# planted during this absence pays the share (and has no grace).
+	var full1: bool = f["by"] == "you" or int(f["planted_g"]) - goff <= l_in
+	if full1:
+		ripe_wall += mini(_kk().grace_ms, ge1)
 	var p1 := maxi(ripe_wall, w0) + walk
 	if p1 > hi:
 		return
@@ -735,7 +750,7 @@ static func _settle_hut(farm: Dictionary, i: int, l_in: int, w0: int, hi: int, t
 	var ev := _star_ev(farm)
 	var plots: int = _kk().plots
 	var spud1: bool = f["by"] == "spud"
-	var w1v := share if spud1 and int(f["planted_g"]) - goff > l_in else ev
+	var w1v := ev if full1 else share
 	var v1 := int(round(float(_tile_milli(farm, crop1, f["fav"]) * plots) * w1v))
 	_income_add(farm, _hour(p1), v1)
 	_mix_add(farm, p1, crop1, v1, spud1)
@@ -1692,7 +1707,8 @@ static func _field_away(farm: Dictionary, i: int, gap: int, ev: float) -> float:
 # its full value if span <= gap, else value / ceil(span / gap), the share of
 # it one gap-long absence of a steady schedule brings in.
 #   no hut (or gap <= clock-in): hand_net per the rule above (span = grow_eff);
-#   hut: first pick of your crop at full value × star EV, + share × gross of
+#   hut: first pick of your crop (after its grace, min(grace, grow_eff) past
+#   ripe) at full value × star EV, + share × gross of
 #   a Spudling-planted crop per further cycle until the shift ends − seed,
 #   plus the last Spudling crop (planted at p_last, hand-picked with stars)
 #   per the same rule with span = p_last + grow_eff.
@@ -1724,7 +1740,7 @@ static func _away_eval(p: Array, gap: int) -> float:
 		return no_hut
 	var walk: int = p[5]
 	var e := mini(gap, p[6])
-	var p1 := maxi(ge, ck) + walk
+	var p1 := maxi(ge + mini(_k.grace_ms, ge), ck) + walk     # your crop waits out its grace
 	if p1 > e:
 		return no_hut
 	var cyc := ge + walk

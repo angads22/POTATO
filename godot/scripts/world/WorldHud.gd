@@ -1,710 +1,438 @@
 extends Node2D
 class_name WorldHUD
 
-# Overworld overlay UI shared by the farm and the town, hosted on a
-# CanvasLayer so it ignores the scrolling camera and the night tint. Reads
-# everything from the owning WorldController (ctrl) and SaveDataManager.
+# Overworld overlay UI shared by the farm and the town, on a CanvasLayer so it
+# ignores the camera and the night tint. This base draws the town's HUD (the
+# wallet, the icon buttons, the bottom bar), the interaction prompt, the
+# rising popups, the entry banner, the knife-stand overlay and the Farm Book
+# drawer; FarmHud extends it with the farm's goal card, field signs and Pip's
+# note. Every clickable thing is registered in `regions` (HitRegions) while it
+# is drawn, so the controller's click routing asks regions.hit(pos).
+#
+# The static icon helpers below draw into any CanvasItem (the Farm Book uses
+# them too): the default font has no ★ ▸ → ✓ ✕ ● ≡ or emoji, so every icon is
+# a polygon, arc or line.
 
 var ctrl  # WorldController
+var regions := HitRegions.new()
 
-# research node-map geometry: a graph region on the left, a node-details
-# sidebar on the right. Nodes are laid out on a grid by their "pos" field.
-const RES_MAP := Rect2(36, 178, 856, 496)
-const RES_SIDE := Rect2(904, 178, 340, 496)
-const RES_CELL := Vector2(150, 86)
-const RES_NODE_R := 20.0
+const INK := Color(0.98, 0.95, 0.85)
+const INK_DIM := Color(0.78, 0.73, 0.64)
+const INK_MUTED := Color(0.58, 0.53, 0.47)
+const GOLD := Color(1.0, 0.84, 0.3)
+const GOLD_DK := Color(0.85, 0.68, 0.3)
+const PANEL_BG := Color(0.18, 0.12, 0.07, 0.9)
+const PANEL_DEEP := Color(0.13, 0.09, 0.05, 0.97)
+const GOOD := Color(0.6, 0.92, 0.5)
+const WARN := Color(1.0, 0.55, 0.25)       # refusals, short of coins
+
+const BOTTOM_Y := 648.0
+const BOTTOM_BTN := Vector2(132, 56)
+
+static var _styles := {}
+
+func _process(_delta):
+	queue_redraw()
 
 func _draw():
 	if ctrl == null:
 		return
-	var font = ThemeDB.fallback_font
+	regions.begin()
+	var font := ThemeDB.fallback_font
+	_draw_hud(font)
+	_draw_prompt(font)
+	_draw_overlays(font)
+	_draw_modal(font)
+	_draw_popups(font)
+	_draw_banner(font)
 
-	_draw_wallet_panel(font)
-	_draw_inventory_panel(font)
-	_draw_day_dial()
+# ── town HUD (FarmHud overrides) ──
 
-	# interaction prompt above the hotbar area
-	if ctrl.open_shop == "" and ctrl.prompt != "":
-		var ps = font.get_string_size(ctrl.prompt, HORIZONTAL_ALIGNMENT_CENTER, -1, 20)
-		GameHUD.panel_style().draw(get_canvas_item(), Rect2(640 - ps.x / 2 - 18, 622, ps.x + 36, 44))
-		draw_string(font, Vector2(640 - ps.x / 2, 652), ctrl.prompt, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(0.98, 0.95, 0.85))
+func _draw_hud(font: Font):
+	draw_wallet_panel(self, font, Rect2(10, 8, 280, 56), ctrl.wallet_display(), "")
+	_draw_icon_buttons(["sound", "zoom", "menu"])
+	_draw_bottom_bar(font, [["zoom_bar", "Z", "Zoom"], ["sound_bar", "M", "Sound" if AudioManager.sound_enabled else "Muted"],
+			["menu_bar", "Esc", "Menu"]])
 
-	# rising popups
-	for p in ctrl.popups:
-		var frac = p.age / ctrl.POPUP_LIFE
+# Top-right row of 56x56 icon buttons, right-aligned at x 1270.
+func _draw_icon_buttons(ids: Array):
+	var x := 1270.0 - ids.size() * 62.0 + 6.0
+	for id in ids:
+		var r := Rect2(x, 12, 56, 56)
+		icon_button(self, r, id, ctrl)
+		regions.add(r, "btn:" + str(id))
+		x += 62.0
+
+# Bottom bar: [key label] buttons centred on the screen. items: [id, key, label]
+# (+ optional enabled flag).
+func _draw_bottom_bar(font: Font, items: Array):
+	var w := items.size() * (BOTTOM_BTN.x + 8.0) - 8.0
+	var x := 640.0 - w * 0.5
+	for it in items:
+		var enabled: bool = it[3] if it.size() > 3 else true
+		var r := Rect2(x, BOTTOM_Y, BOTTOM_BTN.x, BOTTOM_BTN.y)
+		key_button(self, font, r, str(it[1]), str(it[2]), enabled)
+		regions.add(r, "btn:" + str(it[0]))
+		x += BOTTOM_BTN.x + 8.0
+
+func _draw_prompt(font: Font):
+	if ctrl.prompt == "" or ctrl.ui_blocking():
+		return
+	var text: String = fit(font, ctrl.prompt, 19, 900)
+	var ps := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 19)
+	var r := Rect2(640 - ps.x / 2 - 18, 594, ps.x + 36, 44)
+	panel(self, r, PANEL_BG)
+	draw_string(font, Vector2(r.position.x + 18, r.position.y + 29), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 19, INK)
+
+func _draw_overlays(font: Font):
+	if ctrl.open_shop == "knives":
+		_draw_knife_overlay(font)
+	if ctrl.book != null and ctrl.book.open:
+		ctrl.book.draw(self, font)
+
+# The farm draws Pip's note here.
+func _draw_modal(_font: Font):
+	pass
+
+func _draw_popups(font: Font):
+	var stack := 0
+	for k in range(ctrl.popups.size() - 1, maxi(-1, ctrl.popups.size() - 4), -1):
+		var p: Dictionary = ctrl.popups[k]
+		var frac: float = p.age / ctrl.POPUP_LIFE
 		var col: Color = p.color
-		col.a = 1.0 - frac
-		var ts = font.get_string_size(p.text, HORIZONTAL_ALIGNMENT_CENTER, -1, 26)
-		var py = 250 - frac * 60.0
-		draw_string(font, Vector2(642 - ts.x / 2, py + 2), p.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 26, Color(0, 0, 0, (1.0 - frac) * 0.6))
-		draw_string(font, Vector2(640 - ts.x / 2, py), p.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 26, col)
+		col.a = 1.0 - frac * frac
+		var size := 24
+		var text: String = fit(font, str(p.text), size, 1100)
+		var ts := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size)
+		var py := 238.0 + stack * 38.0 - frac * 30.0
+		stack += 1
+		var back := Rect2(640 - ts.x / 2 - 14, py - 26, ts.x + 28, 36)
+		draw_rect(back, Color(0.08, 0.05, 0.03, 0.55 * (1.0 - frac)))
+		draw_string(font, Vector2(642 - ts.x / 2, py + 2), text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0, 0, 0, col.a * 0.6))
+		draw_string(font, Vector2(640 - ts.x / 2, py), text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
+		if stack >= 4:
+			break
 
-	# entry banner
-	if ctrl.banner_age < 2.0:
-		var alpha = 1.0 if ctrl.banner_age < 1.4 else (2.0 - ctrl.banner_age) / 0.6
-		var bs = font.get_string_size(ctrl.banner_text, HORIZONTAL_ALIGNMENT_CENTER, -1, 56)
-		draw_rect(Rect2(0, 300, 1280, 110), Color(0.07, 0.12, 0.04, 0.7 * alpha))
-		draw_rect(Rect2(0, 300, 1280, 4), Color(0.85, 0.68, 0.3, alpha))
-		draw_rect(Rect2(0, 406, 1280, 4), Color(0.85, 0.68, 0.3, alpha))
-		draw_string(font, Vector2(643 - bs.x / 2, 375), ctrl.banner_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 56, Color(0, 0, 0, 0.5 * alpha))
-		draw_string(font, Vector2(640 - bs.x / 2, 372), ctrl.banner_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 56, Color(1.0, 0.85, 0.3, alpha))
-
-	# controls hint
-	var hint = "[ESC] Close" if ctrl.open_shop != "" else "[WASD] Move · [E] Interact · [ESC] Menu"
-	draw_string(font, Vector2(20, 706), hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.95, 0.92, 0.85, 0.65))
-
-	if ctrl.open_shop != "":
-		_draw_shop(font)
-
-func _draw_wallet_panel(font: Font):
-	GameHUD.panel_style().draw(get_canvas_item(), Rect2(10, 8, 420, 52))
-	# coin icon
-	draw_circle(Vector2(38, 34), 14.0, Color(0.95, 0.78, 0.25))
-	draw_arc(Vector2(38, 34), 14.0, 0, TAU, 20, Color(0.7, 0.52, 0.1), 2.5)
-	draw_arc(Vector2(38, 34), 8.0, 0, TAU, 16, Color(0.8, 0.62, 0.15), 2.0)
-	draw_string(font, Vector2(60, 43), "%d" % SaveDataManager.wallet(), HORIZONTAL_ALIGNMENT_LEFT, -1, 24, Color.GOLD)
-	# watering can: a single droplet glyph + a numeric n/capacity readout, so a
-	# researched bigger can fits the slot without colliding with the plow icon
-	var water: int = int(SaveDataManager.farm.get("water", 0))
-	var cap: int = 4 + int(SaveDataManager.research_bonus("water_capacity"))
-	var wcol = Color(0.4, 0.7, 0.95) if water > 0 else Color(0.4, 0.4, 0.42)
-	draw_circle(Vector2(158, 38), 5.5, wcol)
-	draw_colored_polygon(PackedVector2Array([
-		Vector2(153.5, 35), Vector2(162.5, 35), Vector2(158, 25)
-	]), wcol)
-	draw_string(font, Vector2(170, 43), "%d/%d" % [water, cap], HORIZONTAL_ALIGNMENT_LEFT, -1, 17,
-			Color(0.95, 0.92, 0.85) if water > 0 else Color(0.6, 0.55, 0.5))
-	# plow durability
-	var uses: int = int(SaveDataManager.farm.get("plow_uses", 0))
-	var pcol = Color(0.85, 0.66, 0.4) if uses > 0 else Color(0.45, 0.4, 0.36)
-	draw_line(Vector2(238, 24), Vector2(250, 36), pcol, 3.5)
-	draw_colored_polygon(PackedVector2Array([
-		Vector2(247, 33), Vector2(257, 33), Vector2(250, 45)
-	]), pcol.lightened(0.15))
-	draw_string(font, Vector2(262, 43), "%d" % uses, HORIZONTAL_ALIGNMENT_LEFT, -1, 17,
-			Color(0.95, 0.92, 0.85) if uses > 0 else Color(0.6, 0.55, 0.5))
-	# active plow size, once a wider plow has been researched (farm only)
-	if ctrl.has_method("max_plow_radius") and ctrl.max_plow_radius() > 0:
-		draw_string(font, Vector2(286, 42), ctrl.plow_size_label(), HORIZONTAL_ALIGNMENT_LEFT, -1, 11,
-				Color(0.8, 0.85, 0.6))
-	# sprinklers waiting in the pack
-	var stock: int = int(SaveDataManager.farm.get("sprinkler_stock", 0))
-	var scol = Color(0.45, 0.75, 0.95) if stock > 0 else Color(0.42, 0.4, 0.38)
-	draw_line(Vector2(308, 44), Vector2(308, 32), scol, 3.0)
-	draw_circle(Vector2(308, 30), 4.5, scol)
-	draw_arc(Vector2(308, 30), 9.0, -2.4, -0.7, 8, scol, 2.0)
-	draw_string(font, Vector2(320, 43), "%d" % stock, HORIZONTAL_ALIGNMENT_LEFT, -1, 17,
-			Color(0.95, 0.92, 0.85) if stock > 0 else Color(0.6, 0.55, 0.5))
-	# research points — a little flask
-	var rp: int = SaveDataManager.research_points()
-	var rcol = Color(0.55, 0.85, 0.95) if rp > 0 else Color(0.45, 0.5, 0.52)
-	draw_rect(Rect2(364, 24, 7, 5), rcol.darkened(0.2))           # flask neck
-	draw_colored_polygon(PackedVector2Array([
-		Vector2(366, 29), Vector2(369, 29), Vector2(375, 44), Vector2(360, 44)
-	]), rcol)                                                      # flask body
-	draw_string(font, Vector2(380, 43), "%d" % rp, HORIZONTAL_ALIGNMENT_LEFT, -1, 17,
-			Color(0.95, 0.92, 0.85) if rp > 0 else Color(0.6, 0.55, 0.5))
-
-func _draw_inventory_panel(font: Font):
-	GameHUD.panel_style().draw(get_canvas_item(), Rect2(920, 8, 350, 112))
-	draw_string(font, Vector2(936, 32), "SEEDS", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.85, 0.68, 0.3))
-	draw_string(font, Vector2(936, 68), "SPUDS", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.85, 0.68, 0.3))
-	draw_string(font, Vector2(936, 104), "FERT", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.85, 0.68, 0.3))
-	for row in range(3):
-		var things: Array
-		var inv_name: String
-		match row:
-			0:
-				inv_name = "seeds"
-				things = GameData.farmable_potatoes()
-			1:
-				inv_name = "spuds"
-				things = GameData.farmable_potatoes()
-			_:
-				# fertilizer counts are charges remaining
-				inv_name = "items"
-				things = GameData.enhancers()
-		var y = 26.0 + row * 36.0
-		var x = 1000.0
-		var any = false
-		for p in things:
-			var n = SaveDataManager.item_count(inv_name, p["id"])
-			if n <= 0:
-				continue
-			any = true
-			draw_circle(Vector2(x, y), 8.0, Color(p.get("color", "#b87333")))
-			draw_arc(Vector2(x, y), 8.0, 0, TAU, 14, Color(0, 0, 0, 0.4), 1.5)
-			draw_string(font, Vector2(x + 11, y + 6), "%d" % n, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.95, 0.92, 0.85))
-			x += 44.0
-			if x > 1240.0:
-				break
-		if not any:
-			draw_string(font, Vector2(1000, y + 6), "—", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.6, 0.55, 0.5))
-
-func _draw_day_dial():
-	# sun/moon arc dial: marker travels the day circle
-	var c = Vector2(640, 38)
-	GameHUD.panel_style().draw(get_canvas_item(), Rect2(c.x - 56, 8, 112, 56))
-	draw_arc(c + Vector2(0, 14), 30.0, PI, TAU, 24, Color(0.85, 0.68, 0.3, 0.6), 2.5)
-	# day_t < 0.5 is daytime: the sun sweeps the arc; then the moon repeats it
-	var sun_up = fposmod(ctrl.day_t, 1.0) < 0.5
-	var frac = fposmod(ctrl.day_t, 0.5) / 0.5
-	var day_angle = PI + frac * PI
-	var marker = c + Vector2(0, 14) + Vector2(cos(day_angle), sin(day_angle)) * 30.0
-	if sun_up:
-		draw_circle(marker, 8.0, Color(1.0, 0.85, 0.3))
-		for i in range(8):
-			var a = i * TAU / 8.0
-			draw_line(marker + Vector2(cos(a), sin(a)) * 10.0, marker + Vector2(cos(a), sin(a)) * 14.0, Color(1.0, 0.85, 0.3), 2.0)
-	else:
-		draw_circle(marker, 8.0, Color(0.85, 0.88, 0.95))
-		draw_circle(marker + Vector2(3, -2), 6.5, GameHUD.panel_style().bg_color)
-
-# ── shop overlays ──
-
-func _draw_shop(font: Font):
-	draw_rect(Rect2(0, 0, 1280, 720), Color(0, 0, 0, 0.55))
-	# the research shed uses a full-width node map, not the shared centred panel
-	var is_research = ctrl.open_shop == "research"
-	var panel = Rect2(320, 110, 640, 500)
-	if not is_research:
-		GameHUD.panel_style(Color(0.16, 0.1, 0.06, 0.97)).draw(get_canvas_item(), panel)
-
-	var title = ""
-	match ctrl.open_shop:
-		"seeds": title = "SEED SHOP"
-		"truck": title = "MARKET TRUCK — LOAD & SHIP"
-		"research": title = "RESEARCH SHED"
-		"knives": title = "KNIFE STAND"
-		"plant": title = "PLANT A SEED"
-		"tools": title = "TOOL SHED"
-		"enhance": title = "FERTILIZE THIS CROP"
-		"seed_order": title = "SEED CO-OP — STANDING ORDER"
-		"fertilizer_order": title = "SUPPLY DEPOT — STANDING ORDER"
-	if is_research:
-		# the research shed shows a tab strip in place of a single title
-		_draw_research_tabs(font)
-	else:
-		var ts = font.get_string_size(title, HORIZONTAL_ALIGNMENT_CENTER, -1, 30)
-		draw_string(font, Vector2(640 - ts.x / 2, 160), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 30, Color.GOLD)
-
-	# wallet, top-right of the panel (the research map draws its own balances)
-	if not is_research:
-		var wt = "%d coins" % SaveDataManager.wallet()
-		var ws = font.get_string_size(wt, HORIZONTAL_ALIGNMENT_CENTER, -1, 18)
-		draw_string(font, Vector2(panel.end.x - ws.x - 24, 146), wt, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.GOLD)
-
-	match ctrl.open_shop:
-		"seeds":
-			_draw_seed_rows(font, panel, true)
-			_draw_footer(font, panel, "[1-%d] Buy seed   ·   [ESC] Close" % ctrl.plantable_potatoes().size())
-		"plant":
-			_draw_seed_rows(font, panel, false)
-			_draw_footer(font, panel, "[1-%d] Plant   ·   [ESC] Cancel" % ctrl.plantable_potatoes().size())
-		"truck":
-			_draw_truck_rows(font, panel)
-			if ctrl.truck_status() == "away":
-				_draw_footer(font, panel, "[ESC] Close")
-			else:
-				_draw_footer(font, panel, "[1-7] Load stack   ·   [A] Load all   ·   [S] Send to market   ·   [ESC] Close")
-		"research":
-			_draw_research_map(font)
-		"knives":
-			_draw_knife_rows(font, panel)
-			_draw_footer(font, panel, "[1-%d] Buy / Equip   ·   [ESC] Close" % GameData.knives().size())
-		"tools":
-			_draw_tool_rows(font, panel)
-			_draw_footer(font, panel, "[1-%d] Buy   ·   [ESC] Close" % (GameData.tools().size() + GameData.enhancers().size()))
-		"enhance":
-			_draw_enhance_rows(font, panel)
-			_draw_footer(font, panel, "[1-%d] Apply   ·   [ESC] Cancel" % maxi(ctrl.owned_enhancers().size(), 1))
-		"seed_order":
-			_draw_seed_order(font, panel)
-			_draw_footer(font, panel, "[1-%d] Toggle crop   ·   [+/-] Stock target   ·   [T] Pause/resume   ·   [ESC] Close" % ctrl.plantable_potatoes().size())
-		"fertilizer_order":
-			_draw_fertilizer_order(font, panel)
-			_draw_footer(font, panel, "[1-%d] Choose grade   ·   [+/-] Stock target   ·   [T] Pause/resume   ·   [ESC] Close" % GameData.enhancers().size())
-
-func _draw_seed_rows(font: Font, panel: Rect2, shop_mode: bool):
-	var y = 210.0
-	var i = 0
-	for p in ctrl.plantable_potatoes():
-		i += 1
-		var owned = SaveDataManager.item_count("seeds", p["id"])
-		var cost = ctrl.seed_price(p["id"])
-		var ok = SaveDataManager.wallet() >= cost if shop_mode else owned > 0
-		var col = Color(0.95, 0.92, 0.85) if ok else Color(0.55, 0.5, 0.45)
-		draw_circle(Vector2(panel.position.x + 48, y - 7), 10.0, Color(p.get("color", "#b87333")))
-		var line = "[%d] %s" % [i, p["name"]]
-		draw_string(font, Vector2(panel.position.x + 70, y), line, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, col)
-		var detail = ""
-		if shop_mode:
-			detail = "%d c · grows %ds · sells %d c" % [cost, int(p["grow_time"]), int(p["sell_value"])]
-		else:
-			detail = "x%d in pocket · grows %ds" % [owned, int(p["grow_time"])]
-		var ds = font.get_string_size(detail, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
-		draw_string(font, Vector2(panel.end.x - ds.x - 30, y), detail, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, col.darkened(0.15))
-		if shop_mode and owned > 0:
-			draw_string(font, Vector2(panel.position.x + 70, y + 18), "owned: %d" % owned, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.7, 0.65, 0.55))
-		y += 48.0
-
-func _draw_truck_rows(font: Font, panel: Rect2):
-	# header line: capacity, trip time, price bonus
-	var cap = "Truck %d/%d  ·  trip %ds  ·  price ×%.2f" % [
-		ctrl.truck_cargo_count(), ctrl.truck_capacity(),
-		int(ctrl.truck_trip_seconds()), ctrl.truck_price_mult()]
-	draw_string(font, Vector2(panel.position.x + 40, 198), cap, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.8, 0.85, 0.95))
-
-	if ctrl.truck_status() == "away":
-		var left = int(float(ctrl._truck().get("return_at", 0.0)) - Time.get_unix_time_from_system())
-		var msg = "On the road to market — back in %ds" % maxi(0, left)
-		var ms = font.get_string_size(msg, HORIZONTAL_ALIGNMENT_CENTER, -1, 20)
-		draw_string(font, Vector2(640 - ms.x / 2, 320), msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color.GOLD)
-		var pend = "bringing back %d coins + %d research" % [int(ctrl._truck().get("pending_coins", 0)), int(ctrl._truck().get("pending_rp", 0))]
-		var pds = font.get_string_size(pend, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
-		draw_string(font, Vector2(640 - pds.x / 2, 350), pend, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.85, 0.8, 0.6))
+func _draw_banner(font: Font):
+	if ctrl.banner_age >= ctrl.BANNER_LIFE:
 		return
+	var life: float = ctrl.BANNER_LIFE
+	var alpha: float = 1.0 if ctrl.banner_age < life - 0.6 else (life - ctrl.banner_age) / 0.6
+	var sub: String = ctrl.banner_sub
+	var h := 110.0 if sub == "" else 142.0
+	var y0 := 290.0
+	draw_rect(Rect2(0, y0, 1280, h), Color(0.07, 0.12, 0.04, 0.72 * alpha))
+	draw_rect(Rect2(0, y0, 1280, 4), Color(GOLD_DK.r, GOLD_DK.g, GOLD_DK.b, alpha))
+	draw_rect(Rect2(0, y0 + h - 4, 1280, 4), Color(GOLD_DK.r, GOLD_DK.g, GOLD_DK.b, alpha))
+	var title: String = fit(font, ctrl.banner_text, 52, 1220)
+	var bs := font.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, 52)
+	draw_string(font, Vector2(643 - bs.x / 2, y0 + 73), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 52, Color(0, 0, 0, 0.5 * alpha))
+	draw_string(font, Vector2(640 - bs.x / 2, y0 + 70), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 52, Color(1.0, 0.85, 0.3, alpha))
+	if sub != "":
+		var st: String = fit(font, sub, 22, 1200)
+		var ss := font.get_string_size(st, HORIZONTAL_ALIGNMENT_LEFT, -1, 22)
+		draw_string(font, Vector2(640 - ss.x / 2, y0 + 112), st, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(0.95, 0.92, 0.82, alpha))
 
-	var y = 232.0
-	var i = 0
-	var any = false
-	for p in GameData.farmable_potatoes():
-		i += 1
-		var n = SaveDataManager.item_count("spuds", p["id"])
-		var loaded = int(ctrl._truck().get("cargo", {}).get(p["id"], 0))
-		if n <= 0 and loaded <= 0:
-			continue
-		any = true
-		var value = int(round(n * int(p["sell_value"]) * ctrl.truck_price_mult()))
-		draw_circle(Vector2(panel.position.x + 48, y - 7), 10.0, Color(p.get("color", "#b87333")))
-		var label = "[%d] %s × %d" % [i, p["name"], n]
-		if loaded > 0:
-			label += "   (on truck: %d)" % loaded
-		draw_string(font, Vector2(panel.position.x + 70, y), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(0.95, 0.92, 0.85))
-		var detail = "ships for %d c" % value
-		var ds = font.get_string_size(detail, HORIZONTAL_ALIGNMENT_CENTER, -1, 18)
-		draw_string(font, Vector2(panel.end.x - ds.x - 30, y), detail, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.GOLD)
-		y += 46.0
-	if not any:
-		var msg = "Nothing to ship — go grow some potatoes!"
-		var ms = font.get_string_size(msg, HORIZONTAL_ALIGNMENT_CENTER, -1, 18)
-		draw_string(font, Vector2(640 - ms.x / 2, 320), msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.7, 0.65, 0.55))
+# ── knife stand overlay (town) ──
 
-# ── research shed: a node-based skill-tree map ──
+const SHOP_PANEL := Rect2(320, 96, 640, 540)
 
-func _npos(node: Dictionary) -> Vector2:
-	var p = node.get("pos", [0, 0])
-	if p is Array and p.size() >= 2:
-		return Vector2(float(p[0]), float(p[1]))
-	return Vector2.ZERO
+func _draw_knife_overlay(font: Font):
+	draw_rect(Rect2(0, 0, 1280, 720), Color(0, 0, 0, 0.5))
+	var pnl := SHOP_PANEL
+	panel(self, pnl, PANEL_DEEP)
+	draw_string(font, Vector2(pnl.position.x + 28, pnl.position.y + 44), "KNIFE STAND", HORIZONTAL_ALIGNMENT_LEFT, -1, 28, GOLD)
+	var wt := "%s c" % NumFmt.coins(SaveDataManager.wallet())
+	var ws := font.get_string_size(wt, HORIZONTAL_ALIGNMENT_LEFT, -1, 18)
+	icon_coin(self, Vector2(pnl.end.x - 92 - ws.x, pnl.position.y + 37), 9.0)
+	draw_string(font, Vector2(pnl.end.x - 78 - ws.x, pnl.position.y + 43), wt, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, GOLD)
+	var close := Rect2(pnl.end.x - 56, pnl.position.y + 10, 46, 46)
+	close_button(self, close)
+	regions.add(close, "shop:close")
 
-func _node_center(node: Dictionary, origin: Vector2) -> Vector2:
-	return origin + _npos(node) * RES_CELL
-
-# Pixel position of grid cell (0,0): the tree is centred when it fits the map
-# region, otherwise the camera follows the selection clamped to the content.
-func _research_origin(nodes: Array) -> Vector2:
-	var min_p := Vector2(INF, INF)
-	var max_p := Vector2(-INF, -INF)
-	for n in nodes:
-		var p = _npos(n)
-		min_p.x = minf(min_p.x, p.x)
-		min_p.y = minf(min_p.y, p.y)
-		max_p.x = maxf(max_p.x, p.x)
-		max_p.y = maxf(max_p.y, p.y)
-	var content = (max_p - min_p) * RES_CELL
-	var margin := 52.0
-	var sel = GameData.research_by_id(ctrl.research_sel_id)
-	var sp = _npos(sel) if not sel.is_empty() else min_p
-	var origin := Vector2.ZERO
-	if content.x <= RES_MAP.size.x - margin * 2.0:
-		origin.x = RES_MAP.position.x + (RES_MAP.size.x - content.x) * 0.5 - min_p.x * RES_CELL.x
-	else:
-		origin.x = clampf(RES_MAP.get_center().x - sp.x * RES_CELL.x,
-				RES_MAP.end.x - margin - max_p.x * RES_CELL.x,
-				RES_MAP.position.x + margin - min_p.x * RES_CELL.x)
-	if content.y <= RES_MAP.size.y - margin * 2.0:
-		origin.y = RES_MAP.position.y + (RES_MAP.size.y - content.y) * 0.5 - min_p.y * RES_CELL.y
-	else:
-		origin.y = clampf(RES_MAP.get_center().y - sp.y * RES_CELL.y,
-				RES_MAP.end.y - margin - max_p.y * RES_CELL.y,
-				RES_MAP.position.y + margin - min_p.y * RES_CELL.y)
-	return origin
-
-# owned / afford(able) / unafford(able) / locked — drives node and edge colour.
-func _node_state(node: Dictionary) -> String:
-	if ctrl.has_research(node.get("id", "")):
-		return "owned"
-	if ctrl.research_available(node):
-		return "afford" if ctrl.can_afford_research(node) else "unafford"
-	return "locked"
-
-func _edge_color(child: Dictionary, parent: Dictionary) -> Color:
-	if ctrl.has_research(child.get("id", "")):
-		return Color(0.5, 0.85, 0.45, 0.9)        # both owned — a finished path
-	if ctrl.has_research(parent.get("id", "")):
-		return Color(0.85, 0.7, 0.35, 0.8)         # prereq met — child reachable
-	return Color(0.45, 0.42, 0.4, 0.55)            # still locked
-
-func _draw_research_map(font: Font):
-	var nodes: Array = ctrl.research_nodes_for_tab(ctrl.research_tab)
-	draw_string(font, Vector2(RES_MAP.position.x + 4, 150),
-			"Coins: %d        Research points: %d" % [SaveDataManager.wallet(), SaveDataManager.research_points()],
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.6, 0.85, 0.95))
-	if nodes.is_empty():
-		return
-	var origin = _research_origin(nodes)
-
-	# the ids visible on this tab — so cross-tab prereq edges aren't drawn dangling
-	var visible := {}
-	for node in nodes:
-		visible[str(node.get("id", ""))] = true
-
-	# 1. connector lines for every prerequisite edge (under the nodes)
-	for node in nodes:
-		var cc = _node_center(node, origin)
-		for req_id in node.get("requires", []):
-			if not visible.has(str(req_id)):
-				continue
-			var parent = GameData.research_by_id(req_id)
-			if parent.is_empty():
-				continue
-			draw_line(_node_center(parent, origin), cc, _edge_color(node, parent), 3.0, true)
-
-	# 2. node discs, state rings, glyphs and labels
-	for node in nodes:
-		var c = _node_center(node, origin)
-		if not RES_MAP.grow(46.0).has_point(c):
-			continue  # scrolled off-screen
-		var bcol = _branch_color(str(node.get("branch", "")))
-		var state = _node_state(node)
-		var fill = bcol
-		var ring = Color(0, 0, 0, 0.45)
-		var rw := 2.0
-		match state:
-			"owned":
-				ring = Color.LIGHT_GREEN
-				rw = 3.0
-			"afford":
-				fill = bcol.darkened(0.12)
-				ring = Color.GOLD
-				rw = 3.0
-			"unafford":
-				fill = bcol.darkened(0.45)
-				ring = Color(0.7, 0.55, 0.35, 0.85)
-			"locked":
-				fill = Color(0.30, 0.29, 0.27)
-				ring = Color(0.5, 0.48, 0.45, 0.7)
-		draw_circle(c, RES_NODE_R, fill)
-		draw_arc(c, RES_NODE_R, 0, TAU, 24, ring, rw)
-		if state == "owned":
-			_draw_check(c, Color.LIGHT_GREEN)
-		elif state == "locked":
-			_draw_lock(c, Color(0.62, 0.6, 0.56))
-		var label = str(node.get("name", "?"))
-		var ls = font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12)
-		var lcol = Color(0.92, 0.89, 0.82) if state != "locked" else Color(0.62, 0.6, 0.56)
-		draw_string(font, Vector2(c.x - ls.x / 2.0, c.y + RES_NODE_R + 15), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, lcol)
-
-	# 3. pulsing highlight on the selected node
-	var sel = GameData.research_by_id(ctrl.research_sel_id)
-	if not sel.is_empty():
-		var sc = _node_center(sel, origin)
-		var pulse = 0.5 + 0.5 * sin(Time.get_ticks_msec() / 220.0)
-		draw_arc(sc, RES_NODE_R + 6.0, 0, TAU, 28, Color(1.0, 0.95, 0.6, 0.45 + 0.4 * pulse), 3.0)
-
-	# 4. details sidebar + footer
-	_draw_research_details(font, sel)
-	var hint = "[Arrows] Move   ·   [E] Research   ·   [TAB] Switch track   ·   [ESC] Close"
-	var hs = font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 16)
-	draw_string(font, Vector2(RES_MAP.get_center().x - hs.x / 2.0, 700), hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.78, 0.73, 0.64))
-
-# A two-chip tab strip across the top of the shed, active tab highlighted.
-func _draw_research_tabs(font: Font):
-	var labels := {"progression": "PROGRESSION", "automation": "AUTOMATION"}
-	var tabs: Array = ctrl.RESEARCH_TABS
-	var chip := Vector2(220, 34)
-	var gap := 12.0
-	var total = tabs.size() * chip.x + (tabs.size() - 1) * gap
-	var x = 640.0 - total / 2.0
-	for tab in tabs:
-		var active: bool = ctrl.research_tab == tab
-		var r = Rect2(x, 138, chip.x, chip.y)
-		GameHUD.panel_style(Color(0.28, 0.22, 0.1, 0.97) if active else Color(0.12, 0.1, 0.07, 0.9)).draw(get_canvas_item(), r)
-		if active:
-			draw_rect(Rect2(r.position.x, r.end.y - 3, r.size.x, 3), Color.GOLD)
-		var lbl = str(labels.get(tab, tab))
-		var lsz = font.get_string_size(lbl, HORIZONTAL_ALIGNMENT_CENTER, -1, 18)
-		draw_string(font, Vector2(r.get_center().x - lsz.x / 2.0, r.get_center().y + 6), lbl,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color.GOLD if active else Color(0.7, 0.66, 0.58))
-		x += chip.x + gap
-
-func _draw_research_details(font: Font, node: Dictionary):
-	GameHUD.panel_style(Color(0.12, 0.09, 0.05, 0.97)).draw(get_canvas_item(), RES_SIDE)
-	if node.is_empty():
-		return
-	var x = RES_SIDE.position.x + 16
-	var w = int(RES_SIDE.size.x - 32)
-	var y = RES_SIDE.position.y + 34
-	var bcol = _branch_color(str(node.get("branch", "")))
-	draw_circle(Vector2(x + 8, y - 6), 8.0, bcol)
-	draw_string(font, Vector2(x + 24, y), str(node.get("name", "?")), HORIZONTAL_ALIGNMENT_LEFT, w - 24, 20, Color.GOLD)
-	y += 34
-	draw_multiline_string(font, Vector2(x, y), str(node.get("desc", "")), HORIZONTAL_ALIGNMENT_LEFT, w, 14, 3, Color(0.85, 0.8, 0.72))
-	y += 58
-	var afford = ctrl.can_afford_research(node)
-	draw_string(font, Vector2(x, y), "Cost:  %d c   ·   %d rp" % [int(node.get("cost_coins", 0)), int(node.get("cost_rp", 0))],
-			HORIZONTAL_ALIGNMENT_LEFT, w, 16, Color.GOLD if afford else Color(0.72, 0.6, 0.45))
-	y += 30
-	draw_multiline_string(font, Vector2(x, y), "Effect: " + _effect_summary(node), HORIZONTAL_ALIGNMENT_LEFT, w, 13, 2, Color(0.6, 0.85, 0.95))
-	y += 44
-	var reqs: Array = node.get("requires", [])
-	if reqs.is_empty():
-		draw_string(font, Vector2(x, y), "Requires: nothing", HORIZONTAL_ALIGNMENT_LEFT, w, 14, Color(0.7, 0.68, 0.6))
-	else:
-		draw_string(font, Vector2(x, y), "Requires:", HORIZONTAL_ALIGNMENT_LEFT, w, 14, Color(0.7, 0.68, 0.6))
-		y += 22
-		for r in reqs:
-			var rn = GameData.research_by_id(r)
-			var have = ctrl.has_research(r)
-			var rcol = Color.LIGHT_GREEN if have else Color(0.82, 0.5, 0.42)
-			draw_string(font, Vector2(x + 10, y), ("[x] " if have else "[ ] ") + str(rn.get("name", r)),
-					HORIZONTAL_ALIGNMENT_LEFT, w - 10, 13, rcol)
-			y += 20
-	var status = ""
-	var scol = Color(0.7, 0.65, 0.55)
-	match _node_state(node):
-		"owned":
-			status = "RESEARCHED"
-			scol = Color.LIGHT_GREEN
-		"afford":
-			status = "[E] Research now"
-			scol = Color.GOLD
-		"unafford":
-			status = "Need more coins / research"
-			scol = Color.ORANGE_RED
-		"locked":
-			status = "Locked — get the prerequisites"
-			scol = Color(0.72, 0.62, 0.5)
-	draw_string(font, Vector2(x, RES_SIDE.end.y - 22), status, HORIZONTAL_ALIGNMENT_LEFT, w, 16, scol)
-
-# Format a node's effect dict into a short human line for the sidebar.
-func _effect_summary(node: Dictionary) -> String:
-	var eff: Dictionary = node.get("effect", {})
-	var parts: PackedStringArray = []
-	for k in eff:
-		var v = eff[k]
-		match k:
-			"truck_capacity": parts.append("+%d truck capacity" % int(v))
-			"truck_trip_delta": parts.append("%ds market trip" % int(v))
-			"truck_price_mult": parts.append("+%d%% truck price" % int(round(float(v) * 100.0)))
-			"plow_durability": parts.append("+%d plow durability" % int(v))
-			"plow_radius": parts.append("wider plow")
-			"sprinkler_reach": parts.append("+1 sprinkler reach")
-			"grow_mult": parts.append("%d%% faster growth" % int(round((1.0 - float(v)) * 100.0)))
-			"bonus_yield": parts.append("+%d harvest yield" % int(v))
-			"auto_harvest": parts.append("auto-harvest")
-			"auto_seed": parts.append("auto-replant")
-			"auto_water": parts.append("auto-water crops")
-			"auto_fertilize": parts.append("auto-fertilize crops")
-			"auto_buy_seeds": parts.append("auto-buys seeds")
-			"auto_buy_fertilizer": parts.append("auto-buys fertilizer")
-			"auto_truck": parts.append("auto-ships the truck")
-			"auto_buy_plow": parts.append("auto-replaces the plow")
-			"auto_speed": parts.append("faster automation")
-			"unlock_crop": parts.append("unlock crop: %s" % str(v))
-			"golden_luck": parts.append("+%d%% golden odds" % int(round(float(v) * 100.0)))
-			"champ_rp_per": parts.append("research from championship runs")
-			"harvest_rp": parts.append("+%d research per harvest" % int(v))
-			"seed_discount": parts.append("-%d%% seed cost" % int(round(float(v) * 100.0)))
-			"water_capacity": parts.append("+%d watering-can charges" % int(v))
-			_: parts.append(str(k))
-	return ", ".join(parts)
-
-func _draw_check(c: Vector2, col: Color):
-	draw_line(c + Vector2(-6, 0), c + Vector2(-1, 6), col, 3.0)
-	draw_line(c + Vector2(-1, 6), c + Vector2(8, -7), col, 3.0)
-
-func _draw_lock(c: Vector2, col: Color):
-	draw_rect(Rect2(c.x - 6, c.y - 1, 12, 9), col)
-	draw_arc(c + Vector2(0, -1), 4.5, PI, TAU, 10, col, 2.0)
-
-func _branch_color(branch: String) -> Color:
-	match branch:
-		"logistics": return Color(0.85, 0.7, 0.4)
-		"tools": return Color(0.6, 0.7, 0.8)
-		"crops": return Color(0.5, 0.8, 0.4)
-		"growth": return Color(0.7, 0.55, 0.85)
-		"championship": return Color(0.9, 0.45, 0.45)
-		"capstone": return Color(0.97, 0.86, 0.45)
-		"automation": return Color(0.4, 0.8, 0.78)
-		"science": return Color(0.45, 0.65, 0.92)
-		"water": return Color(0.4, 0.78, 0.95)
-		"soil": return Color(0.66, 0.5, 0.32)
-	return Color(0.7, 0.7, 0.7)
-
-func _draw_knife_rows(font: Font, panel: Rect2):
-	var y = 200.0
-	var i = 0
+	var y := pnl.position.y + 70.0
+	var i := 0
 	var owned_list: Array = SaveDataManager.farm.get("owned_knives", [])
 	var equipped: String = SaveDataManager.farm.get("equipped_knife", "butter")
 	for k in GameData.knives():
 		i += 1
-		var owned = k["id"] in owned_list
-		var cost = int(k["cost"])
-		var need_xp = int(k.get("unlock_xp", 0))
-		var rank_locked = not owned and SaveDataManager.career_xp() < need_xp
-		var col = Color(0.95, 0.92, 0.85)
-		if rank_locked or (not owned and SaveDataManager.wallet() < cost):
-			col = Color(0.55, 0.5, 0.45)
-		# little blade icon
-		draw_colored_polygon(PackedVector2Array([
-			Vector2(panel.position.x + 40, y - 14), Vector2(panel.position.x + 58, y - 14),
-			Vector2(panel.position.x + 49, y + 4)
-		]), Color(k.get("color", "#d0d0d0")))
-		draw_string(font, Vector2(panel.position.x + 70, y), "[%d] %s" % [i, k["name"]], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, col)
-		draw_string(font, Vector2(panel.position.x + 70, y + 18), "score ×%.2f" % float(k["damage"]), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.7, 0.65, 0.55))
-		var status = ""
-		var scol = Color.GOLD
+		var row := Rect2(pnl.position.x + 20, y, pnl.size.x - 40, 58)
+		var owned: bool = k["id"] in owned_list
+		var cost := int(k["cost"])
+		var need_xp := int(k.get("unlock_xp", 0))
+		var rank_locked: bool = not owned and SaveDataManager.career_xp() < need_xp
+		var can := owned or (not rank_locked and SaveDataManager.wallet() >= cost)
+		var sel: bool = ctrl.shop_sel == i - 1
+		panel(self, row, Color(0.3, 0.22, 0.12, 0.95) if sel else Color(0.2, 0.14, 0.08, 0.9),
+				GOLD if sel else Color(0.85, 0.68, 0.3, 0.35))
+		regions.add(row, "knife:" + str(k["id"]), k["id"])
+		var col := INK if can else INK_MUTED
+		var bx := row.position.x + 30
+		draw_colored_polygon(PackedVector2Array([Vector2(bx - 9, y + 14), Vector2(bx + 9, y + 14),
+				Vector2(bx, y + 42)]), Color(str(k.get("color", "#d0d0d0"))))
+		draw_rect(Rect2(bx - 4, y + 6, 8, 9), Color(0.35, 0.22, 0.12))
+		draw_string(font, Vector2(row.position.x + 56, y + 26), "%d  %s" % [i, k["name"]], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, col)
+		draw_string(font, Vector2(row.position.x + 56, y + 46), "score ×%.2f" % float(k["damage"]), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, INK_DIM)
+		var status := ""
+		var scol := GOLD
 		if k["id"] == equipped:
 			status = "EQUIPPED"
-			scol = Color.LIGHT_GREEN
+			scol = GOOD
 		elif owned:
-			status = "owned — equip"
+			status = "owned · equip"
 		elif rank_locked:
-			status = "needs %d XP" % need_xp
-			scol = Color(0.7, 0.55, 0.5)
+			status = "needs %s Chef XP" % NumFmt.coins(need_xp)
+			scol = Color(0.8, 0.6, 0.5)
 		else:
-			status = "%d c" % cost
-			scol = col
-		var ss = font.get_string_size(status, HORIZONTAL_ALIGNMENT_CENTER, -1, 17)
-		draw_string(font, Vector2(panel.end.x - ss.x - 30, y), status, HORIZONTAL_ALIGNMENT_LEFT, -1, 17, scol)
-		y += 54.0
+			status = "%s c" % NumFmt.coins(cost)
+			scol = GOLD if can else INK_MUTED
+		var ss := font.get_string_size(status, HORIZONTAL_ALIGNMENT_LEFT, -1, 18)
+		draw_string(font, Vector2(row.end.x - ss.x - 16, y + 36), status, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, scol)
+		y += 62.0
+	var hint := "Click a knife or press 1-%d  ·  arrows + Enter  ·  Esc closes" % GameData.knives().size()
+	var hs := font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 15)
+	draw_string(font, Vector2(640 - hs.x / 2, pnl.end.y - 14), hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, INK_DIM)
 
-func _draw_tool_rows(font: Font, panel: Rect2):
-	var y = 196.0
-	var i = 0
-	for tl in GameData.tools():
-		i += 1
-		var id: String = tl["id"]
-		var cost = ctrl.plow_cost() if id == "plow" else int(tl.get("cost", 0))
-		var desc: String = tl.get("desc", "")
-		var status = "%d c" % cost
-		var scol = Color(0.95, 0.92, 0.85) if SaveDataManager.wallet() >= cost else Color(0.55, 0.5, 0.45)
-		var col = scol
-		match id:
-			"plow":
-				if ctrl.plow_uses() > 0:
-					status = "uses left: %d" % ctrl.plow_uses()
-					scol = Color.LIGHT_GREEN
-					col = Color(0.95, 0.92, 0.85)
-			"sprinkler":
-				desc += "  ·  placed: %d · stock: %d" % [ctrl.sprinklers_placed(), ctrl.sprinkler_stock()]
-				col = Color(0.95, 0.92, 0.85)
-		draw_circle(Vector2(panel.position.x + 48, y - 7), 10.0, Color(tl.get("color", "#888")))
-		draw_string(font, Vector2(panel.position.x + 70, y), "[%d] %s" % [i, tl["name"]], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, col)
-		draw_string(font, Vector2(panel.position.x + 70, y + 18), desc, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.7, 0.65, 0.55))
-		var ss = font.get_string_size(status, HORIZONTAL_ALIGNMENT_CENTER, -1, 17)
-		draw_string(font, Vector2(panel.end.x - ss.x - 30, y), status, HORIZONTAL_ALIGNMENT_LEFT, -1, 17, scol)
-		y += 48.0
-	# divider, then the fertilizers (multi-charge consumables)
-	draw_rect(Rect2(panel.position.x + 30, y - 24, panel.size.x - 60, 2), Color(0.85, 0.68, 0.3, 0.4))
-	for e in GameData.enhancers():
-		i += 1
-		var cost2 = int(e["cost"])
-		var have = SaveDataManager.item_count("items", e["id"])
-		var col2 = Color(0.95, 0.92, 0.85) if SaveDataManager.wallet() >= cost2 else Color(0.55, 0.5, 0.45)
-		draw_circle(Vector2(panel.position.x + 48, y - 7), 10.0, Color(e.get("color", "#888")))
-		draw_string(font, Vector2(panel.position.x + 70, y), "[%d] %s" % [i, e["name"]], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, col2)
-		var desc2 = e.get("desc", "")
-		if have > 0:
-			desc2 += "  ·  charges left: %d" % have
-		draw_string(font, Vector2(panel.position.x + 70, y + 18), desc2, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.7, 0.65, 0.55))
-		var ss2 = font.get_string_size("%d c" % cost2, HORIZONTAL_ALIGNMENT_CENTER, -1, 17)
-		draw_string(font, Vector2(panel.end.x - ss2.x - 30, y), "%d c" % cost2, HORIZONTAL_ALIGNMENT_LEFT, -1, 17, col2)
-		y += 48.0
+# ════════════════════════════════════════════ static drawing helpers
 
-func _draw_enhance_rows(font: Font, panel: Rect2):
-	var owned = ctrl.owned_enhancers()
-	if owned.is_empty():
-		var msg = "No fertilizer in your pockets — buy some at the tool shed"
-		var ms = font.get_string_size(msg, HORIZONTAL_ALIGNMENT_CENTER, -1, 17)
-		draw_string(font, Vector2(640 - ms.x / 2, 300), msg, HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color(0.7, 0.65, 0.55))
-		return
-	var y = 220.0
-	var i = 0
-	for e in owned:
-		i += 1
-		var n = SaveDataManager.item_count("items", e["id"])
-		draw_circle(Vector2(panel.position.x + 48, y - 7), 10.0, Color(e.get("color", "#888")))
-		draw_string(font, Vector2(panel.position.x + 70, y), "[%d] %s — %d charges" % [i, e["name"], n], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(0.95, 0.92, 0.85))
-		draw_string(font, Vector2(panel.position.x + 70, y + 18), e.get("desc", ""), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.7, 0.65, 0.55))
-		y += 54.0
+static func fit(font: Font, text: String, size: int, max_w: float) -> String:
+	if font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x <= max_w:
+		return text
+	var s := text
+	while s.length() > 1 and font.get_string_size(s + "…", HORIZONTAL_ALIGNMENT_LEFT, -1, size).x > max_w:
+		s = s.substr(0, s.length() - 1)
+	return s.strip_edges() + "…"
 
-# ── standing-order depots: schedule what the farm auto-restocks ──
+static func text_w(font: Font, text: String, size: int) -> float:
+	return font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
 
-# Shared header: a paused/active pill and the stock-target stepper.
-func _draw_order_header(font: Font, panel: Rect2, o: Dictionary, target_label: String):
-	var on: bool = bool(o.get("enabled", true))
-	var pill = "ACTIVE" if on else "PAUSED"
-	var pcol = Color.LIGHT_GREEN if on else Color(0.85, 0.5, 0.42)
-	draw_string(font, Vector2(panel.position.x + 40, 200), "Order: ", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color(0.8, 0.76, 0.66))
-	draw_string(font, Vector2(panel.position.x + 110, 200), pill, HORIZONTAL_ALIGNMENT_LEFT, -1, 18, pcol)
-	var st = "%s: keep %d in stock" % [target_label, int(o.get("stock_target", 0))]
-	var ss = font.get_string_size(st, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
-	draw_string(font, Vector2(panel.end.x - ss.x - 30, 200), st, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.85, 0.85, 0.6))
+static func style(bg: Color, border := Color(0.85, 0.68, 0.3, 0.6), radius := 10, bw := 2) -> StyleBoxFlat:
+	var key := "%s|%s|%d|%d" % [bg.to_html(), border.to_html(), radius, bw]
+	if _styles.has(key):
+		return _styles[key]
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = bg
+	sb.set_corner_radius_all(radius)
+	sb.border_color = border
+	sb.set_border_width_all(bw)
+	_styles[key] = sb
+	return sb
 
-func _draw_seed_order(font: Font, panel: Rect2):
-	var o = ctrl.seed_order()
-	_draw_order_header(font, panel, o, "Per crop")
-	var note = "Delivery premium applies. Ticked crops are restocked; none ticked = restock anything that needs replanting."
-	draw_multiline_string(font, Vector2(panel.position.x + 40, 230), note, HORIZONTAL_ALIGNMENT_LEFT, int(panel.size.x - 80), 13, 2, Color(0.7, 0.66, 0.56))
-	var crops: Array = o.get("crops", [])
-	var y = 282.0
-	var i = 0
-	for p in ctrl.plantable_potatoes():
-		i += 1
-		var on: bool = p["id"] in crops
-		var have = SaveDataManager.item_count("seeds", p["id"])
-		draw_circle(Vector2(panel.position.x + 48, y - 7), 10.0, Color(p.get("color", "#b87333")))
-		var box = Rect2(panel.position.x + 66, y - 16, 18, 18)
-		draw_rect(box, Color(0.2, 0.17, 0.12))
-		draw_rect(box, Color(0.6, 0.55, 0.45) if not on else Color.LIGHT_GREEN, false, 2.0)
-		if on:
-			_draw_check(box.get_center(), Color.LIGHT_GREEN)
-		draw_string(font, Vector2(panel.position.x + 96, y), "[%d] %s" % [i, p["name"]], HORIZONTAL_ALIGNMENT_LEFT, -1, 20,
-				Color(0.95, 0.92, 0.85) if on else Color(0.7, 0.66, 0.58))
-		var detail = "order pays %d c  ·  have %d" % [ctrl.seed_order_price(p["id"]), have]
-		var ds = font.get_string_size(detail, HORIZONTAL_ALIGNMENT_CENTER, -1, 15)
-		draw_string(font, Vector2(panel.end.x - ds.x - 30, y), detail, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.8, 0.7, 0.4))
-		y += 40.0
+static func panel(ci: CanvasItem, r: Rect2, bg := PANEL_BG, border := Color(0.85, 0.68, 0.3, 0.6), radius := 10):
+	style(bg, border, radius).draw(ci.get_canvas_item(), r)
 
-func _draw_fertilizer_order(font: Font, panel: Rect2):
-	var o = ctrl.fertilizer_order()
-	_draw_order_header(font, panel, o, "Charges")
-	var grade: String = str(o.get("grade", ""))
-	var note = "Delivery premium applies. The chosen grade is auto-applied to fresh crops; none chosen = cheapest bag."
-	draw_multiline_string(font, Vector2(panel.position.x + 40, 230), note, HORIZONTAL_ALIGNMENT_LEFT, int(panel.size.x - 80), 13, 2, Color(0.7, 0.66, 0.56))
-	var y = 286.0
-	var i = 0
-	for e in GameData.enhancers():
-		i += 1
-		var on: bool = e["id"] == grade
-		var have = SaveDataManager.item_count("items", e["id"])
-		draw_circle(Vector2(panel.position.x + 48, y - 7), 10.0, Color(e.get("color", "#888")))
-		var dot = Vector2(panel.position.x + 74, y - 7)
-		draw_arc(dot, 9.0, 0, TAU, 16, Color.GOLD if on else Color(0.6, 0.55, 0.45), 2.0)
-		if on:
-			draw_circle(dot, 4.5, Color.GOLD)
-		draw_string(font, Vector2(panel.position.x + 96, y), "[%d] %s" % [i, e["name"]], HORIZONTAL_ALIGNMENT_LEFT, -1, 20,
-				Color(0.95, 0.92, 0.85) if on else Color(0.7, 0.66, 0.58))
-		draw_string(font, Vector2(panel.position.x + 96, y + 18), e.get("desc", ""), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.7, 0.65, 0.55))
-		var price = int(ceil(int(e.get("cost", 0)) * ctrl.ORDER_SURCHARGE))
-		var detail = "order pays %d c  ·  have %d" % [price, have]
-		var ds = font.get_string_size(detail, HORIZONTAL_ALIGNMENT_CENTER, -1, 15)
-		draw_string(font, Vector2(panel.end.x - ds.x - 30, y), detail, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.8, 0.7, 0.4))
-		y += 48.0
+# A labelled button: a key cap on the left (when key != "") and the label.
+static func key_button(ci: CanvasItem, font: Font, r: Rect2, key: String, label: String, enabled := true,
+		hot := false):
+	var bg := Color(0.24, 0.16, 0.09, 0.95) if enabled else Color(0.16, 0.13, 0.11, 0.85)
+	if hot:
+		bg = Color(0.42, 0.3, 0.1, 0.97)
+	panel(ci, r, bg, GOLD if hot else Color(0.85, 0.68, 0.3, 0.7 if enabled else 0.25))
+	var col := INK if enabled else INK_MUTED
+	var x := r.position.x + 10.0
+	if key != "":
+		var kw := maxf(26.0, text_w(font, key, 14) + 12.0)
+		keycap(ci, font, Rect2(x, r.get_center().y - 13, kw, 26), key, enabled)
+		x += kw + 7.0
+	var lbl := fit(font, label, 15, r.end.x - x - 6)
+	ci.draw_string(font, Vector2(x, r.get_center().y + 6), lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, col)
 
-func _draw_footer(font: Font, panel: Rect2, text: String):
-	var fs = font.get_string_size(text, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
-	draw_string(font, Vector2(640 - fs.x / 2, panel.end.y - 24), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.75, 0.7, 0.62))
+static func keycap(ci: CanvasItem, font: Font, r: Rect2, key: String, enabled := true):
+	panel(ci, r, Color(0.92, 0.86, 0.72) if enabled else Color(0.5, 0.46, 0.4), Color(0.4, 0.3, 0.18), 5)
+	var w := text_w(font, key, 14)
+	ci.draw_string(font, Vector2(r.get_center().x - w / 2, r.get_center().y + 5), key, HORIZONTAL_ALIGNMENT_LEFT, -1, 14,
+			Color(0.22, 0.14, 0.06))
+
+# A plain text button (centred label) used by drawers and the note.
+static func text_button(ci: CanvasItem, font: Font, r: Rect2, label: String, size := 16, primary := false,
+		enabled := true, selected := false):
+	var bg := Color(0.24, 0.16, 0.09, 0.95)
+	if primary:
+		bg = Color(0.55, 0.38, 0.1, 0.98)
+	if not enabled:
+		bg = Color(0.17, 0.14, 0.12, 0.9)
+	var border := GOLD if (selected or primary) else Color(0.85, 0.68, 0.3, 0.55 if enabled else 0.2)
+	panel(ci, r, bg, border, 8)
+	if selected:
+		ci.draw_rect(r.grow(3), Color(1.0, 0.9, 0.5, 0.8), false, 2.0)
+	var lbl := fit(font, label, size, r.size.x - 12)
+	var w := text_w(font, lbl, size)
+	ci.draw_string(font, Vector2(r.get_center().x - w / 2, r.get_center().y + size * 0.36), lbl,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, size, INK if enabled else INK_MUTED)
+
+static func close_button(ci: CanvasItem, r: Rect2):
+	panel(ci, r, Color(0.3, 0.14, 0.1, 0.95), Color(0.85, 0.68, 0.3, 0.6), 8)
+	icon_cross(ci, r.get_center(), 9.0, INK)
+
+# One of the top-right icon buttons: sound, zoom, book, menu.
+static func icon_button(ci: CanvasItem, r: Rect2, id: String, c):
+	panel(ci, r, PANEL_BG)
+	var cc := r.get_center()
+	match id:
+		"sound":
+			icon_speaker(ci, cc, 13.0, not AudioManager.sound_enabled, INK)
+		"zoom":
+			icon_zoom(ci, cc, 14.0, c != null and c.is_overview(), INK)
+		"book":
+			icon_book(ci, cc, 14.0, INK)
+		"menu":
+			icon_menu(ci, cc, 13.0, INK)
+
+static func draw_wallet_panel(ci: CanvasItem, font: Font, r: Rect2, wallet: int, sub: String):
+	panel(ci, r, PANEL_BG)
+	icon_coin(ci, Vector2(r.position.x + 28, r.position.y + 27 if sub != "" else r.get_center().y), 14.0)
+	var ty := r.position.y + 37 if sub != "" else r.get_center().y + 9
+	ci.draw_string(font, Vector2(r.position.x + 52, ty), NumFmt.coins(wallet), HORIZONTAL_ALIGNMENT_LEFT, -1, 26, GOLD)
+	if sub != "":
+		ci.draw_string(font, Vector2(r.position.x + 12, r.end.y - 9), fit(font, sub, 13, r.size.x - 20),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, INK_DIM)
+
+# ── icons ──
+
+static func icon_coin(ci: CanvasItem, c: Vector2, r: float):
+	ci.draw_circle(c, r, Color(0.95, 0.78, 0.25))
+	ci.draw_arc(c, r, 0, TAU, 20, Color(0.7, 0.52, 0.1), maxf(1.5, r * 0.18))
+	ci.draw_arc(c, r * 0.58, 0, TAU, 16, Color(0.8, 0.62, 0.15), maxf(1.2, r * 0.13))
+
+static func star_points(c: Vector2, r: float, inner := 0.45) -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	for k in 10:
+		var a := -PI / 2.0 + k * PI / 5.0
+		var rr := r if k % 2 == 0 else r * inner
+		pts.append(c + Vector2(cos(a), sin(a)) * rr)
+	return pts
+
+static func icon_star(ci: CanvasItem, c: Vector2, r: float, col := Color(1.0, 0.82, 0.2), outline := true):
+	var pts := star_points(c, r)
+	ci.draw_colored_polygon(pts, col)
+	if outline:
+		var o := pts.duplicate()
+		o.append(pts[0])
+		ci.draw_polyline(o, col.darkened(0.45), maxf(1.0, r * 0.14), true)
+
+static func icon_droplet(ci: CanvasItem, c: Vector2, r: float, col := Color(0.45, 0.75, 0.98)):
+	ci.draw_circle(c + Vector2(0, r * 0.35), r * 0.75, col)
+	ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-r * 0.72, r * 0.2), c + Vector2(r * 0.72, r * 0.2),
+			c + Vector2(0, -r * 1.1)]), col)
+	ci.draw_circle(c + Vector2(-r * 0.25, r * 0.35), r * 0.2, Color(1, 1, 1, 0.6))
+
+static func icon_check(ci: CanvasItem, c: Vector2, s: float, col := GOOD, w := 3.0):
+	ci.draw_polyline(PackedVector2Array([c + Vector2(-s, 0), c + Vector2(-s * 0.3, s * 0.7), c + Vector2(s, -s * 0.75)]),
+			col, w, true)
+
+static func icon_cross(ci: CanvasItem, c: Vector2, s: float, col := INK, w := 3.0):
+	ci.draw_line(c + Vector2(-s, -s), c + Vector2(s, s), col, w, true)
+	ci.draw_line(c + Vector2(-s, s), c + Vector2(s, -s), col, w, true)
+
+# A solid triangle pointing along dir (an arrow head).
+static func icon_tri(ci: CanvasItem, c: Vector2, s: float, dir: Vector2, col := INK):
+	var d := dir.normalized()
+	var n := Vector2(-d.y, d.x)
+	ci.draw_colored_polygon(PackedVector2Array([c + d * s, c - d * s * 0.7 + n * s * 0.85, c - d * s * 0.7 - n * s * 0.85]), col)
+
+static func icon_speaker(ci: CanvasItem, c: Vector2, s: float, muted: bool, col := INK):
+	ci.draw_rect(Rect2(c.x - s, c.y - s * 0.38, s * 0.55, s * 0.76), col)
+	ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-s * 0.5, -s * 0.38), c + Vector2(s * 0.15, -s),
+			c + Vector2(s * 0.15, s), c + Vector2(-s * 0.5, s * 0.38)]), col)
+	if muted:
+		icon_cross(ci, c + Vector2(s * 0.72, 0), s * 0.32, Color(1.0, 0.5, 0.35), 2.5)
+	else:
+		ci.draw_arc(c + Vector2(s * 0.2, 0), s * 0.5, -0.9, 0.9, 8, col, 2.0)
+		ci.draw_arc(c + Vector2(s * 0.2, 0), s * 0.9, -0.9, 0.9, 10, col, 2.0)
+
+# Four corner brackets; arrows point out when the next press zooms out.
+static func icon_zoom(ci: CanvasItem, c: Vector2, s: float, overview: bool, col := INK):
+	var k := s * 0.45
+	for sx in [-1.0, 1.0]:
+		for sy in [-1.0, 1.0]:
+			var p := c + Vector2(sx * s, sy * s)
+			ci.draw_line(p, p - Vector2(sx * k, 0), col, 2.5)
+			ci.draw_line(p, p - Vector2(0, sy * k), col, 2.5)
+	if overview:
+		ci.draw_circle(c, s * 0.28, col)          # overview: a dot (press to zoom in)
+	else:
+		ci.draw_rect(Rect2(c.x - s * 0.42, c.y - s * 0.3, s * 0.84, s * 0.6), col, false, 2.0)
+
+static func icon_book(ci: CanvasItem, c: Vector2, s: float, col := INK):
+	var cover := Color(0.62, 0.3, 0.2)
+	ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-s, -s * 0.75), c + Vector2(0, -s * 0.55),
+			c + Vector2(0, s * 0.85), c + Vector2(-s, s * 0.65)]), cover)
+	ci.draw_colored_polygon(PackedVector2Array([c + Vector2(s, -s * 0.75), c + Vector2(0, -s * 0.55),
+			c + Vector2(0, s * 0.85), c + Vector2(s, s * 0.65)]), cover.lightened(0.12))
+	for k in 3:
+		var y := -s * 0.3 + k * s * 0.32
+		ci.draw_line(c + Vector2(-s * 0.78, y), c + Vector2(-s * 0.18, y + s * 0.1), col, 1.5)
+		ci.draw_line(c + Vector2(s * 0.18, y + s * 0.1), c + Vector2(s * 0.78, y), col, 1.5)
+	ci.draw_line(c + Vector2(0, -s * 0.55), c + Vector2(0, s * 0.85), col, 2.0)
+
+static func icon_menu(ci: CanvasItem, c: Vector2, s: float, col := INK):
+	for k in 3:
+		var y := c.y - s * 0.6 + k * s * 0.6
+		ci.draw_line(Vector2(c.x - s, y), Vector2(c.x + s, y), col, 3.0)
+
+static func icon_lock(ci: CanvasItem, c: Vector2, s: float, col := INK_DIM):
+	ci.draw_rect(Rect2(c.x - s * 0.6, c.y - s * 0.1, s * 1.2, s * 0.9), col)
+	ci.draw_arc(c + Vector2(0, -s * 0.1), s * 0.42, PI, TAU, 10, col, maxf(1.5, s * 0.22))
+
+static func icon_pin(ci: CanvasItem, c: Vector2, s: float, filled: bool, col := INK):
+	var head := c + Vector2(0, -s * 0.35)
+	if filled:
+		ci.draw_circle(head, s * 0.5, Color(0.92, 0.3, 0.25))
+	else:
+		ci.draw_arc(head, s * 0.5, 0, TAU, 14, col, 2.0)
+	ci.draw_line(head + Vector2(0, s * 0.5), c + Vector2(0, s), col, 2.0)
+
+static func icon_hut(ci: CanvasItem, c: Vector2, s: float, roof := Color(0.75, 0.3, 0.22), wall := Color(0.82, 0.68, 0.45)):
+	ci.draw_rect(Rect2(c.x - s * 0.75, c.y - s * 0.25, s * 1.5, s * 1.0), wall)
+	ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-s, -s * 0.2), c + Vector2(s, -s * 0.2),
+			c + Vector2(0, -s * 1.05)]), roof)
+	ci.draw_rect(Rect2(c.x - s * 0.22, c.y + s * 0.2, s * 0.44, s * 0.55), Color(0.35, 0.22, 0.12))
+
+static func icon_potato(ci: CanvasItem, c: Vector2, r: float, col: Color):
+	ci.draw_set_transform(c, -0.3, Vector2(1.0, 0.78))
+	ci.draw_circle(Vector2.ZERO, r, col)
+	ci.draw_arc(Vector2.ZERO, r, 0, TAU, 16, col.darkened(0.45), maxf(1.0, r * 0.16))
+	ci.draw_circle(Vector2(-r * 0.35, -r * 0.2), r * 0.13, col.darkened(0.3))
+	ci.draw_circle(Vector2(r * 0.3, r * 0.25), r * 0.11, col.darkened(0.3))
+	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+static func icon_moon(ci: CanvasItem, c: Vector2, r: float, bg: Color):
+	ci.draw_circle(c, r, Color(0.95, 0.92, 0.7))
+	ci.draw_circle(c + Vector2(r * 0.45, -r * 0.3), r * 0.85, bg)
+
+static func icon_wheat(ci: CanvasItem, c: Vector2, s: float, col := Color(0.92, 0.75, 0.3)):
+	ci.draw_line(c + Vector2(0, s), c + Vector2(0, -s), col.darkened(0.2), 2.0)
+	for k in 3:
+		var y := -s * 0.7 + k * s * 0.45
+		for sx in [-1.0, 1.0]:
+			ci.draw_set_transform(c + Vector2(sx * s * 0.28, y), sx * 0.6, Vector2(1.0, 0.5))
+			ci.draw_circle(Vector2.ZERO, s * 0.3, col)
+	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+static func icon_butterfly(ci: CanvasItem, c: Vector2, s: float, flap: float, col := Color(1.0, 0.78, 0.25)):
+	var w := 0.35 + 0.65 * absf(flap)
+	for sx in [-1.0, 1.0]:
+		ci.draw_set_transform(c + Vector2(sx * s * 0.5 * w, -s * 0.25), 0.0, Vector2(w, 1.0))
+		ci.draw_circle(Vector2.ZERO, s * 0.55, col)
+		ci.draw_set_transform(c + Vector2(sx * s * 0.4 * w, s * 0.35), 0.0, Vector2(w, 1.0))
+		ci.draw_circle(Vector2.ZERO, s * 0.36, col.darkened(0.15))
+	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	ci.draw_line(c + Vector2(0, -s * 0.55), c + Vector2(0, s * 0.6), Color(0.25, 0.15, 0.08), maxf(1.5, s * 0.16))
+	ci.draw_line(c + Vector2(0, -s * 0.55), c + Vector2(-s * 0.3, -s * 0.95), Color(0.25, 0.15, 0.08), 1.2)
+	ci.draw_line(c + Vector2(0, -s * 0.55), c + Vector2(s * 0.3, -s * 0.95), Color(0.25, 0.15, 0.08), 1.2)
+
+# "z z" drawn as two little zig-zags (no font glyph needed, scales freely).
+static func icon_zz(ci: CanvasItem, c: Vector2, s: float, col := Color(0.85, 0.9, 1.0)):
+	for k in 2:
+		var o := c + Vector2(k * s * 1.1, -k * s * 0.9)
+		var z := s * (1.0 - k * 0.25)
+		ci.draw_polyline(PackedVector2Array([o + Vector2(-z * 0.5, -z * 0.5), o + Vector2(z * 0.5, -z * 0.5),
+				o + Vector2(-z * 0.5, z * 0.5), o + Vector2(z * 0.5, z * 0.5)]), col, maxf(1.5, z * 0.22))
+
+# A horizontal progress bar with an optional ring of gold at the fill end.
+static func progress_bar(ci: CanvasItem, r: Rect2, frac: float, fill := Color(0.55, 0.85, 0.4)):
+	ci.draw_rect(r, Color(0.08, 0.06, 0.04, 0.9))
+	var f := clampf(frac, 0.0, 1.0)
+	if f > 0.0:
+		ci.draw_rect(Rect2(r.position, Vector2(r.size.x * f, r.size.y)), fill)
+	ci.draw_rect(r, Color(0.85, 0.68, 0.3, 0.6), false, 1.5)

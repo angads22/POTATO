@@ -391,7 +391,7 @@ func feel() -> void:
 # happening at every class check-in on day 1, purchase droughts, income still
 # rising late, and how much huts matter (ROI vs ROI with at most one hut).
 # assert_it asserts the first two (stable, cheap); the rest is evidence.
-func feel_plus(ndays := 14, assert_it := false) -> void:
+func feel_plus(ndays := 14, assert_it := false, with_huts := true) -> void:
 	section("FEEL+ (purchase rhythm, check-ins, droughts, late growth, huts)")
 	if main.has("active"):
 		var b = main["active"]
@@ -477,13 +477,15 @@ func feel_plus(ndays := 14, assert_it := false) -> void:
 		say("   %-7s longest purchase wait %s (%s); dry days in a row: %d to d14, %d overall; 4-day income below the previous 4 days at: %s; income d%d %s -> d%d %s" % [
 				p, dur(worst), at, run14, run_all, "none" if dips.is_empty() else " ".join(dips),
 				maxi(1, b.days - 6), coins(d1["coins"]), b.days, coins(d2["coins"])])
-	# huts: ROI vs the same buyer held to one hut
+	# huts: ROI vs the same buyer held to one hut (evidence, farm_sim --all only:
+	# three more 14-day runs would not fit the CI budget)
+	if not with_huts:
+		say("   (ROI vs ROI held to one hut: farm_sim --all)")
+		done()
+		return
 	var line := ""
 	for p in MAIN:
-		var g = main[p] if main.has(p) and main[p].days == ndays else null
-		if g == null:
-			g = bot(p)
-			g.run(ndays)
+		var g = roi_run(p, ndays)
 		var h = bot(p, "h1")
 		h.run(ndays)
 		line += "%s %s  " % [SHORT[p], pct(float(h.earned()) / maxf(1.0, g.earned()) - 1.0)]
@@ -660,13 +662,27 @@ const STRATS := [["s1", "S1 Hands-on"], ["s2", "S2 Spudling boss"], ["s3", "S3 L
 
 # SD3 tournament. full = the design's clauses over all five strategies (farm_sim
 # --all). CI (full = false, lead ruling 4): S5, the ROI buyer, is a generalist
-# by construction and is left out of the "within 5% everywhere" clause. The
-# "winners differ" clause is printed, not asserted, in CI: with the Farm Book
-# priced for each player's own schedule (ruling 2), the Book-reading S5 wins
-# (or ties S2, whose Spudling tilt is what the Book buys anyway) on every
-# profile, so the clause contradicts ruling 2 (see tests/farm/BALANCE.md).
-# CI also skips S4 (Soil-only scores 0-4%; it can never be within 5%) and
-# reuses the main ROI runs when their length matches, to stay in budget.
+# by construction and is left out of the "within 5% everywhere" clause; the
+# "winners differ on >= 2 profiles" clause is asserted over all five. CI runs
+# the three main profiles for 14 days (at 7 days the Spudling build has not
+# diverged yet: S2 is within 5% of S5 on every profile, see BALANCE.md), skips
+# S4 (Soil-only scores 0-4%; it can never be within 5%) and reuses the ROI runs
+# of the same length (main runs, roi14), to stay in budget. The margin of each
+# profile's winner over the runner-up is printed: winners within ~2% of each
+# other are a near-tie, and BALANCE.md says how fragile the clause is.
+var roi14: Dictionary = {}          # profile -> 14-day ROI FarmBot (shared by SD3, SD5, FEEL+)
+
+func roi_run(p: String, ndays: int) -> RefCounted:
+	if main.has(p) and main[p].days == ndays:
+		return main[p]
+	if ndays == 14 and roi14.has(p):
+		return roi14[p]
+	var b = bot(p)
+	b.run(ndays)
+	if ndays == 14:
+		roi14[p] = b
+	return b
+
 func sd3(profiles: Array, ndays: int, full := true) -> void:
 	section("SD3 tournament: 5 strategies x %d profiles x %d days (net coins earned, %% of best)" % [profiles.size(), ndays])
 	var score := {}
@@ -676,8 +692,10 @@ func sd3(profiles: Array, ndays: int, full := true) -> void:
 			if not full and s[0] == "s4":
 				score[s[0]][p] = 0.0
 				continue
-			var b = main[p] if s[0] == "roi" and main.has(p) and main[p].days == ndays else null
-			if b == null:
+			var b
+			if s[0] == "roi":
+				b = roi_run(p, ndays)
+			else:
 				b = bot(p, s[0])
 				b.run(ndays)
 			score[s[0]][p] = float(b.earned())
@@ -709,16 +727,22 @@ func sd3(profiles: Array, ndays: int, full := true) -> void:
 			close_all.append(s[1])
 		say(line)
 	var wset := {}
+	var margins: Array = []
 	for p in profiles:
 		wset[winner[p]] = true
+		var second := 0.0
+		for s in STRATS:
+			if s[0] != winner[p]:
+				second = maxf(second, score[s[0]][p])
+		margins.append("%s %s +%.1f%%" % [SHORT[p], winner[p], (best[p] / maxf(1.0, second) - 1.0) * 100.0])
 	var ok_a := close_all.is_empty()
 	var ok_b := wset.size() >= 2
 	say("SD3 no strategy%s within 5%% of best everywhere: %s %s · distinct winners %d (>=2): %s%s" % [
-			"" if full else " but S5", pf(ok_a), ", ".join(close_all), wset.size(), pf(ok_b) if full else ("info (" + pf(ok_b) + ")"),
+			"" if full else " but S5", pf(ok_a), ", ".join(close_all), wset.size(), pf(ok_b),
 			"" if full else "  [CI form, lead ruling 4]"])
+	say("    winner's margin over the runner-up: " + "  ".join(margins))
 	check(ok_a, "SD3", "within 5% of the best on every profile: " + ", ".join(close_all))
-	if full:
-		check(ok_b, "SD3", "one strategy wins every profile: " + str(winner))
+	check(ok_b, "SD3", "one strategy wins every profile: " + str(winner))
 	done()
 
 func sd5(profiles: Array, ndays: int) -> void:
@@ -726,10 +750,7 @@ func sd5(profiles: Array, ndays: int) -> void:
 	var n10 := 0
 	var line := ""
 	for p in profiles:
-		var g = main[p] if main.has(p) and main[p].days == ndays else null
-		if g == null:
-			g = bot(p)
-			g.run(ndays)
+		var g = roi_run(p, ndays)
 		var nv = bot(p, "roi", "naive")
 		nv.run(ndays)
 		var r: float = float(g.earned()) / maxf(1.0, nv.earned()) - 1.0
@@ -835,6 +856,7 @@ func invariants() -> void:
 	inv_shift_cap()
 	inv_nothing_lost()
 	inv_hut_safety()
+	inv_grace()
 	inv_no_deadlock()
 	inv_perf()
 	inv_determinism()
@@ -1048,6 +1070,68 @@ func inv_hut_safety() -> void:
 			cases, worst, worst_at, n_bad, worst_seeded, pf(ok)])
 	check(ok, "inv5 hut safety", "worst %+.3f at %s; %d below the star bound (%s)" % [worst, worst_at, n_bad, bad_at])
 
+# The grace (farm.json clock.your_crop_grace_s): a crop in the ground when you
+# left is left alone for min(grace, grow) after it ripens, then picked at full
+# value; a crop the Spudlings plant themselves has no grace. Red (14 m) hand-
+# planted at a class check-in is still yours at the next bell 15 m later.
+func inv_grace() -> void:
+	restore()
+	var grace: int = int(FE.cfg()["clock"].get("your_crop_grace_s", 0)) * SEC
+	var bad: Array = []
+	for c in ["red", "russet", "fingerling"]:
+		var g: int = FE.crop_info(c)["grow_ms"]
+		var f := FE.new_farm()
+		f["wallet"] = 100000000
+		f["page"] = 6
+		f["fields"][0]["hut"] = true
+		f["fields"][0]["hut_k"] = 0
+		f["up"]["huts"] = 1
+		f["up"]["house"] = 3
+		f["up"]["quick"] = 2
+		FE.normalize(f)
+		FE.start(f, T0 - MIN, 0)
+		FE.set_plan(f, 0, c)
+		FE.tend(f, 0, T0, 0)                       # hand-planted at T0, last input T0
+		var walk := int(FE.cfg()["quick"]["walk_s"][2]) * SEC
+		var pick := maxi(T0 + g + mini(grace, g), T0 + 120 * SEC) + walk
+		var a := rt(f)
+		FE.settle(a, pick - SEC, 0)
+		if int(a["stats"]["spud_picks"]) != 0:
+			bad.append("%s picked before %s" % [c, dur(pick - T0)])
+		var b := rt(f)
+		FE.settle(b, pick, 0)
+		if int(b["stats"]["spud_picks"]) != 1:
+			bad.append("%s not picked at %s (%d picks)" % [c, dur(pick - T0), int(b["stats"]["spud_picks"])])
+		# the Spudlings' own replant has no grace: next pick one cycle later
+		if pick + g + walk <= T0 + 120 * SEC + 12 * HOUR:
+			var d := rt(f)
+			FE.settle(d, pick + g + walk, 0)
+			if int(d["stats"]["spud_picks"]) < 2:
+				bad.append("%s replant waited a grace" % c)
+	# class: Red planted at a check-in is there for the next bell
+	var cf := FE.new_farm()
+	cf["wallet"] = 100000
+	cf["page"] = 6
+	cf["fields"][0]["hut"] = true
+	cf["fields"][0]["hut_k"] = 0
+	cf["up"]["huts"] = 1
+	cf["up"]["quick"] = 2
+	FE.normalize(cf)
+	FE.start(cf, T0 - MIN, 0)
+	FE.set_plan(cf, 0, "red")
+	FE.tend(cf, 0, T0, 0)
+	FE.note_input(cf, T0 + 59 * SEC, 0)
+	FE.settle(cf, T0 + 15 * MIN, 0)
+	var v: Dictionary = FE.field_view(cf, 0, T0 + 15 * MIN)
+	if not (v["ripe"] and v["by"] == "you"):
+		bad.append("class Red gone at the next bell")
+	var ok := bad.is_empty()
+	say("   5b grace %s: a crop in the ground when you left waits min(grace, grow) past ripe (Red, Russet, Fingerling); the Spudlings' own replant does not; class Red still yours at the next bell  %s" % [
+			dur(grace), pf(ok)])
+	for x in bad:
+		say("     " + x)
+	check(ok, "inv grace", "; ".join(bad))
+
 func inv_no_deadlock() -> void:
 	var f := FE.new_farm()
 	f["wallet"] = 0
@@ -1163,7 +1247,10 @@ func bankroll(days_map: Dictionary) -> void:
 		var line: String = "   %-7s" % p
 		for k in range(1, 7):
 			if eb[k].size() < BANK_STARTS or ek[k].size() < BANK_STARTS:
-				line += "  p%d -" % k
+				line += "  p%d -!" % k
+				ok = false
+				fail("bankroll %s page %d" % [p, k], "not reached within %d days (base %d/%d, 10K %d/%d starts)" % [
+						nd, eb[k].size(), BANK_STARTS, ek[k].size(), BANK_STARTS])
 				continue
 			var mb := _median(eb[k])
 			var mk := _median(ek[k])
@@ -1242,6 +1329,9 @@ func veteran(ndays: int) -> void:
 # Exactly what FarmBalanceTest runs (design §10.5): 14 days class/casual, 10
 # sessions active, the cheap SD checks plus a reduced SD3 tournament.
 const CI_DAYS := {"active": 10, "class": 14, "casual": 14}
+# Bankroll runs only need every Catalog page to land (active page 6 at ~24
+# played hours = day 7; class and casual by day 5).
+const BANK_DAYS := {"active": 8, "class": 7, "casual": 7}
 
 static func run_ci_set(s) -> void:
 	s.run_main(CI_DAYS)
@@ -1249,11 +1339,11 @@ static func run_ci_set(s) -> void:
 	s.feel()
 	s.sd_fixtures(ALL4)
 	s.sd4(ALL4)
-	s.sd3(ALL4, 14, false)
-	s.feel_plus(14, true)
+	s.sd3(MAIN, 14, false)
+	s.feel_plus(14, true, false)
 	s.sd8()
 	s.invariants()
-	s.bankroll(CI_DAYS)
+	s.bankroll(BANK_DAYS)
 	s.veteran(14)
 	s.magnitudes(60)
 
