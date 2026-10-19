@@ -215,7 +215,7 @@ so the kitchen, the menu and an idle open window all count as "away". Both maps 
 every 0.5 s; gates link them. `scripts/visuals/` holds the procedural backdrops/FX.
 
 **Spudling Acres, the farm** (`FarmController`, `FarmHud`, `FarmBook`, `FarmField`, `FarmCritters`,
-`FarmBackground`), is a cozy incremental optimization game. Six fenced fields of 12 plots plus a late
+`FarmBackground`), is a cozy incremental optimization game. Six fenced fields of plots plus a late
 Greenhouse (index 6) are bought with deeds. One verb, **Tend**, works on a whole field: harvest the
 ripe crop and replant the field's **plan** (set free in its field card, which shows each crop's
 "ready at" time), or plant an empty one; a short wallet plants free Russet. Coins pay at harvest
@@ -230,18 +230,19 @@ Catalog** (pages gated on plots *shipped*, so kitchen coins can't skip it). Ever
 "+X/min here · +Y/min away" and a payback for *your* logged schedule (`absences`/`presence`); there
 is no auto-buyer — [Pin] sets the Next Goal and Q buys it. More levers: **fence sprinklers** (a
 socket on each shared fence waters both neighbours; moving is free), the **Greenhouse**,
-Copper/Iron/Gold **Hoes**, infinite **Soil**, per-crop **Prize Strains** (ribbons on the farmhouse)
+Copper/Iron/Gold **Hoes**, **Soil** levels, per-crop **Prize Strains** (ribbons on the farmhouse)
 and the daily **Market Favorite** (a date hash; the bonus locks at planting). **Butterflies** visit
 while you're here; a welcome one follows Collect after a long absence. **Pip's note** reports an
-absence and **[Collect]** hand-tends every ripe field, so a check-in is note → Collect → butterfly →
-one decision. Nothing runs while the game is closed: the next `settle()` computes the absence in
-closed form (**offline settle**). **Cross-mode:** the wallet is shared; kitchen, Concert and SPUD
-BLASTER runs also pay a capped **Farm Picnic** (`SaveDataManager.award_picnic`); Strains raise the
-kitchen's golden odds (`kitchen_golden_bonus`); santoku/chef/cleaver have Chef-XP gates
-(`knives.json` `unlock_xp`); the menu's Farm row shows a `FarmEconomy.preview()` teaser. The
-**town** (`TownController`) holds the knife stand, the championship kitchen, the Concert Hall
-bandstand and two farm storefronts (seed stall → Book Catalog tab, tool shed → Tools tab; they sell
-nothing extra). It is the home for future non-farming content.
+absence and **[Collect]** hand-tends every ripe or empty field (no hoe needed), so a check-in is
+note → Collect → butterfly → one decision. Nothing ticks while the game is closed: the next
+`settle()` computes the absence in closed form (**offline settle**). **Cross-mode:** the wallet is
+shared; kitchen, Concert and SPUD BLASTER runs also pay a capped **Farm Picnic**
+(`SaveDataManager.award_picnic`); Strains raise the kitchen's golden odds (`kitchen_golden_bonus`);
+santoku/chef/cleaver now join the top knives behind Chef-XP gates (`knives.json` `unlock_xp`); the
+menu's Farm row shows a `FarmEconomy.preview()` teaser. The **town** (`TownController`) holds the
+knife stand, the championship kitchen, the Concert Hall bandstand and two farm storefronts (seed
+stall → Book Catalog tab, tool shed → Tools tab; they sell nothing extra). It is the home for future
+non-farming content.
 
 **Farm code.** `scripts/farm/FarmEconomy.gd` is the entire economy: static and **pure** over
 `(farm: Dictionary, now_ms: int, tz_s: int)` — no `Time`, nodes, audio, saving or global RNG (its

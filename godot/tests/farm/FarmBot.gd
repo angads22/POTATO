@@ -199,9 +199,12 @@ func _apply_fixture() -> void:
 			farm["fields"][i]["hut_k"] = n
 			n += 1
 		farm["up"]["huts"] = n
-	for key in ["share", "quick", "house", "tool", "soil"]:
+	for key in ["share", "quick", "house", "tool"]:
 		if fx.has(key):
 			farm["up"][key] = int(fx[key])
+	if fx.has("soil"):
+		for i in 7:
+			farm["fields"][i]["soil"] = int(fx["soil"])
 	if fx.has("sprinklers"):
 		farm["sprinklers"] = fx["sprinklers"].duplicate()
 		farm["up"]["sprinklers"] = fx["sprinklers"].size()
@@ -458,7 +461,7 @@ func _avail(i: int) -> float:
 	var f: Dictionary = farm["fields"][i]
 	var v := float(farm["wallet"])
 	if f["crop"] != "":
-		var soil := pow(float(FE.cfg()["soil"]["mult"]), int(farm["up"]["soil"]))
+		var soil := pow(float(FE.cfg()["soil"]["mult"]), int(f["soil"]))
 		v += 12.0 * float(FE.crop_info(f["crop"])["sell"]) * soil
 	return v
 
@@ -681,12 +684,16 @@ func _weight(r: Dictionary) -> float:
 				return bias
 	return 1.0
 
-# The Farm Book decision: best (weighted) payback for the bot's own schedule
-# if affordable, else an affordable row within 2x of the best payback. When
-# that buys nothing, a zero-gain row (the Copper Hoe: Tend All, no rate
-# change) is a convenience buy once it costs <= 10 minutes of income. Returns
-# {} when nothing to buy; then remembers the wallet at which the decision
-# could change.
+# The Farm Book decision (phase B2): the row with the lowest wait + payback for
+# the bot's own schedule, where wait = (cost - wallet) / its 24 h income rate
+# (0 when affordable) and payback is weighted by the strategy (S1-S3). Buy it
+# if affordable, else save for it. The design's §6.1 rule (best payback,
+# else any affordable row within 2x of it) never saved for a big row once
+# Soil came in small per-field steps: some Soil row was always affordable and
+# within 2x, so the 6th field never got bought. When nothing has a gain, a
+# zero-gain row (the Copper Hoe: Tend All, no rate change) is a convenience
+# buy once it costs <= 10 minutes of income. Returns {} when nothing to buy;
+# then remembers the wallet at which the decision could change.
 func choose_row(rows: Array) -> Dictionary:
 	var pick := _choose_roi(rows)
 	if not pick.is_empty() or strategy == "s4":
@@ -704,40 +711,25 @@ func choose_row(rows: Array) -> Dictionary:
 
 func _choose_roi(rows: Array) -> Dictionary:
 	var wallet := int(farm["wallet"])
+	var inc := FE.income_rate(farm, int(farm["clock"]["last_settle_ms"]))
 	var best: Dictionary = {}
-	var best_p := INF
-	var cands: Array = []
-	var conv_wallet := 1 << 62
+	var best_s := INF
 	for r in rows:
-		if r["locked"] or not _allowed(r):
+		if r["locked"] or not _allowed(r) or float(r["payback_s"]) <= 0.0:
 			continue
-		if float(r["payback_s"]) <= 0.0:
-			continue
-		var p := float(r["payback_s"]) * _weight(r)
-		cands.append([p, r])
-		if p < best_p:
-			best_p = p
+		var wait := 0.0
+		if int(r["cost"]) > wallet:
+			wait = float(int(r["cost"]) - wallet) / inc if inc > 1e-9 else INF
+		var sc := wait + float(r["payback_s"]) * _weight(r)
+		if sc < best_s:
+			best_s = sc
 			best = r
 	if best.is_empty():
-		_next_wallet = conv_wallet
+		_next_wallet = 1 << 62
 		return {}
 	if int(best["cost"]) <= wallet:
 		return best
-	var alt: Dictionary = {}
-	var alt_p := INF
-	var thresh := int(best["cost"])
-	for pr in cands:
-		if pr[0] > 2.0 * best_p:
-			continue
-		if int(pr[1]["cost"]) <= wallet:
-			if pr[0] < alt_p:
-				alt_p = pr[0]
-				alt = pr[1]
-		else:
-			thresh = mini(thresh, int(pr[1]["cost"]))
-	if not alt.is_empty():
-		return alt
-	_next_wallet = mini(thresh, conv_wallet)
+	_next_wallet = int(best["cost"])
 	return {}
 
 # Day-1 class metric (§6.2): at the check-in's Farm Book read, is something
@@ -790,9 +782,19 @@ func _snapshot(day: int, t: int, pre_wallet: int) -> void:
 		yday = mx["cur"].duplicate(true)
 	snaps.append({"day": day, "t": t, "pre_wallet": pre_wallet, "wallet": int(farm["wallet"]), "mix_prev": yday,
 			"lifetime": int(st["lifetime_coins"]), "hand": int(st["hand_coins"]), "spud": int(st["spud_coins"]),
-			"penny": int(st["penny_coins"]), "soil": int(farm["up"]["soil"]), "fields": owned,
+			"penny": int(st["penny_coins"]), "soil": soil_level(), "fields": owned,
 			"huts": int(farm["up"]["huts"]), "page": int(farm["page"]), "tool": int(farm["up"]["tool"]),
 			"buy_spent": buy_spent, "seed_spent": seed_spent})
+
+# Mean Soil level over the owned fields (Soil is per field), rounded.
+func soil_level() -> int:
+	var n := 0
+	var tot := 0
+	for f in farm["fields"]:
+		if f["owned"]:
+			n += 1
+			tot += int(f["soil"])
+	return int(round(float(tot) / maxf(1.0, n)))
 
 # Snapshot at the first arrival of `day` (1-based), {} if the run ended earlier.
 func snap(day: int) -> Dictionary:
@@ -839,7 +841,7 @@ func summary() -> Dictionary:
 	var last := day_income(days)
 	return {"profile": profile, "strategy": strategy, "planting": planting, "days": days,
 			"earned": earned(), "wallet": int(farm["wallet"]), "lifetime": int(farm["stats"]["lifetime_coins"]),
-			"income_last_day": last["coins"], "hand_share": last["hand"], "soil": int(farm["up"]["soil"]),
+			"income_last_day": last["coins"], "hand_share": last["hand"], "soil": soil_level(),
 			"page": int(farm["page"]), "purchases": purchases.size(), "violations": violations.size(),
 			"book_calls": book_calls}
 

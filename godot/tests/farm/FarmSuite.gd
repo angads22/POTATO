@@ -436,6 +436,7 @@ func feel_plus(ndays := 14, assert_it := false, with_huts := true) -> void:
 				" ".join(idle)])
 		if assert_it:
 			check(busy == n, "feel+ class d1 check-ins", "nothing at " + " ".join(idle))
+	cadence(assert_it)
 	for p in MAIN:
 		if not main.has(p):
 			continue
@@ -492,6 +493,102 @@ func feel_plus(ndays := 14, assert_it := false, with_huts := true) -> void:
 	say("   ROI buyer held to 1 hut vs ROI, %d days from a fresh start: %s(late-game hut value per field: SD4 'all' row)" % [ndays, line])
 	done()
 
+# Purchase cadence after day 2 (phase B2 critic: "the 'always something to
+# buy' loop is gone by day 3"), per profile, on the main runs:
+#   class   share of check-ins with a purchase, days 3..7 (want >= 1 in 7)
+#   casual  days 1..14 with at least one purchase (want every day)
+#   active  hours of sessions 1..5 with a purchase after the arrival minute
+#           (want every hour)
+# plus, for every profile, the share of check-ins / sessions from day 8 with a
+# hand harvest or a purchase. Returns {profile: {ok, text}}.
+func cadence(assert_it := false) -> Dictionary:
+	var out := {}
+	if main.has("class"):
+		var b = main["class"]
+		var n := 0
+		var bought := 0
+		var per_day := {}
+		for k in b.wins.size():
+			var d: int = int(b.wins[k][2])
+			if d < 3 or d > mini(7, b.days):
+				continue
+			n += 1
+			var any := false
+			for p in b.purchases:
+				if int(p["wi"]) == k:
+					any = true
+					break
+			if any:
+				bought += 1
+				per_day[d] = int(per_day.get(d, 0)) + 1
+		var fr := float(bought) / maxf(1.0, n)
+		var ok := fr >= 1.0 / 7.0
+		out["class"] = {"ok": ok, "text": "class d3-d7: %d/%d check-ins with a purchase (%d%%, want >= 14%%) per day %s" % [
+				bought, n, int(round(fr * 100)), str(per_day)]}
+	if main.has("casual"):
+		var b = main["casual"]
+		var dry: Array = []
+		for d in range(1, mini(14, b.days) + 1):
+			var any := false
+			for p in b.purchases:
+				if b.day_of(int(p["t"])) == d:
+					any = true
+					break
+			if not any:
+				dry.append("d%d" % d)
+		out["casual"] = {"ok": dry.is_empty(), "text": "casual d1-d%d: days without a purchase: %s" % [mini(14, b.days),
+				"none" if dry.is_empty() else " ".join(dry)]}
+	if main.has("active"):
+		var b = main["active"]
+		var miss: Array = []
+		var hours := 0
+		for k in mini(5, b.wins.size()):
+			var a: int = b.wins[k][0]
+			var e: int = b.wins[k][1]
+			var h := a
+			while h < e:
+				hours += 1
+				var any := false
+				for p in b.purchases:
+					if int(p["t"]) > maxi(h, a + 60000) and int(p["t"]) <= mini(e, h + HOUR):
+						any = true
+						break
+				if not any:
+					miss.append("s%d h%d" % [k + 1, (h - a) / HOUR + 1])
+				h += HOUR
+		out["active"] = {"ok": miss.is_empty(), "text": "active sessions 1-5: %d/%d hours with an in-session purchase%s" % [
+				hours - miss.size(), hours, "" if miss.is_empty() else " (none in " + " ".join(miss) + ")"]}
+	for p in out:
+		say("   cadence %s  %s" % [out[p]["text"], pf(out[p]["ok"])])
+		if assert_it:
+			check(out[p]["ok"], "cadence " + p, out[p]["text"])
+	# from day 8: visits with a hand harvest or a purchase (info)
+	var line := ""
+	for p in MAIN:
+		if not main.has(p):
+			continue
+		var b = main[p]
+		var n := 0
+		var busy := 0
+		for a in b.arrivals:
+			var d: int = int(b.wins[int(a["wi"])][2])
+			if d < 8:
+				continue
+			n += 1
+			var any: bool = int(a["hand"]) > 0
+			if not any:
+				for q in b.purchases:
+					if int(q["wi"]) == int(a["wi"]):
+						any = true
+						break
+			if any:
+				busy += 1
+		if n > 0:
+			line += "%s %d/%d (%d%%)  " % [SHORT[p], busy, n, int(round(100.0 * busy / n))]
+	if line != "":
+		say("   visits from d8 with a hand harvest or a purchase on arrival: " + line + "(info)")
+	return out
+
 # Time to every upgrade (the user's "time to upgrades" evidence): when each
 # profile's ROI player first owns each purchase, from the main runs.
 # Rows: Field 2-6 and the Greenhouse, huts 1-7, farmhouse, share, Quick
@@ -503,13 +600,13 @@ func upgrade_times() -> void:
 			"house": ["Cottage 4h", "House 8h", "Manor 12h"], "share": ["Share 60%", "Share 70%"],
 			"quick": ["Quick 30s", "Quick 15s"], "tool": ["Copper Hoe", "Iron Hoe", "Gold Hoe"],
 			"sprinkler": ["Sprinkler 1", "Sprinkler 2", "Sprinkler 3"]}
-	var soil_marks := [1, 10, 20, 30, 40, 45, 50]
+	var soil_marks := [1, 10, 50, 100, 200, 300, 400]      # Soil is per field: count of Soil buys
 	var order: Array = []
 	for it in ["deed", "greenhouse", "hut", "house", "share", "quick", "tool", "sprinkler"]:
 		for l in labels[it]:
 			order.append(l)
 	for m in soil_marks:
-		order.append("Soil L%d" % m)
+		order.append("Soil buy #%d" % m)
 	for k in [1, 4, 8, 12]:
 		order.append("Strain tiers %d" % k)
 	var at := {}
@@ -528,7 +625,7 @@ func upgrade_times() -> void:
 			if labels.has(it) and k < labels[it].size():
 				lab = labels[it][k]
 			elif it == "soil" and (k + 1) in soil_marks:
-				lab = "Soil L%d" % (k + 1)
+				lab = "Soil buy #%d" % (k + 1)
 			elif it == "strain":
 				strains += 1
 				if strains in [1, 4, 8, 12]:
@@ -947,8 +1044,9 @@ func _mid_farm(tz: int, t_plant: int, house: int) -> Dictionary:
 	f["up"]["house"] = house
 	f["up"]["share"] = 1
 	f["up"]["quick"] = 1
-	f["up"]["soil"] = 7
 	f["up"]["tool"] = 2
+	for i in 7:
+		f["fields"][i]["soil"] = 7
 	f["up"]["strains"] = {"red": 2, "yukon_gold": 1}
 	f["sprinklers"] = ["2-5"]
 	f["up"]["sprinklers"] = 1
@@ -1233,7 +1331,8 @@ func inv_perf() -> void:
 	for i in 7:
 		f["fields"][i]["hut"] = true
 	f["up"]["quick"] = 2
-	f["up"]["soil"] = 40
+	for i in 7:
+		f["fields"][i]["soil"] = 40
 	FE.normalize(f)
 	FE.note_input(f, T0 + MIN, 0)
 	var times: Array = []
@@ -1372,7 +1471,7 @@ func magnitudes(ndays: int) -> void:
 	var inc: Dictionary = b.day_income(ndays)
 	var ok := bad.is_empty() and int(f["wallet"]) < 1000000000000000
 	say("   wallet %s · lifetime %s · last-day income %s · soil L%d · strains %s · farm_power %s/min  %s" % [
-			coins(f["wallet"]), coins(f["stats"]["lifetime_coins"]), coins(inc["coins"]), f["up"]["soil"],
+			coins(f["wallet"]), coins(f["stats"]["lifetime_coins"]), coins(inc["coins"]), b.soil_level(),
 			str(f["up"]["strains"]), coins(int(nums["farm_power"] * 60)), pf(ok)])
 	for x in bad.slice(0, 5):
 		say("     " + x)

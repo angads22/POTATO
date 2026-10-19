@@ -103,7 +103,7 @@ func _draw_goal(font: Font, _f: Dictionary, _now: int, clickable := true):
 	var tag := "NEXT"
 	match kind:
 		"tutorial":
-			tag = "GOAL %d/6" % int(g["step"])
+			tag = "GOAL %d/%d" % [int(g["step"]), FarmEconomy.cfg()["tutorial"].size()]
 		"pinned":
 			tag = "PINNED"
 		"done":
@@ -177,6 +177,8 @@ func _eta_text(g: Dictionary) -> String:
 	var n := int(g.get("checkins", 0))
 	if n > 1:
 		s += " · ≈ %d check-ins" % n
+	if str(g["kind"]) == "page" and str(g.get("hint", "")) != "":
+		s += " · " + str(g["hint"])          # "13 affordable in the Farm Book (B)"
 	return s
 
 # ── chips: Market Favorite (today + tomorrow), active Bumper ──

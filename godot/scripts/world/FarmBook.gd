@@ -697,7 +697,7 @@ func _draw_stats(ci: CanvasItem, font: Font, f: Dictionary, now: int):
 		["Lucky Pennies", "%s c" % NumFmt.coins(penny)],
 		["Butterflies · stars", "%d · %s" % [int(st.get("butterflies", 0)), NumFmt.coins(int(st.get("stars", 0)))]],
 		["Farmhouse", "%s · %s shifts" % [FarmView.house_name(FarmView.house_tier(f)), NumFmt.dur(FarmView.shift_s(f))]],
-		["Soil · hoe", "L%d · %s" % [int(f["up"]["soil"]), ctrl._tool_name(int(f["up"]["tool"]))]],
+		["Soil · hoe", "%s · %s" % [_soil_range(f), ctrl._tool_name(int(f["up"]["tool"]))]],
 		["Here (7 days)", "%s · typical absence %s" % [FarmView.here_text(f, now), NumFmt.dur(FarmEconomy.typical_absence_s(f, now))]],
 	]
 	for ln in lines:
@@ -735,6 +735,18 @@ func _draw_stats(ci: CanvasItem, font: Font, f: Dictionary, now: int):
 		if col == 2:
 			col = 0
 			y += 19.0
+
+# Soil is per field: "L12" when every owned field has it, else "L9-L14".
+static func _soil_range(f: Dictionary) -> String:
+	var lo := -1
+	var hi := 0
+	for fd in f["fields"]:
+		if fd["owned"]:
+			var lv := int(fd.get("soil", 0))
+			lo = lv if lo < 0 else mini(lo, lv)
+			hi = maxi(hi, lv)
+	lo = maxi(0, lo)
+	return "L%d" % hi if lo == hi else "L%d-L%d" % [lo, hi]
 
 static func _ribbon(ci: CanvasItem, c: Vector2, col: Color):
 	ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-4, 2), c + Vector2(-1, 2), c + Vector2(-5, 12)]), col.darkened(0.2))

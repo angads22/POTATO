@@ -55,7 +55,7 @@
 	                "odds": {"bumper": 0.4, "sunshower": 0.3, "penny": 0.3},
 	                "welcome_odds": {"sunshower": 0.5, "penny": 0.5},
 	                "welcome_delay_s": [3, 8],
-	                "bumper_s": 30, "sunshower_s": 120, "penny_s": 120, "penny_min": 25},
+	                "bumper_s": 30, "bumper_fresh_s": 120, "sunshower_s": 120, "penny_s": 120, "penny_min": 25},
 
 	"catalog": [
 		{"page": 1, "needs": {"russet": 120},                       "unlocks": "yukon_gold",  "also": ["sprinklers"],
@@ -78,12 +78,16 @@
 		{"id": "hut",     "label": "Hire Pip",                      "hint": "Spudlings work while you're away", "done": {"huts": 1},   "buy": "hut"},
 		{"id": "deed",    "label": "Buy a second field",            "hint": "More land, more spuds",            "done": {"fields": 2}, "buy": "deed"},
 		{"id": "copper",  "label": "Buy the Copper Hoe",            "hint": "Tend All with T",                  "done": {"tool": 1},   "buy": "tool"},
-		{"id": "page1",   "label": "Ship 120 Russet: Yukon page",   "hint": "Catalog pages unlock new crops",   "done": {"page": 1}}
+		{"id": "page1",   "label": "Ship 120 Russet: Yukon page",   "hint": "Catalog pages unlock new crops",   "done": {"page": 1}},
+		{"id": "plan",    "label": "Plant Yukon Gold",              "hint": "Click a field (or F on it) and pick Yukon Gold in its plan list", "done": {"grown:yukon_gold": 1}}
 	],
+	"tutorial_skip_page": 2,
+	"goal_payback_x": 3.0,
 
 	"log": {"absences_max": 64, "presence_days": 7, "min_absences": 3, "typical_default_s": 10800, "f_here_default": 0.10,
-	        "default_schedule": [[10800, 4], [43200, 1]], "min_history_s": 72000, "assumed_night_s": 43200, "cluster_tol": 0.03, "max_clusters": 8},
-	"picnic": {"max_min": 15, "factor": 0.5},
+	        "default_schedule": [[10800, 4], [43200, 1]], "min_history_s": 72000, "assumed_night_s": 43200, "cluster_tol": 0.03, "max_clusters": 8,
+	        "break_s": 172800},
+	"picnic": {"max_min": 15, "factor": 0.5, "day_max_min": 30},
 	"kitchen": {"golden_per_ribbon": 0.004, "golden_cap": 0.10},
 	"start": {"wallet_if_new": 50, "plan": "russet", "zoom": 0.45},
 	"wallet_cap": 1000000000000000

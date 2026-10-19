@@ -509,23 +509,14 @@ func _pay_welcome():
 		welcome_owed = false
 		_schedule_welcome()
 
-# Stopgap until FarmEconomy grows a hook for it (FarmEconomy.gd is
-# tuner-owned): set the same three buffs keys FarmEconomy.collect sets for a
-# welcome butterfly. schedule_butterfly() picks the field from farm.rng (the
-# save stays deterministic) and the 3-8 s delay (butterflies.welcome_delay_s)
-# is derived from that same draw. Returns the spawn time.
+# The welcome butterfly plain Collect schedules (FarmEconomy.schedule_welcome:
+# 3-8 s out on a random owned field, from farm.rng). Returns the spawn time.
 func _schedule_welcome() -> int:
 	var f := farm()
 	var now := now_ms()
-	var at := FarmEconomy.schedule_butterfly(f, now)
-	var d: Array = FarmEconomy.cfg()["butterflies"].get("welcome_delay_s", [3, 8])
-	var lo := int(d[0]) * 1000
-	var span := maxi(0, (int(d[1]) - int(d[0])) * 1000)
-	var bf: Dictionary = f["buffs"]
-	bf["next_butterfly_ms"] = now + lo + posmod(at - now, span + 1)
-	bf["welcome"] = true
+	var at := FarmEconomy.schedule_welcome(f, now)
 	SaveDataManager.request_farm_save()
-	return int(bf["next_butterfly_ms"])
+	return at
 
 func _tend_feedback(res: Dictionary, many: bool):
 	var harvested := 0
@@ -574,6 +565,8 @@ func buy_goal() -> Dictionary:
 		last_result = res0
 		if str(g["kind"]) == "tutorial":
 			_popup(str(g["hint"]), WorldHUD.INK_DIM)
+		elif int(g.get("affordable", 0)) > 0:
+			_popup("Nothing pinned: B opens the Farm Book (%d affordable)" % int(g["affordable"]), WorldHUD.WARN)
 		else:
 			_popup("Nothing to buy yet: pin a Farm Book row (P) and Q buys it", WorldHUD.WARN)
 		return res0
@@ -593,7 +586,9 @@ func goal_click():
 			open_book("soil")
 		"tutorial":
 			if str(g["item"]) == "":
-				if str(g["id"]).begins_with("page") or int(g["step"]) >= 6:
+				if str(g["id"]) == "tutorial:plan":
+					open_field_card(0)           # the plan list lives in the field card
+				elif str(g["id"]).begins_with("page") or int(g["step"]) >= 6:
 					open_book("catalog")
 				else:
 					_popup(str(g["hint"]), WorldHUD.INK_DIM)

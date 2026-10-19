@@ -10,32 +10,42 @@ extends Node
 # brute force of the Spudling rules, so balance tuning can't break the test.
 #
 #    1  fresh defaults: start wallet, Field 1 owned + empty, plan, tutorial 1,
-#       the first _ready starts the farm, overview zoom, the welcome banner
+#       the first _ready starts the farm, overview zoom, the welcome banner;
+#       sprinklers locked (Book row + card) before their Catalog page
 #    2  tend: not ripe at grow - 0.1 s, ripe at grow; a hand harvest pays the
 #       replayed star roll, shipped += plots; a growing field is a no-op that
 #       shows its ready time; Russet is free, Yukon charges plots x seed
 #    3  a short wallet plants Russet with "Needs N c: planted Russet instead"
-#    4  Replant now on a growing crop takes two clicks; refund floor(paid / 2);
-#       a Spudling-planted crop refunds 0
+#    4  Replant now on a growing crop takes two clicks (or two Enters); Esc,
+#       another input or ARM_S takes an armed one back; refund floor(paid / 2);
+#       a ripe field replants in one click; a Spudling-planted crop refunds 0
 #    5  Spudlings: your crop waits out its grace, then is picked at full value
 #       x star EV; theirs at the share; exact picks and coins; the shift cap
 #       (same wallet at w1 + 1 h and w1 + 3 d) and the nap in Pip's note
 #    6  bulk == stepped: one 8 h settle vs 480 x 60 s with JSON round trips
-#    7  rollback: no coins, g_offset rebased, crops unchanged
-#    8  Pip's note + Collect (tends every ripe field, takes the report) +
-#       Change plans first (deferred Collect) + the welcome butterfly
-#    9  Catalog page 1 unlocks its crop and the sprinkler rows; page 2 its crop
+#    7  rollback: no coins, g_offset rebased, crops unchanged; offset_ms travel
+#    8  Pip's note + Collect (Enter; tends every ripe field, takes the report)
+#       + Change plans first (its button and Esc; the deferred Collect by T and
+#       by the bar's button) + the welcome butterfly; a quiet 2 minutes opens
+#       no note
+#    9  every Catalog page unlock shows its banner and unlocks its crop; page 1
+#       unlocks the sprinkler rows; a page that lands while you're away is in
+#       Pip's note
 #   10  sprinklers: buy (Book keys, card arrange), water both fence fields,
-#       move for free, Move never buys, the purchase cap
+#       move for free, Move never buys, place from stock (arrange keys), the
+#       purchase cap
 #   11  Market Favorite locked at planting; Spudling replants split at midnight
-#   12  butterflies: G catches a spawned one; forced Bumper (x2 hand tend),
-#       Sunshower (+g_offset), Penny (max(min, s x farm_power)); a welcome
-#       butterfly never rolls Bumper
+#   12  butterflies: G, a click on its chip and on its catch target / arrow;
+#       forced Bumper (x2 hand tend), Sunshower (+g_offset), Penny
+#       (max(min, s x farm_power)); a welcome butterfly never rolls Bumper
 #   13  Farm Book rows carry cost, d_here, d_away (hut: here 0, away > 0;
 #       a sprinkler at a schedule where watering crosses no gap boundary:
-#       away 0); buy by click and by key (B, arrows, Enter)
+#       away 0); buy by click and by key (B, arrows, Enter); P pins (P again
+#       unpins), Q and a click on the goal card buy the pinned row
 #   14  input: a click on a ripe field tends it, on a growing one opens its
-#       card; T, Z, M, G, the Esc ladder; keyboard-only play reaches Pip's note
+#       card; T, Z, M, G, the wheel / pan / pinch zoom, the zoom button, E and
+#       a click on the prompt at the farmhouse and a hut, F, the Esc ladder;
+#       keyboard-only play reaches Pip's note
 #   16  slots stay independent; save_farm() writes only farm.json
 #   17  NumFmt
 # (15, the schema-3 migration, is FarmMigrationTest's.) It never changes scene
@@ -64,6 +74,7 @@ var T := 0                          # the farm clock (FarmClock.frozen_ms)
 var fails: Array = []
 var checks := 0
 var mouse_events := 0
+var page_seen := 0                  # the highest Catalog page whose unlock was checked
 
 func _ready() -> void:
 	_run.call_deferred()
@@ -91,11 +102,11 @@ func _run() -> void:
 	await _book_and_page1()
 	await _replant_and_fallback()
 	await _spudlings()
-	await _page2()
-	await _rollback()
+	await _page_while_away()
 	await _sprinklers()
 	await _butterflies()
 	await _input_misc()
+	await _rollback()                     # last: a clock set back may leave the farm owing time
 	fs.queue_free()
 	fs = null
 	await frames(2)
@@ -124,10 +135,28 @@ func _finish(frames_used: int, wall_ms: int) -> void:
 
 func frame() -> void:
 	await get_tree().process_frame
+	track_pages()
 
 func frames(n: int) -> void:
 	for k in n:
-		await get_tree().process_frame
+		await frame()
+
+# Every Catalog page unlock, whenever it lands (a hand harvest, Collect or a
+# Spudling settle), must unlock its crop and show the page banner at once.
+func track_pages() -> void:
+	if fs == null or not is_instance_valid(fs):
+		return
+	var f := farm()
+	var p := int(f["page"])
+	if p <= page_seen:
+		return
+	var cat: Array = cfg["catalog"]
+	var crop := str(cat[p - 1]["unlocks"])
+	_check(fs.banner_text == "Catalog page %d: %s!" % [p, FV.crop_name(crop)],
+			"page %d banner '%s' (want 'Catalog page %d: %s!')" % [p, fs.banner_text, p, FV.crop_name(crop)])
+	for k in range(page_seen, p):
+		_check(str(cat[k]["unlocks"]) in f["unlocked"], "page %d unlocked %s" % [k + 1, cat[k]["unlocks"]])
+	page_seen = p
 
 func farm() -> Dictionary:
 	return SaveDataManager.farm
@@ -234,8 +263,14 @@ static func xs32(x: int) -> int:
 	x &= MASK32
 	return 1 if x == 0 else x
 
-func tile_milli(f: Dictionary, crop: String, fav: bool) -> int:
-	var mult := pow(float(cfg["soil"]["mult"]), int(f["up"]["soil"])) \
+# Soil level of field i: per field (fields[i].soil) where the save has it,
+# else the farm-wide up.soil.
+func soil_level(f: Dictionary, i: int) -> int:
+	var fl: Dictionary = f["fields"][i]
+	return int(fl["soil"]) if fl.has("soil") else int(f["up"].get("soil", 0))
+
+func tile_milli(f: Dictionary, crop: String, fav: bool, i: int) -> int:
+	var mult := pow(float(cfg["soil"]["mult"]), soil_level(f, i)) \
 			* pow(float(cfg["strains"]["mult"]), int(f["up"]["strains"].get(crop, 0)))
 	var v := float(FE.crop_info(crop)["sell"]) * 1000.0 * mult
 	if fav:
@@ -277,7 +312,7 @@ func replay_hand(sim: Dictionary, idx: Array, bumper: bool) -> Dictionary:
 	var per: Array = []
 	for i in idx:
 		var f: Dictionary = sim["fields"][i]
-		var tile := tile_milli(sim, str(f["crop"]), bool(f["fav"]))
+		var tile := tile_milli(sim, str(f["crop"]), bool(f["fav"]), i)
 		var milli := 0
 		for p in plots:
 			s = xs32(s)
@@ -302,7 +337,8 @@ func replay_hand(sim: Dictionary, idx: Array, bumper: bool) -> Dictionary:
 # to `now`, simulated pick by pick (§5.6 rules 1-5, the shipped your-crop
 # grace min(grace, grow) and the star-EV wage on a crop that was in the ground
 # when you left; Spudling-planted crops pay the share and take the Favorite
-# flag of their own planting day).
+# flag of their own planting day). It assumes a fresh shift (the note of the
+# previous absence was read), as every absence in this test has.
 func sim_hut(snap: Dictionary, i: int, l_in: int, now: int) -> Dictionary:
 	var up: Dictionary = snap["up"]
 	var ck: Dictionary = cfg["clock"]
@@ -334,12 +370,14 @@ func sim_hut(snap: Dictionary, i: int, l_in: int, now: int) -> Dictionary:
 		planted = tp
 		ge = ge_plan
 		by = "spud"
-	var full := by == "you" or planted <= l_in
+	# a Spudling crop already in the ground counts as yours once Pip's note was
+	# read before it (clock.note_ms, when the save has it)
+	var full := by == "you" or planted <= mini(l_in, int(snap["clock"].get("note_ms", l_in)))
 	var t := maxi(planted + ge + (mini(grace, ge) if full else 0), w0) + walk
 	var weight := star_ev(snap) if full else share
 	var milli := 0
 	while t <= hi:
-		milli += int(round(float(tile_milli(snap, crop, fav) * plots) * weight))
+		milli += int(round(float(tile_milli(snap, crop, fav, i) * plots) * weight))
 		out["picks"] += 1
 		if out["picks"] >= 2:
 			out["spud_fav" if fav else "spud_plain"] += 1
@@ -361,7 +399,13 @@ func _numfmt() -> void:
 	print("== NumFmt")
 	for c in [[999, "999"], [9999, "9,999"], [12345, "12.3K"], [4560000, "4.56M"]]:
 		_check(Fmt.coins(c[0]) == c[1], "NumFmt.coins(%d) = '%s' (want '%s')" % [c[0], Fmt.coins(c[0]), c[1]])
-	_check(Fmt.dur(200) == "3m 20s", "NumFmt.dur(200) = '%s' (want '3m 20s')" % Fmt.dur(200))
+	for d in [[200, "3m 20s"], [45, "45s"], [3 * 3600 + 5 * 60, "3h 05m"], [2 * 86400 + 4 * 3600, "2d 4h"]]:
+		_check(Fmt.dur(d[0]) == d[1], "NumFmt.dur(%d) = '%s' (want '%s')" % [d[0], Fmt.dur(d[0]), d[1]])
+	_check(Fmt.rate(1234.0) == "+1.23K/min", "NumFmt.rate(1234) = '%s'" % Fmt.rate(1234.0))
+	Fmt.hour24 = 0
+	var am := Fmt.clock(T0, 0)
+	Fmt.hour24 = 1
+	_check(Fmt.clock(T0, 0) == "08:00" and am == "8:00 AM", "NumFmt.clock: '%s' / '%s' (want '08:00' / '8:00 AM')" % [Fmt.clock(T0, 0), am])
 
 # ════════════════════════════════════════════ 3. short wallet (pure)
 
@@ -408,6 +452,7 @@ func _pure_bulk_stepped() -> void:
 	for i in FE.FIELDS:
 		FE.set_plan(f, i, crops[i % crops.size()])
 	FE.tend_all(f, t0, 0, true)                 # hand-plants every field at t0 (the last input)
+	FE.take_report(f)                           # the note read: the 8 h absence gets a whole shift
 	f["fields"][4]["crop"] = ""                 # an empty hut field: the Spudlings plant it at w0 + walk
 	f["fields"][4]["grow_eff_ms"] = 0
 	f["fields"][4]["seed_paid"] = 0
@@ -457,7 +502,7 @@ func _pure_favorite() -> void:
 	var sim := f.duplicate(true)
 	var exp := replay_hand(sim, [0], false)
 	var r := FE.tend(f, 0, th, 0)
-	_check(tile_milli(f, c, true) == int(round(float(FE.crop_info(c)["sell"]) * 1000.0 * float(cfg["favorite"]["mult"]))),
+	_check(tile_milli(f, c, true, 0) == int(round(float(FE.crop_info(c)["sell"]) * 1000.0 * float(cfg["favorite"]["mult"]))),
 			"Favorite: the plot value is sell x favorite.mult")
 	_check(int(r["coins"]) == int(exp["coins"]) and int(exp["coins"]) > int(exp_plain["coins"]),
 			"Favorite: next-day harvest pays the locked Favorite rate (%d c, replayed %d, plain %d)" % [int(r["coins"]), int(exp["coins"]), int(exp_plain["coins"])])
@@ -497,6 +542,7 @@ func _pure_favorite() -> void:
 	g["wallet"] = 100000000
 	FE.normalize(g)
 	FE.buy(g, "hut", 0, l_in - 1000, 0)
+	FE.take_report(g)                   # Pip's note read: the next absence gets a whole shift
 	FE.set_plan(g, 0, plan)
 	g["buffs"]["next_butterfly_ms"] = l_in + 100 * DAY
 	FE.tend(g, 0, l_in, 0)
@@ -613,6 +659,23 @@ func _fresh_scene() -> void:
 	_check(fs.hud.regions.has("goal") and fs.hud.regions.has("btn:tend_all") and fs.hud.regions.has("sign:0"),
 			"fresh: goal card, bottom bar and Field 1's sign drawn")
 	no_bf()
+	# sprinklers wait for their Catalog page: every Book row is locked with the
+	# page as its reason, and the card's sprinkler line only says why (orange)
+	var sp_page := int(cfg["sprinklers"]["page"])
+	var sp := FE.book(f, T, 0).filter(func(r): return str(r["id"]).begins_with("sprinkler:"))
+	_check(not sp.is_empty() and sp.all(func(r): return r["locked"] and str(r["locked_reason"]).begins_with("Catalog page %d" % sp_page)),
+			"fresh: the sprinkler rows are locked until Catalog page %d (%s)" % [sp_page,
+			str(sp.map(func(r): return r["locked_reason"]).slice(0, 1))])
+	fs.open_field_card(0)
+	await frame()
+	var sps: Dictionary = fs.book.sprinkler_state()
+	_check(str(sps["kind"]) == "locked", "fresh: Field 1's card has the sprinkler locked (%s)" % sps["kind"])
+	fs.popups.clear()
+	await click_region(fs.book.regions, "card:sprinkler")
+	_check(not fs.arrange_active() and popped(str(sps.get("why", "?")), WorldHUD.WARN) and int(f["up"]["sprinklers"]) == 0,
+			"fresh: a click on the locked sprinkler line only says why (%s)" % str(popup_texts()))
+	await key(KEY_ESCAPE)
+	_check(not fs.book.open, "fresh: Esc closes the card")
 
 # ════════════════════════════════════════════ 2 + 8 + 14: keyboard only to Pip
 
@@ -763,13 +826,6 @@ func _book_and_page1() -> void:
 	_check(int(f["up"]["tool"]) == 1 and FE.has_tend_all(f) and wallet() == w - tool_cost, "Enter bought the Copper Hoe (%d c)" % tool_cost)
 	await key(KEY_B)
 	_check(not fs.book.open, "B closes the Book")
-	# sprinklers are locked before Catalog page 1
-	var sp := FE.book(f, T, 0).filter(func(r): return r["id"] == "sprinkler:1-2")
-	_check(sp.size() == 1 and (int(f["page"]) >= 1 or (sp[0]["locked"] and str(sp[0]["locked_reason"]).begins_with("Catalog page 1"))),
-			"sprinkler row locked before page 1 (%s)" % (str(sp[0]) + " page=" + str(f["page"]) + " shipped=" + str(f["shipped"]) if sp.size() == 1 else "missing"))
-	fs.open_field_card(0)
-	_check(int(f["page"]) >= 1 or str(fs.book.sprinkler_state()["kind"]) == "locked", "card: sprinkler locked before page 1")
-	fs.book.close()
 	# T tends every ripe or empty field
 	at(maxi(T, ready_at(0)))
 	await frame()
@@ -783,10 +839,12 @@ func _book_and_page1() -> void:
 		guard += 1
 		at(maxi(ready_at(0), ready_at(1)))
 		await key(KEY_T)
-	_check(int(f["page"]) >= 1 and unlock in f["unlocked"], "Catalog page 1 unlocked %s after shipping %s" % [unlock, str(cfg["catalog"][0]["needs"])])
-	_check(fs.banner_text == "Catalog page 1: %s!" % FV.crop_name(unlock), "page banner '%s'" % fs.banner_text)
-	sp = FE.book(f, T, 0).filter(func(r): return r["id"] == "sprinkler:1-2")
-	_check(sp.size() == 1 and not sp[0]["locked"], "page 1 unlocked the sprinkler rows")
+	_check(int(f["page"]) >= 1 and unlock in f["unlocked"] and page_seen == int(f["page"]),
+			"Catalog page 1 unlocked %s after shipping %s (banner checked as it landed)" % [unlock, str(cfg["catalog"][0]["needs"])])
+	var sp_page := int(cfg["sprinklers"]["page"])
+	var sp := FE.book(f, T, 0).filter(func(r): return r["id"] == "sprinkler:1-2")
+	_check(int(f["page"]) < sp_page or (sp.size() == 1 and not sp[0]["locked"]),
+			"Catalog page %d unlocked the sprinkler rows" % sp_page)
 
 # ════════════════════════════════════════════ 14 + 2 + 4 + 3: clicks, Yukon seed, Replant, fallback
 
@@ -826,25 +884,55 @@ func _replant_and_fallback() -> void:
 	var pg := int(f["fields"][1]["planted_g"])
 	w = wallet()
 	await click_region(fs.book.regions, "card:replant")
-	_check(fs.book.replant_armed() and f["fields"][1]["crop"] == yk and int(f["fields"][1]["planted_g"]) == pg and wallet() == w,
-			"Replant: the first click only arms it")
+	var armed_ok := func(): return fs.book.replant_armed() and f["fields"][1]["crop"] == yk and int(f["fields"][1]["planted_g"]) == pg and wallet() == w
+	_check(armed_ok.call(), "Replant: the first click only arms it")
 	_check(fs.book.regions.rect_of("card:replant").size.x >= 370.0, "Replant: armed button spans the row")
+	# an armed Replant is taken back by Esc (the card stays), by any other input, or after ARM_S
+	await key(KEY_ESCAPE)
+	_check(fs.book.is_card() and not fs.book.replant_armed() and f["fields"][1]["crop"] == yk and wallet() == w,
+			"Replant: Esc takes back the armed Replant and keeps the card open")
 	await click_region(fs.book.regions, "card:replant")
-	_check(f["fields"][1]["crop"] == FE.FREE_CROP and wallet() == w + paid / 2 - seed_cost(FE.FREE_CROP), "Replant: the second click refunded %d of %d c (res=%s crop=%s w=%d->%d)" % [paid / 2, paid, str(fs.last_result), str(f["fields"][1]["crop"]), w, wallet()])
+	_check(armed_ok.call(), "Replant: a click after Esc arms again (it doesn't confirm)")
+	await key(KEY_DOWN)
+	_check(not fs.book.replant_armed() and f["fields"][1]["crop"] == yk, "Replant: another input disarms it")
+	await click_region(fs.book.regions, "card:replant")
+	fs.book._arm_ms -= int(FarmBook.ARM_S * 1000.0) + 1
+	_check(not fs.book.replant_armed(), "Replant: disarmed after %s s" % str(FarmBook.ARM_S))
+	await click_region(fs.book.regions, "card:replant")
+	_check(armed_ok.call(), "Replant: a click after it expired arms again")
+	await click_region(fs.book.regions, "card:replant")
+	_check(f["fields"][1]["crop"] == FE.FREE_CROP and wallet() == w + paid / 2 - seed_cost(FE.FREE_CROP),
+			"Replant: the confirming click refunded %d of %d c (crop %s, wallet %d -> %d)" % [paid / 2, paid, str(f["fields"][1]["crop"]), w, wallet()])
 	_check(popped("Replanted · refunded %s c" % Fmt.coins(paid / 2)), "replant popup: %s" % str(popup_texts()))
-	# a short wallet: the plan falls back to Russet with the orange message
+	# a short wallet, by keyboard (arrows to Replant now, Enter arms, Enter
+	# confirms): the plan falls back to Russet with the orange message
 	await click_region(fs.book.regions, "plan:" + yk)
 	f["wallet"] = seed_y - 1
 	fs.hud.mark_dirty()
 	await frame()
 	fs.popups.clear()
-	await click_region(fs.book.regions, "card:replant")
-	await click_region(fs.book.regions, "card:replant")
+	var items: Array = fs.book._card_items()
+	var to_rp := posmod(items.find("card:replant") - fs.book.sel, items.size())
+	for k in to_rp:
+		await key(KEY_DOWN)
+	_check(items[fs.book.sel] == "card:replant", "arrows focus Replant now (%s)" % str(items[fs.book.sel]))
+	await key(KEY_ENTER)
+	_check(fs.book.replant_armed() and f["fields"][1]["crop"] == FE.FREE_CROP, "Replant: Enter arms it")
+	await key(KEY_ENTER)
 	var want := "Needs %s c: planted Russet instead (free)" % Fmt.coins(seed_y)
 	var fl: Dictionary = f["fields"][1]
-	_check(fl["crop"] == FE.FREE_CROP and int(fl["seed_paid"]) == 0 and fl["by"] == "you" and wallet() == seed_y - 1,
-			"short wallet: '%s', Russet free, no refund (res=%s fl=%s w=%d)" % [str(fs.last_result.get("msg", "")), str(fs.last_result), str(fl), wallet()])
-	_check(popped(want, WorldHUD.WARN), "short wallet: orange popup (%s)" % str(popup_texts()))
+	_check(fl["crop"] == FE.FREE_CROP and int(fl["seed_paid"]) == 0 and fl["by"] == "you" and wallet() == seed_y - 1
+			and int(fl["planted_g"]) == T + int(f["g_offset_ms"]),
+			"short wallet: the second Enter replanted Russet free, no refund (field %s, wallet %d)" % [str(fl), wallet()])
+	_check(popped(want, WorldHUD.WARN), "short wallet: orange popup '%s' (%s)" % [want, str(popup_texts())])
+	# a ripe field replants (= tends) in one click: no arming
+	await advance_present(ready_at(1))
+	no_bf()
+	var sh := int(f["shipped"].get(FE.FREE_CROP, 0))
+	await click_region(fs.book.regions, "card:replant")
+	_check(not fs.book.replant_armed() and int(f["shipped"].get(FE.FREE_CROP, 0)) == sh + plots
+			and int(f["fields"][1]["planted_g"]) == T + int(f["g_offset_ms"]),
+			"Replant on a ripe field harvests and replants in one click")
 	await key(KEY_ESCAPE)
 
 # ════════════════════════════════════════════ 5 + 8: Spudlings, the shift, Change plans first
@@ -954,36 +1042,112 @@ func _spudlings() -> void:
 	_check(lr.get("ok", false) and str(lr.get("outcome", "")) in ["sunshower", "penny"], "a click on its chip caught it: %s" % str(lr.get("outcome", "")))
 	await key(KEY_ESCAPE)
 
-# ════════════════════════════════════════════ 9: Catalog page 2
+# ════════════════════════════════════════════ 9 + 8: a page while away, Esc on the note, the Collect button
 
-func _page2() -> void:
-	print("== Catalog page 2 (Spudling absences)")
+# The next Catalog page is set one basket short (every other need met) on the
+# shortest crop it asks for, which you plant on Pip's field before leaving; the
+# first Spudling pick lands the page during the absence, so Pip's note names
+# it. Then Esc on the note (Change plans first) and the bottom bar's button
+# for the deferred Collect, and a click on the welcome butterfly itself.
+func _page_while_away() -> void:
+	print("== a Catalog page lands while you're away; Esc on Pip's note; the Collect button")
+	no_bf()
 	var f := farm()
-	var unlock := str(cfg["catalog"][1]["unlocks"])
+	var cat: Array = cfg["catalog"]
+	var p := int(f["page"])
+	if p >= cat.size():
+		_check(false, "a Catalog page left to unlock (page %d of %d)" % [p, cat.size()])
+		return
+	var needs: Dictionary = cat[p]["needs"]
+	var c := ""
+	for k in needs:
+		if c == "" or int(FE.crop_info(k)["grow_ms"]) < int(FE.crop_info(c)["grow_ms"]):
+			c = str(k)
+	_check(c in f["unlocked"], "page %d asks for %s, already unlocked" % [p + 1, c])
+	ensure_wallet(seed_cost(c) * 4)
+	fs.farm_set_plan(0, c)
+	var rp: Dictionary = fs.farm_replant(0)
+	_check(rp["ok"] and f["fields"][0]["crop"] == c and f["fields"][0]["by"] == "you" and int(f["clock"]["last_input_ms"]) == T,
+			"you planted %s on Pip's field (%s)" % [c, str(rp.get("msg", ""))])
+	for k in needs:
+		f["shipped"][k] = maxi(int(f["shipped"].get(k, 0)), int(needs[k]))
+	f["shipped"][c] = int(needs[c]) - 1
+	fs.settle_now()
+	_check(int(f["page"]) == p, "page %d is still one %s short" % [p + 1, c])
+	var l_in := T
+	var snap: Dictionary = f.duplicate(true)
 	var shift := int(round(float(cfg["house"]["shift_h"][int(f["up"]["house"])]) * HOUR))
-	var saw := false
-	var guard := 0
-	while int(f["page"]) < 2 and guard < 10:
-		guard += 1
-		at(T + clockin_ms() + shift + 10 * 60000)
-		await key(KEY_H)
-		if fs.note_open:
-			if int(f["page"]) >= 2:
-				saw = fs.note_lines().any(func(ln): return str(ln["text"]) == "New Catalog page: %s!" % FV.crop_name(unlock))
-			ensure_wallet(seed_cost(str(f["fields"][0]["plan"])) * 4)
-			await key(KEY_ENTER)
-	_check(int(f["page"]) >= 2 and unlock in f["unlocked"], "Catalog page 2 unlocked %s (%d absences)" % [unlock, guard])
-	_check(fs.banner_text == "Catalog page 2: %s!" % FV.crop_name(unlock), "page 2 in Pip's note and the banner ('%s') saw=%s" % [fs.banner_text, str(saw)])
-	_check(not fs.note_open, "note collected")
+	at(l_in + clockin_ms() + shift + 10 * 60000)
+	var e := sim_hut(snap, 0, l_in, T)
+	_check(int(e["picks"]) > 0, "Pip picks %s during the shift (%d picks)" % [c, int(e["picks"])])
+	await key(KEY_H)
+	var unlock := str(cat[p]["unlocks"])
+	_check(fs.note_open and int(f["page"]) == p + 1, "the first key opened Pip's note; page %d landed while away" % (p + 1))
+	var texts: Array = fs.note_lines().map(func(ln): return str(ln["text"]))
+	_check(texts.has("New Catalog page: %s!" % FV.crop_name(unlock)), "note: 'New Catalog page: %s!' (%s)" % [FV.crop_name(unlock), str(texts)])
+	# Esc on the note = Change plans first: nothing collected, the first ripe field's card
+	var ripe := owned_where(func(v): return v["ripe"])
+	var w := wallet()
+	await key(KEY_ESCAPE)
+	_check(not fs.note_open and f["report"].is_empty() and wallet() == w and owned_where(func(v): return v["ripe"]) == ripe,
+			"Esc on the note: Change plans first (closed, nothing collected)")
+	_check(not ripe.is_empty() and fs.pending_collect and fs.welcome_owed and fs.book.is_card() and fs.book.field == ripe[0],
+			"Esc on the note: Field %d's card, Collect armed, welcome owed" % (ripe[0] + 1 if not ripe.is_empty() else 0))
+	ensure_wallet(seed_cost(c) * 4)
+	no_bf()
+	fs.hud.mark_dirty()
+	await frame()
+	var exp := replay_hand(f.duplicate(true), ripe, false)
+	var seeds := 0
+	for i in ripe:
+		seeds += seed_cost(str(f["fields"][i]["plan"]))
+	w = wallet()
+	await click_region(fs.hud.regions, "btn:tend_all")
+	var lr: Dictionary = fs.last_result
+	_check(lr.has("report") and int(lr.get("tended", -1)) == ripe.size() and wallet() == w + int(exp["coins"]) - seeds and not fs.pending_collect,
+			"the bar's Collect button ran the deferred Collect (%d fields, %d c, replayed %d)" % [int(lr.get("tended", -1)),
+			wallet() - w + seeds, int(exp["coins"])])
+	var dl: Array = cfg["butterflies"]["welcome_delay_s"]
+	var wat := int(lr.get("welcome_at_ms", 0))
+	_check(wat >= T + int(dl[0]) * 1000 and wat <= T + int(dl[1]) * 1000 and not fs.welcome_owed,
+			"it paid the welcome butterfly (+%d ms)" % (wat - T))
+	at(wat + 200)
+	await frames(2)
+	_check(fs.critters.bf_active and fs.critters.bf_welcome, "the welcome butterfly flies")
+	var target := "bf:catch" if fs.hud.regions.has("bf:catch") else "bf:arrow"
+	var n0 := int(f["stats"]["butterflies"])
+	await click_region(fs.hud.regions, target)
+	lr = fs.last_result
+	_check(int(f["stats"]["butterflies"]) == n0 + 1 and str(lr.get("outcome", "")) in ["sunshower", "penny"],
+			"a click on the butterfly (%s) caught it: %s" % [target, str(lr.get("outcome", ""))])
+	await key(KEY_ESCAPE)
 
 # ════════════════════════════════════════════ 7: rollback
 
 func _rollback() -> void:
-	print("== clock rollback")
+	print("== a quiet two minutes; clock rollback; offset_ms time travel")
 	var f := farm()
+	no_bf()
 	await key(KEY_H)                      # present again
 	if fs.note_open:
 		await key(KEY_ENTER)
+	# idle just past report_min_s: with no baskets, no page and an absence
+	# under the welcome threshold, the first input acts (and stamps) instead of
+	# opening a note, and the quiet report is dropped
+	var idle := FV.report_min_ms() + 1000
+	var cp: Dictionary = f.duplicate(true)
+	FE.settle(cp, T + idle, 0)
+	var news := FV.note_has_news(cp, T + idle)
+	at(T + idle)
+	await key(KEY_B)
+	if news:
+		_check(fs.note_open and not fs.book.open, "after %s idle with news, the first key opened Pip's note" % Fmt.dur(idle / 1000.0))
+		await key(KEY_ENTER)
+	else:
+		_check(not fs.note_open and fs.book.open and fs.book.mode == "book" and int(f["clock"]["last_input_ms"]) == T
+				and f["report"].is_empty() and not FV.note_pending(f, T),
+				"after a quiet %s, B opened the Book at once (stamped, no note, report dropped)" % Fmt.dur(idle / 1000.0))
+		await key(KEY_B)
 	fs.settle_now()
 	var w := wallet()
 	var goff := int(f["g_offset_ms"])
@@ -1002,6 +1166,17 @@ func _rollback() -> void:
 		if v["crop"] != before[i]["crop"] or v["ripe"] != before[i]["ripe"] or int(v["left_ms"]) != int(before[i]["left_ms"]):
 			same = false
 	_check(same, "rollback: crops neither un-grow nor jump")
+	# FarmClock.offset_ms (time travel on the running wall clock): the scene's
+	# own 0.5 s settle and the next input read it
+	var t0 := T
+	var real := int(Time.get_unix_time_from_system() * 1000.0)
+	Clock.frozen_ms = -1
+	Clock.offset_ms = t0 + 10000 - real
+	await key(KEY_H)
+	var stamped := int(f["clock"]["last_input_ms"])
+	Clock.offset_ms = 0
+	at(t0 + 11000)
+	_check(stamped >= t0 + 10000 and stamped < t0 + 11000, "offset_ms: the input was stamped at the shifted time (+%d ms)" % (stamped - t0))
 	await frame()
 
 # ════════════════════════════════════════════ 10: sprinklers
@@ -1087,6 +1262,25 @@ func _sprinklers() -> void:
 	_check(not r4["ok"] and int(f["up"]["sprinklers"]) == costs.size(), "one more sprinkler is refused ('%s')" % r4["msg"])
 	fs.book.invalidate()
 	_check(FE.book(f, T, 0).filter(func(r): return str(r["id"]).begins_with("sprinkler")).is_empty(), "no sprinkler rows left in the Book")
+	# one in stock (a migrated farm can have one): the card offers Place, the
+	# arrange keys pick the socket, and placing never charges
+	var placed: Array = f["sprinklers"]
+	var free_s := str(placed[placed.size() - 1])
+	placed.remove_at(placed.size() - 1)
+	fs.open_field_card(0)
+	await frame()
+	_check(FV.sprinklers_in_stock(f) == 1 and str(fs.book.sprinkler_state()["kind"]) == "place", "one in stock: the card offers Place")
+	await click_region(fs.book.regions, "card:sprinkler")
+	_check(fs.arrange_active() and fs.arrange["mode"] == "place", "Place: arrange mode")
+	var socks: Array = FV.sockets()
+	var steps := posmod(socks.find(free_s) - socks.find(str(fs.arrange["sel"])), socks.size())
+	for k in steps:
+		await key(KEY_RIGHT)
+	_check(str(fs.arrange["sel"]) == free_s, "the arrows select fence %s" % free_s)
+	w = wallet()
+	await key(KEY_ENTER)
+	_check(free_s in f["sprinklers"] and FV.sprinklers_in_stock(f) == 0 and wallet() == w and int(f["up"]["sprinklers"]) == costs.size()
+			and not fs.arrange_active(), "Enter placed the stock sprinkler on fence %s for free" % free_s)
 	fs.open_field_card(0)
 	_check(str(fs.book.sprinkler_state()["kind"]) == "move", "the card only offers Move now")
 	fs.book.close()
@@ -1122,7 +1316,10 @@ func _butterflies() -> void:
 	var w := wallet()
 	fs.tend_field(1)
 	_check(wallet() == w + int(exp["coins"]) - seed_cost(plan1), "Bumper: the hand tend paid x2 (%d c, replayed %d)" % [wallet() - w + seed_cost(plan1), int(exp["coins"])])
-	await advance_present(maxi(int(f["buffs"]["bumper_until_ms"]), ready_at(1)))
+	var guard := 0
+	while (T < int(f["buffs"]["bumper_until_ms"]) or not FE.field_view(f, 1, T)["ripe"]) and guard < 10:
+		guard += 1
+		await advance_present(maxi(int(f["buffs"]["bumper_until_ms"]), ready_at(1)))
 	no_bf()
 	ensure_wallet(seed_cost(plan1))
 	exp = replay_hand(f.duplicate(true), [1], false)
@@ -1150,9 +1347,10 @@ func _butterflies() -> void:
 # ════════════════════════════════════════════ 14: Z, M, the Esc ladder
 
 func _input_misc() -> void:
-	print("== Z, M, Esc")
+	print("== Z, wheel / pan / pinch, M, stations, F, prompt, pins, Esc")
 	var f := farm()
 	var oz := float(cfg["start"]["zoom"])
+	no_bf()
 	fs.book.close()
 	await frame()
 	_check(fs.is_overview(), "in overview")
@@ -1162,21 +1360,136 @@ func _input_misc() -> void:
 	await key(KEY_Z)
 	fs.snap_camera()
 	_check(fs.is_overview() and absf(fs.zoom_now - oz) < 0.01 and absf(float(f["ui"]["zoom"]) - oz) < 0.01, "Z: overview %.2f (saved)" % oz)
+	# the wheel, a two-finger pan and a pinch over the world; the zoom button
+	var over := Vector2(400, 400)
+	await wheel(MOUSE_BUTTON_WHEEL_UP, over)
+	_check(not fs.is_overview(), "wheel up: follow zoom")
+	await wheel(MOUSE_BUTTON_WHEEL_DOWN, over)
+	_check(fs.is_overview(), "wheel down: overview")
+	fs._gesture_t = 0.0
+	var pan := InputEventPanGesture.new()
+	pan.position = over
+	pan.delta = Vector2(0, -2)
+	get_tree().root.push_input(pan, true)
+	await frame()
+	_check(not fs.is_overview(), "two-finger pan up: follow zoom")
+	fs._gesture_t = 0.0
+	var pinch := InputEventMagnifyGesture.new()
+	pinch.position = over
+	pinch.factor = 0.8
+	get_tree().root.push_input(pinch, true)
+	await frame()
+	_check(fs.is_overview(), "pinch in: overview")
+	await click_region(fs.hud.regions, "btn:zoom")
+	_check(not fs.is_overview(), "the zoom button toggles to follow")
+	await click_region(fs.hud.regions, "btn:zoom_bar")
+	fs.snap_camera()
+	_check(fs.is_overview() and absf(float(f["ui"]["zoom"]) - oz) < 0.01, "the bar's Zoom toggles back (saved)")
 	var snd: bool = AudioManager.sound_enabled
 	fs.popups.clear()
 	await key(KEY_M)
 	_check(AudioManager.sound_enabled != snd and popped("Sound muted" if snd else "Sound on"), "M toggles the sound")
 	await key(KEY_M)
 	_check(AudioManager.sound_enabled == snd, "M toggles it back")
-	# Esc: the drawer first, then (nothing open) only a warning
+	# stations: E (and a click on the prompt bar) at the farmhouse opens the
+	# Book on Helpers, at Pip's hut the Field 1 card; F is the card of the
+	# field you stand in, and F again closes it
+	var house: Dictionary = fs.station("house")
+	fs.player.position = house["pos"]
+	await frames(2)
+	_check(fs.prompt == str(house["text"]) and fs.prompt.begins_with("[E] The %s" % FV.house_name(FV.house_tier(f))),
+			"farmhouse prompt '%s'" % fs.prompt)
+	await key(KEY_E)
+	_check(fs.book.open and fs.book.mode == "book" and fs.book.tab == "helpers", "E at the farmhouse opens the Book on Helpers")
+	await key(KEY_ESCAPE)
+	await frame()
+	await click_region(fs.hud.regions, "prompt")
+	_check(fs.book.open and fs.book.tab == "helpers", "a click on the prompt bar does the same")
+	await key(KEY_ESCAPE)
+	var hut: Dictionary = fs.station("hut:0")
+	_check(not hut.is_empty(), "Pip's hut is a station")
+	if not hut.is_empty():
+		fs.player.position = hut["pos"]
+		await frames(2)
+		_check(fs.prompt == str(hut["text"]) and fs.prompt.contains(str(cfg["huts"]["names"][0])), "hut prompt '%s'" % fs.prompt)
+		await key(KEY_E)
+		_check(fs.book.is_card() and fs.book.field == 0, "E at Pip's hut opens the Field 1 card")
+		await key(KEY_ESCAPE)
+	fs.player.position = FV.field_rect(1).get_center()
+	await frames(2)
+	await key(KEY_F)
+	_check(fs.book.is_card() and fs.book.field == 1, "F in Field 2 opens its card")
+	await key(KEY_F)
+	_check(not fs.book.open, "F again closes it")
+	fs.player.position = house["pos"] + Vector2(0, 200)
+	# pins: P pins a Book row as the Next Goal (P again unpins), Q buys it, and
+	# so does a click on the goal card
 	await key(KEY_B)
-	_check(fs.book.open, "B opens the Book")
+	await key(KEY_2)
+	_check(fs.book.open and fs.book.tab == "helpers", "B, 2: the Helpers tab")
+	var pick := func() -> int:
+		var rs: Array = fs.book.rows()
+		for k in rs.size():
+			if not rs[k]["locked"] and int(rs[k]["cost"]) > 0:
+				return k
+		return -1
+	var k1: int = pick.call()
+	_check(k1 >= 0, "a buyable Helpers row (%s)" % str(fs.book.rows().map(func(r): return r["id"])))
+	if k1 >= 0:
+		while fs.book.sel != k1:
+			await key(KEY_DOWN if fs.book.sel < k1 else KEY_UP)
+		var row: Dictionary = fs.book.rows()[k1]
+		var id := str(row["id"])
+		fs.popups.clear()
+		await key(KEY_P)
+		_check(str(f["goal"]["pinned"]) == id and popped("Pinned as your Next Goal"), "P pinned %s" % id)
+		await key(KEY_P)
+		_check(str(f["goal"]["pinned"]) == "" and popped("Unpinned"), "P again unpinned it")
+		await key(KEY_P)
+		var g := FE.next_goal(f, T)
+		_check(g["kind"] == "pinned" and str(g["id"]) == id, "the pinned row is the Next Goal (%s %s)" % [g["kind"], g["id"]])
+		var cost := int(row["cost"])
+		ensure_wallet(cost)
+		await frame()
+		var w := wallet()
+		await key(KEY_Q)
+		_check(fs.last_result.get("ok", false) and wallet() == w - cost, "Q bought the pinned %s for %d c" % [id, cost])
+	var k2: int = pick.call()
+	if k2 >= 0:
+		var row2: Dictionary = fs.book.rows()[k2]
+		fs.book.show_row(str(row2["id"]))
+		fs.hud.mark_dirty()
+		await frame()
+		await click_region(fs.book.regions, "pin:" + str(row2["id"]))
+		_check(str(f["goal"]["pinned"]) == str(row2["id"]), "a click on [Pin] pinned %s" % row2["id"])
+		var cost2 := int(row2["cost"])
+		ensure_wallet(cost2)
+		fs.hud.mark_dirty()
+		await frame()
+		var w2 := wallet()
+		await click_region(fs.hud.regions, "goal")
+		_check(wallet() == w2 - cost2, "a click on the goal card bought %s for %d c" % [row2["id"], cost2])
+	# Esc: the drawer first, then (nothing open) only a warning
+	if not fs.book.open:
+		await key(KEY_B)
+	_check(fs.book.open, "the Book is open")
 	await key(KEY_ESCAPE)
 	_check(not fs.book.open, "Esc closes the Book")
 	fs.popups.clear()
 	await key(KEY_ESCAPE)
 	_check(fs.is_inside_tree() and popped("Press Esc again for the menu"), "Esc with nothing open only warns")
 	fs._esc_t = 0.0                       # never let a later Esc leave the scene
+
+func wheel(button: MouseButton, pos: Vector2) -> void:
+	mouse_events += 1
+	var ev := InputEventMouseButton.new()
+	ev.button_index = button
+	ev.pressed = true
+	ev.factor = 1.0
+	ev.position = pos
+	ev.global_position = pos
+	get_tree().root.push_input(ev, true)
+	await frame()
 
 # ════════════════════════════════════════════ 16: slots
 

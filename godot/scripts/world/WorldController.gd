@@ -739,7 +739,7 @@ func _react(res: Dictionary):
 			"tool":
 				_popup("New hoe: %s" % _tool_name(int(e["tier"])), WorldHUD.GOOD)
 			"soil":
-				_popup("Soil level %d: every crop is worth more" % int(e["level"]), WorldHUD.GOOD)
+				_popup("%s Soil level %d: its crops are worth more" % [FarmView.field_name(int(e.get("field", 0))), int(e["level"])], WorldHUD.GOOD)
 			"strain":
 				_popup("Prize Strain %s %s: a new ribbon!" % [FarmView.crop_name(str(e["crop"])), FarmEconomy.ROMAN[int(e["tier"])]], WorldHUD.GOOD)
 			"share":
@@ -756,7 +756,8 @@ func _react(res: Dictionary):
 			"fallback":
 				_popup(str(res.get("msg", "Short of coins: planted Russet (free)")), WorldHUD.WARN)
 			"tutorial":
-				goal_done = true
+				if not bool(e.get("skipped", false)):
+					goal_done = true
 	if goal_done:
 		_popup("Goal done!", WorldHUD.GOOD)
 	_check_achievements()

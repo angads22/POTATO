@@ -673,20 +673,18 @@ func farm_started() -> bool:
 	return ck is Dictionary and int(ck.get("epoch_ms", 0)) != 0
 
 # Farm Picnic for a kitchen / concert / SPUD BLASTER run (design §8):
-# min(15, 0.5 x played minutes x accuracy) minutes of the farm's output,
-# credited to the wallet. 0 before the farm has started. The caller decides
-# whether the run qualifies (it must have banked coins).
+# min(15, 0.5 x played minutes x accuracy) minutes of the farm's output, at
+# most picnic.day_max_min farm-minutes a local day (FarmEconomy.award_picnic
+# keeps the ledger), credited to the wallet. 0 before the farm has started.
+# The caller decides whether the run qualifies (it must have banked coins).
 # {coins: int, minutes: float}
 func award_picnic(played_s: float, accuracy: float) -> Dictionary:
 	if not farm_started():
 		return {"coins": 0, "minutes": 0.0}
-	var coins: int = _fe.picnic_coins(farm, played_s, accuracy)
-	var p: Dictionary = _fe.cfg().get("picnic", {})
-	var minutes := minf(float(p.get("max_min", 15)),
-			float(p.get("factor", 0.5)) * maxf(0.0, played_s) / 60.0 * clampf(accuracy, 0.0, 1.0))
-	if coins > 0:
-		add_coins(coins)
-	return {"coins": coins, "minutes": minutes}
+	var res: Dictionary = _fe.award_picnic(farm, played_s, accuracy, _clock.now_ms(), _clock.tz_s())
+	if int(res["coins"]) > 0:
+		add_coins(int(res["coins"]))
+	return res
 
 # Dry-run settle on a copy for teasers (main menu): {started, ripe,
 # waiting_coins, settle_coins, report_coins, wallet}. Never mutates the save.
