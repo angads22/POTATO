@@ -32,43 +32,86 @@ jobs:
           mv "/tmp/Godot_v${GODOT_VERSION}-stable_linux.x86_64" ~/godot-bin/godot
           chmod +x ~/godot-bin/godot
 
+      # Every Godot step gets a timeout: the farm's 30 s heartbeat runs settle
+      # code inside every scene, so a hang anywhere would otherwise eat the
+      # job's six-hour default.
       - name: Script compile check
+        timeout-minutes: 5
         run: |
           cd godot
           ~/godot-bin/godot --headless --import . 2>&1 | tee import.log
           ! grep -q "SCRIPT ERROR" import.log
 
       - name: Headless gameplay smoke test
+        timeout-minutes: 5
         run: |
           cd godot
           ~/godot-bin/godot --headless --path . res://tests/SmokeTest.tscn --quit-after 4000 2>&1 | tee smoke.log
           grep -q "SMOKE OK" smoke.log
 
+      # The farm-family steps each get a fresh user:// (their save-slot checks
+      # assume one), and fail on any SCRIPT ERROR, runtime ones included. The
+      # negated grep must stay the LAST line: bash -e ignores a failing `!`
+      # command anywhere else.
       - name: Headless farm smoke test
+        timeout-minutes: 5
+        env:
+          XDG_DATA_HOME: ${{ runner.temp }}/xdg-farm
         run: |
           cd godot
           ~/godot-bin/godot --headless --path . res://tests/FarmSmokeTest.tscn --quit-after 600 2>&1 | tee farm.log
           grep -q "FARM SMOKE OK" farm.log
+          ! grep -q "SCRIPT ERROR" farm.log
 
       - name: Headless town smoke test
+        timeout-minutes: 5
+        env:
+          XDG_DATA_HOME: ${{ runner.temp }}/xdg-town
         run: |
           cd godot
           ~/godot-bin/godot --headless --path . res://tests/TownSmokeTest.tscn --quit-after 600 2>&1 | tee town.log
           grep -q "TOWN SMOKE OK" town.log
+          ! grep -q "SCRIPT ERROR" town.log
+
+      # Spudling Acres balance gate: profile bots play the real FarmEconomy on
+      # farm.json (milestones, feel, strategy diversity, invariants). It runs
+      # synchronously in _ready (1-2 minutes); see godot/tests/farm/BALANCE.md.
+      - name: Farm balance check
+        timeout-minutes: 8
+        env:
+          XDG_DATA_HOME: ${{ runner.temp }}/xdg-balance
+        run: |
+          cd godot
+          ~/godot-bin/godot --headless --path . res://tests/FarmBalanceTest.tscn --quit-after 6000 2>&1 | tee balance.log
+          grep -q "FARM BALANCE OK" balance.log
+          ! grep -q "SCRIPT ERROR" balance.log
+
+      - name: Farm save migration test (schema 1/2/3 -> 4, slots, saving, heartbeat)
+        timeout-minutes: 5
+        env:
+          XDG_DATA_HOME: ${{ runner.temp }}/xdg-migration
+        run: |
+          cd godot
+          ~/godot-bin/godot --headless --path . res://tests/FarmMigrationTest.tscn --quit-after 3000 2>&1 | tee migration.log
+          grep -q "FARM MIGRATION OK" migration.log
+          ! grep -q "SCRIPT ERROR" migration.log
 
       - name: Headless FPS arena smoke test
+        timeout-minutes: 5
         run: |
           cd godot
           ~/godot-bin/godot --headless --path . res://tests/FpsSmokeTest.tscn --quit-after 300 2>&1 | tee fps.log
           grep -q "FPS SMOKE OK" fps.log
 
       - name: Headless boss fight smoke test
+        timeout-minutes: 5
         run: |
           cd godot
           ~/godot-bin/godot --headless --path . res://tests/BossSmokeTest.tscn --quit-after 2000 2>&1 | tee boss.log
           grep -q "BOSS SMOKE OK" boss.log
 
       - name: Headless concert (rhythm mode) smoke test
+        timeout-minutes: 5
         run: |
           cd godot
           ~/godot-bin/godot --headless --path . res://tests/ConcertSmokeTest.tscn --quit-after 6000 2>&1 | tee concert.log
@@ -77,6 +120,7 @@ jobs:
       # The web edition ports SongComposer + ConcertChart to JavaScript; the
       # Daily Song must be the same song (and chart) on both editions.
       - name: Web edition parity (same seed -> same song and chart)
+        timeout-minutes: 5
         run: |
           node web/tools/dump_web.js /tmp/web.json
           ~/godot-bin/godot --headless --path godot -s "$PWD/web/tools/dump_godot.gd" -- /tmp/godot.json

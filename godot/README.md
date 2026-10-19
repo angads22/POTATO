@@ -16,7 +16,8 @@ godot/
 │   ├── core/                  # Managers (GameManager, SaveDataManager, AudioManager)
 │   ├── gameplay/              # Gameplay orchestration and flow
 │   ├── minigames/             # Cut mechanics (Slice, Peel, Speed, Julienne, Dodge)
-│   ├── world/                 # Open-world farm + town (controllers, tiles, player, HUD)
+│   ├── farm/                  # Spudling Acres economy core (FarmEconomy, FarmClock, FarmView, FarmMigration)
+│   ├── world/                 # Farm + town scenes (controllers, fields, critters, HUD, Farm Book)
 │   ├── visuals/               # Procedural backdrops and effects
 │   ├── ui/                    # Menu controllers, HUD elements
 │   └── utils/                 # Helper functions, data structures
@@ -57,6 +58,8 @@ These are global managers available everywhere:
   - Achievements
   - Unlocked knives
   - Settings (volume, graphics options)
+  - The farm save (schema 4, debounced writes, a 30 s heartbeat that settles the farm from any
+    scene) and the migration of older farm saves
   - Auto-save on changes
 
 ### Gameplay Flow
@@ -111,55 +114,113 @@ to the minigame's `beat_origin` — never accumulated frame deltas.
   edition (`../web/`) ports `ConcertChart` + `SongComposer.compose()` 1:1, so
   a seed is the same song in the browser.
 
-### The Overworld (Farm + Town)
+### Spudling Acres (the farm) and the town
 
-Two walkable maps share a `WorldController` base (movement, blockers, camera,
-day-night cycle, prompts, shop overlays, economy actions) and a `WorldHUD`:
+**What it is.** Spudling Acres is a cozy farm you check in on, not a farm you
+have to babysit. You own a few fenced fields (six, plus a Greenhouse late on),
+each growing one crop at a time. Little potato helpers, the **Spudlings**,
+pick and replant while you're away, and when you come back a note (from Pip,
+once you've hired your first Spudling) tells you what happened. Nothing rots,
+wilts or expires: a ripe crop waits for you forever. The numbers keep going
+up; the game is choosing *how* they go up.
 
-- **The farm** (`FarmController`, `scenes/Farm/FarmScene.tscn`) — the whole
-  pasture is one free-form plowable grid (no fenced fields). `FarmTile`s are
-  sparse: one is created on demand only when you plow a cell or drop a
-  sprinkler there. Plow the grass (the plow wears out after 10 uses;
-  replacements cost more each time), plant, water (or place a sprinkler to
-  auto-water the tiles around it — now a real spatial puzzle), fertilize
-  (multi-charge), harvest — the soil stays plowed. A plowed plot you no longer
-  want can be **covered back over** with `[C]` (9 free covers, then a small
-  coin fee); the plow isn't refunded and there's no undo, so the cell must be
-  plowed again to farm it. Progression runs on the
-  **Research Shed** — a node-based skill-tree map (arrow keys navigate, [E]
-  buys the highlighted node, [TAB] swaps the PROGRESSION / AUTOMATION tracks)
-  where coins + research points buy logistics/tools/crops/growth/science/water/
-  soil/championship upgrades plus cross-branch capstones
-  (`resources/game_data/research.json`, ~80+ nodes, incl. research-gated crops,
-  science nodes that lower seed costs / earn research per harvest, a water line
-  that grows the watering can and a soil line that speeds growth, and
-  championship nodes that earn research from runs / raise golden odds). Upgrades
-  come in many small tiers so the tree stretches out rather than handing over
-  big jumps. The harvest ships from the **market truck** by the top hedge (load it,
-  send it off, coins + research points return after a wall-clock delay). The
-  **automation** track (drip irrigation, harvester/seeder drones, auto-dispatch,
-  standing orders) is the long, expensive apex of the tree, and its purchase
-  orders aren't free money: the **Seed Co-op** and **Supply Depot** — two yard
-  buildings that stay shuttered until the matching standing-order research is
-  bought — let the player schedule *which* crops/fertilizer the farm restocks
-  and how much to keep on hand, and every order pays a delivery premium over the
-  hands-on shop price. The farmhouse, well and pond live here too.
-- **The town** (`TownController`, `scenes/Town/TownScene.tscn`) — the seed
-  shop, knife stand and tool shed around a fountain plaza, plus the
-  championship kitchen (walk in to start a run). Selling moved to the farm's
-  truck, so there's no market stall here. Future non-farming content belongs
-  here. The **Concert Hall** bandstand on the plaza's south side (its marquee
-  bulbs and potato band move with the town's music) is the walk-up entrance
-  to Concert mode, and you walk back out onto the plaza afterwards.
-- Gates on the farm's east hedge and the town's west hedge travel between the
-  two; the time of day carries across.
+**A visit in three clicks** (30 to 90 seconds, sound on or off, trackpad
+friendly):
 
-Farm state lives in `SaveDataManager.farm` (schema 3: sparse `tiles` dict
-keyed `"col:row"`, `research`/`research_points`, the `truck`,
-`plow_uses`/`plows_bought`, `cover_freebies`, `sprinkler_stock`, fertilizer
-charges in `items`).
-Schema-1 (`plots` array) and schema-2 (`field:row:col` + `sections_owned`)
-saves are migrated automatically on load through a 1→2→3 chain.
+1. Open **[4] Potato Farm** from the main menu. Its row already says how many
+   fields are ripe and how many coins are waiting, and Enter reopens whatever
+   you played last.
+2. **Pip's note** sums up your absence. Click **Collect** (or press Enter /
+   Space): every ripe field is harvested and replanted at once.
+3. If you were away a while, a **butterfly** arrives a few seconds later:
+   click it (or press G) for a small gift. Then make one decision (press Q for
+   your pinned goal, change a field's plan, or buy something in the **Farm
+   Book**) and close the game. It saves as you go and again when the window
+   loses focus.
+
+**Controls**
+
+| Action | Keyboard | Mouse / trackpad |
+|---|---|---|
+| Walk | WASD / arrows | Not needed: everything is clickable from anywhere |
+| Tend a field (harvest + replant, or plant) | E / Space while standing in it | Click a ripe or empty field |
+| Field card (plan, Spudling, sprinkler, replant) | F in the field, 1–7 from anywhere, or E at its hut | Click a growing field, its sign or its hut |
+| Tend every field (needs the Copper Hoe) | T | Tend All button |
+| Collect, on Pip's note | Enter / Space | Collect button |
+| Farm Book | B, then ←/→ or 1–6 for tabs, ↑/↓ rows, Enter buys, P pins | Book button, the farmhouse, or the town's seed stall and tool shed |
+| Buy the Next Goal | Q | Click the goal card at the top |
+| Catch a butterfly | G, or walk into it | Click it, or its "Butterfly!" chip |
+| Zoom (whole farm ↔ close-up) | Z | Mouse wheel, two-finger scroll, pinch, or the zoom button |
+| Sound on / off | M (also on the main menu) | Sound button |
+| Close / leave | Esc closes whatever is open; Esc twice goes back to the menu | ✕ on a panel, the menu button |
+
+Every button is at least 44 px. Nothing needs dragging, double-clicking,
+right-clicking or hovering, and every sound has an on-screen twin (a ring on
+ripe fields, an orange popup when you are short of coins), so the farm plays
+fine muted in a classroom.
+
+**Getting more out of the farm.** No choice below is right for everyone;
+that's the point.
+
+- **Plant for your schedule.** Short crops earn more per minute but need you
+  there to replant them. Long crops earn more per harvest and fill a long
+  absence. The field card shows the clock time each crop would be ready, so
+  pick the one that ripens just before you'll be back: before the bell, before
+  dinner, before bed. Planting costs seed; Russet is always free.
+- **Spudlings or your own hands.** A hut puts a Spudling on that field. They
+  start shortly after you stop playing and work for as long as your farmhouse
+  allows (a bigger farmhouse means a longer shift). The crop you left in the
+  ground is still yours: they give you a little while to come back for it,
+  then pick it at full value. On crops they plant themselves they keep a share
+  as wages. Huts shine if you're away for long stretches; long crops shine if
+  you come back on time.
+- **Read the Farm Book.** Every purchase shows what it adds while you're here,
+  what it adds while you're away, and how long it takes to pay for itself *for
+  the way you play* (the farm keeps a log of your recent visits). It never
+  picks for you. **Pin** what you're saving for and Q buys it once you can
+  afford it.
+- **Grow toward the next Catalog page.** New crops unlock in the **Seed
+  Catalog** when you've shipped enough of the earlier ones. Coins can't buy a
+  page, so sometimes the best move is growing what the next page asks for.
+- **Place sprinklers.** A sprinkler sits on the fence between two fields and
+  speeds up both. It helps most where faster growth lets a crop fit a gap it
+  used to miss. Moving one is free. The Greenhouse grows faster still.
+- **More land or deeper land.** The next field, or **Soil** (a little more
+  from every crop, forever), or a **Prize Strain** (a lot more from the one
+  crop you grow most; each tier hangs a ribbon on the farmhouse wall).
+- **Today's Market Favorite.** One crop a day pays extra if you plant it that
+  day, even if you harvest it tomorrow. The chip at the top shows today's and
+  tomorrow's.
+
+**The rest of the game helps.** The coin wallet is shared with the kitchen,
+Concert and SPUD BLASTER. Once your farm is started, every run also brings a
+**Farm Picnic** bonus worth a few minutes of your farm's output, Prize Strains
+raise the kitchen's golden-potato odds, and the middle knives need Chef XP,
+which comes from kitchen and Concert runs.
+
+**The town** is through the farm's east gate: the knife stand, the
+championship kitchen (E or a click starts a run), the **Concert Hall**
+bandstand (the walk-up way into Concert mode), and two farm storefronts. The
+seed stall opens the Farm Book's Catalog and the tool shed its Tools tab.
+
+**Where it runs.** The farm is part of the desktop builds (Windows, macOS,
+Linux). It does not run in a browser: on a Chromebook you can only play the
+web edition, which is Concert mode.
+
+#### For developers
+
+- The economy is `scripts/farm/` (`FarmEconomy`, a pure static core with an
+  injected clock, plus `FarmClock`, `FarmView` and `FarmMigration`); the
+  scenes are `scripts/world/` (`FarmController`, `FarmHud`, `FarmBook`,
+  `FarmField`, `FarmCritters`, `TownController` on a shared `WorldController`
+  / `WorldHUD`). Save schema 4, migrations, the save/heartbeat plumbing and
+  the rules for touching any of it are in the farm sections of
+  [`../CLAUDE.md`](../CLAUDE.md).
+- Every balance number lives in `resources/game_data/farm.json`. Tune it with
+  the simulator, run from `godot/`:
+  `godot --headless --path . -s tests/farm/farm_sim.gd -- --all`.
+  [`tests/farm/BALANCE.md`](tests/farm/BALANCE.md) has the evidence behind the
+  current values, and `FarmBalanceTest` is the CI gate.
 
 ### SPUD BLASTER — 3D first-person arena (multiplayer)
 
@@ -294,9 +355,11 @@ GameManager.combo_changed.connect(func(combo):
 
 An auto-player drives a championship run — it watches the active minigame,
 cuts when the beat-locked cursor is centred, locks the peel in the band and
-bins rotten potatoes — and more drive the boss, Concert, the farm economy,
-the town stalls and the FPS arena. On the headless server nothing is
-rendered or played, but the beat clock still runs (3x fast in these tests):
+bins rotten potatoes — and more drive the boss, Concert, the farm scene,
+the town stalls and the FPS arena, and two more check the farm's balance and
+save migration. On the headless server nothing is rendered or played, but the
+beat clock still runs (3x fast in the kitchen tests). Give each farm, town and
+migration run a fresh `user://` (for example `XDG_DATA_HOME=$(mktemp -d)`):
 
 ```bash
 godot --headless --path godot res://tests/SmokeTest.tscn --quit-after 4000
@@ -309,11 +372,20 @@ godot --headless --path godot res://tests/ConcertSmokeTest.tscn --quit-after 600
 # chart determinism, then a whole song with chops, holds and bins — "CONCERT SMOKE OK"
 
 godot --headless --path godot res://tests/FarmSmokeTest.tscn --quit-after 600
-# plow/plant/water/harvest/sell, sections, sprinklers, fertilizer charges,
-# drone+seeder and the schema-1 save migration — prints "FARM SMOKE OK"
+# drives Spudling Acres with synthetic keys and clicks plus time travel: Tend,
+# Collect, Spudlings, the Catalog, sprinklers, butterflies, the Farm Book —
+# prints "FARM SMOKE OK"
 
 godot --headless --path godot res://tests/TownSmokeTest.tscn --quit-after 600
-# walks the plaza, buys/sells at every stall — prints "TOWN SMOKE OK"
+# the town stalls and storefronts on a frozen farm clock — prints "TOWN SMOKE OK"
+
+godot --headless --path godot res://tests/FarmBalanceTest.tscn --quit-after 6000
+# profile bots play the real farm economy for simulated weeks: milestones, feel,
+# strategy diversity, invariants (about 1-2 min) — prints "FARM BALANCE OK"
+
+godot --headless --path godot res://tests/FarmMigrationTest.tscn --quit-after 3000
+# schema 1/2/3 -> 4 farm saves, refunds, slots, saving, heartbeat, Farm Picnic —
+# prints "FARM MIGRATION OK"
 
 godot --headless --path godot res://tests/FpsSmokeTest.tscn --quit-after 300
 # boots a solo SPUD BLASTER match, shoots a target dummy, scores a frag —
@@ -348,15 +420,13 @@ CI runs these on every PR touching `godot/` (see `.github/workflows/godot.yml`).
 - ✅ Three independent save files — create and switch between slots from Settings
   ([1]/[2]/[3]); each slot is its own folder under `user://potato_game/slotN/`,
   and a pre-slots save migrates into slot 1 automatically
-- ✅ Data-driven balance: knives, potatoes, items and the research tree in
-  `resources/game_data/*.json`
-- ✅ Open-grid farm: the whole pasture is free-form plowable (sparse,
-  on-demand tiles), a plow that wears out (and costs more each replacement),
-  placeable sprinklers, multi-charge fertilizer, and a Research Shed
-  (node-based skill-tree map; coins + research points →
-  logistics/tools/crops/growth/championship + cross-branch capstones,
-  research-gated crops, drone/seeder automation) feeding a market truck that ships the
-  harvest. Schema-1/2 saves migrate automatically (1→2→3 chain).
+- ✅ Data-driven balance: knives, potatoes, achievements and the whole farm
+  economy (`farm.json`) in `resources/game_data/*.json`
+- ✅ Spudling Acres: six fenced fields plus a Greenhouse, whole-field Tend and
+  per-field plans, Spudlings that work while you're away (offline settle),
+  Pip's note + Collect, the Seed Catalog, the Farm Book with per-schedule
+  paybacks, fence sprinklers, Soil, Prize Strains, the Market Favorite and
+  butterflies. Older farm saves migrate automatically (1→2→3→4 chain).
 - ✅ Town map: fountain plaza with the seed/knife/tool stalls and the
   championship kitchen, gates between farm and town
 - ✅ SPUD BLASTER: 3D first-person deathmatch arena with LAN + internet
@@ -368,13 +438,14 @@ CI runs these on every PR touching `godot/` (see `.github/workflows/godot.yml`).
 - ✅ Concert rhythm mode with seeded songs, a Daily Song and a web edition
 - ✅ Colossal Spud boss fight, particles, squash-and-stretch, screen shake
 - ✅ Pause menu, graded results screen, personal bests, F11 fullscreen
-- ✅ Headless smoke tests (championship, boss, concert, farm, town, FPS) + CI
+- ✅ Headless smoke tests (championship, boss, concert, farm, town, FPS), the
+  farm balance gate and the farm save-migration test, all in CI
 
 ## Next Steps
 
 1. **Town content** — New buildings/activities belong on the town map (the
-   Concert Hall shows the pattern: geometry in `TownBackground`, a station
-   in `TownController._scan_interactions`)
+   Concert Hall shows the pattern: geometry in `TownBackground`, an entry in
+   `TownController`'s `stations` list, clickable and [E]-able)
 2. **Concert** — an online Daily Song leaderboard (the seed is already shared
    with the web edition), longer song forms (verse/chorus variations)
 3. **Farm ambience** — day/night variations of the farm theme, rain

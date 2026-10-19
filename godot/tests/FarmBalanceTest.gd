@@ -16,7 +16,7 @@ extends Node
 #     earlier), the veteran landing, and 60-day magnitudes
 # Prints its tables, then "FARM BALANCE OK", or "FARM BALANCE FAIL: <n>
 # failures" followed by each failure. Runs synchronously in _ready (~60 s
-# locally; budget 90 s).
+# locally; budget 240 s, CI step timeout 8 min).
 # It never touches SaveDataManager or user://.
 #
 #   godot --headless --path . res://tests/FarmBalanceTest.tscn --quit-after 6000
@@ -27,7 +27,7 @@ extends Node
 const FE = preload("res://scripts/farm/FarmEconomy.gd")
 const FarmSuite = preload("res://tests/farm/FarmSuite.gd")
 
-const BUDGET_S := 90.0
+const BUDGET_S := 240.0
 
 func _ready() -> void:
 	var t0 := Time.get_ticks_msec()

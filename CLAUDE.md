@@ -10,9 +10,9 @@ exists in **three implementations** of the same game design:
 - **`PotatoSlicer/`** — the original, fully playable **C# / .NET 8.0 console** game (ASCII UI).
   This is what ships in GitHub Releases as a self-contained binary with an in-game auto-updater.
 - **`godot/`** — a **Godot 4.2+ / GDScript** visual remake (graphics, a fully procedural
-  soundtrack, beat-locked gameplay, Concert rhythm mode, an open-world farm, and a 3D first-person
-  multiplayer arena). `release.yml` also exports it (Win/Linux/macOS `SliceIt-Visual-*.zip`) into
-  the same GitHub Release as the console build.
+  soundtrack, beat-locked gameplay, Concert rhythm mode, the Spudling Acres idle-optimization
+  farm, and a 3D first-person multiplayer arena). `release.yml` also exports it (Win/Linux/macOS
+  `SliceIt-Visual-*.zip`) into the same GitHub Release as the console build.
 - **`web/`** — a **browser edition of Concert mode** (HTML5 canvas + WebAudio, no build step,
   no dependencies). `web/build.py` bundles it into one self-contained `SliceIt-Web.html`, which
   `release.yml` attaches to every release; `web.yml` can deploy it to GitHub Pages.
@@ -20,7 +20,7 @@ exists in **three implementations** of the same game design:
 The console and Godot editions share gameplay concepts (five cut mechanics, game modes, knives,
 combos, FEVER, lives, leaderboard) but **share no code**. They carry their own version constants
 (console in the csproj / `Core/Updater.cs`; Godot in `project.godot`) but ship from **one `v*`
-tag**, so a release bumps both in lockstep — currently `4.0.0`. Both editions' in-game updaters
+tag**, so a release bumps both in lockstep — currently `4.1.0`. Both editions' in-game updaters
 read the same `releases/latest`, so the tag must equal both version constants. Treat them as
 separate codebases — a change in one does not propagate to the other.
 
@@ -50,25 +50,36 @@ There is no unit-test project — the console edition is validated only by `dotn
 
 cd godot
 godot --headless --import .                                             # compile check (fails on SCRIPT ERROR)
-godot --headless --path . res://tests/SmokeTest.tscn --quit-after 4000        # → "SMOKE OK"
-godot --headless --path . res://tests/BossSmokeTest.tscn --quit-after 2000    # → "BOSS SMOKE OK"
-godot --headless --path . res://tests/ConcertSmokeTest.tscn --quit-after 6000 # → "CONCERT SMOKE OK"
-godot --headless --path . res://tests/FarmSmokeTest.tscn --quit-after 600     # → "FARM SMOKE OK"
-godot --headless --path . res://tests/TownSmokeTest.tscn --quit-after 600     # → "TOWN SMOKE OK"
-godot --headless --path . res://tests/FpsSmokeTest.tscn --quit-after 300      # → "FPS SMOKE OK"
+godot --headless --path . res://tests/SmokeTest.tscn --quit-after 4000          # → "SMOKE OK"
+godot --headless --path . res://tests/BossSmokeTest.tscn --quit-after 2000      # → "BOSS SMOKE OK"
+godot --headless --path . res://tests/ConcertSmokeTest.tscn --quit-after 6000   # → "CONCERT SMOKE OK"
+godot --headless --path . res://tests/FarmSmokeTest.tscn --quit-after 600       # → "FARM SMOKE OK"
+godot --headless --path . res://tests/TownSmokeTest.tscn --quit-after 600       # → "TOWN SMOKE OK"
+godot --headless --path . res://tests/FarmBalanceTest.tscn --quit-after 6000    # → "FARM BALANCE OK"
+godot --headless --path . res://tests/FarmMigrationTest.tscn --quit-after 3000  # → "FARM MIGRATION OK"
+godot --headless --path . res://tests/FpsSmokeTest.tscn --quit-after 300        # → "FPS SMOKE OK"
+godot --headless --path . -s tests/farm/farm_sim.gd -- --all  # farm balance report (not CI)
 ```
 The smoke tests are auto-players: `SmokeTest.gd` plays a championship through two stage clears
 and FEVER (cuts when the beat-locked cursor is centred, locks the peel band, bins rotten
 potatoes), `BossSmokeTest.gd` beats the Colossal Spud, `ConcertSmokeTest.gd` checks chart
 determinism then plays a whole Concert song (chops, holds, bins), `FarmSmokeTest.gd` drives the
-farm (plow/plant/harvest, sprinklers, fertilizer, save migration), `TownSmokeTest.gd` shops the
-town stalls, and `FpsSmokeTest.gd` frags a target dummy in SPUD BLASTER. The kitchen/boss/concert
-tests set `AudioManager.debug_time_scale = 3.0` so the silent headless beat clock runs 3x fast;
-their budgets are wall-clock, with `--quit-after` as a hard frame cap. CI greps stdout for each
-sentinel, so any test you add must print its own sentinel and exit. **Clear
-`~/.local/share/godot/app_userdata/` between local runs** — the farm test's save-slot checks
-assume a fresh `user://` (CI always has one). `tests/Screenshot.tscn` captures frames (run under
-`xvfb-run … --rendering-driver opengl3`).
+Spudling Acres scene with synthetic keys/clicks and `FarmClock` time travel (Tend, Collect,
+Spudlings, the Catalog, sprinklers, butterflies, the Farm Book), `TownSmokeTest.gd` uses the town
+stalls on a frozen clock, and `FpsSmokeTest.gd` frags a target dummy in SPUD BLASTER.
+`FarmBalanceTest.gd` (no scene, about 1–2 min) has profile bots play the real `FarmEconomy` on
+`farm.json` and asserts the design's milestone windows, feel targets, strategy diversity and
+economy invariants; `FarmMigrationTest.gd` checks the schema 1/2/3 → 4 chain and refunds, slots,
+debounced saving, the heartbeat and the Farm Picnic. The kitchen/boss/concert tests set
+`AudioManager.debug_time_scale = 3.0` so the silent headless beat clock runs 3x fast; their
+budgets are wall-clock, with `--quit-after` as a hard frame cap. CI greps stdout for each
+sentinel, so any test you add must print its own sentinel and exit. **Give every farm, town and
+migration run a fresh `user://`** (`XDG_DATA_HOME=$(mktemp -d) godot …`, or clear
+`~/.local/share/godot/app_userdata/`): their save-slot checks assume one, and CI gives each of
+those steps its own. Headless farm/town input goes through `get_tree().root.push_input(ev, true)`
+or `scene.handle_input(ev)` (`Input.parse_input_event` never reaches the 0x0 headless window);
+set `keycode == physical_keycode` so keys aren't read as AZERTY movement aliases.
+`tests/Screenshot.tscn` captures frames (run under `xvfb-run … --rendering-driver opengl3`).
 
 ### Web edition (`web/`)
 ```sh
@@ -87,7 +98,11 @@ inlines them. `window.__bot = true` turns on an in-page autoplay that the smoke 
 
 - **build.yml** — `dotnet build` of the console project on every push to `main` and every PR.
 - **godot.yml** — runs when `godot/**` (or the web composer port) changes: import/compile check,
-  the six smoke tests, and the Godot↔web composer parity check.
+  the six smoke tests, the farm balance gate (`FarmBalanceTest`), the farm save-migration test,
+  and the Godot↔web composer parity check. The farm, town, balance and migration steps also fail
+  on any `SCRIPT ERROR` in their log (runtime ones included) and each run on a fresh `user://`
+  (`XDG_DATA_HOME`). Every Godot step has `timeout-minutes: 5` (balance: 8), since the farm
+  heartbeat runs settle code inside every scene.
 - **web.yml** — runs when `web/**` changes: bundles the single file and plays a song in headless
   Chromium (landscape + portrait). Its `pages` job deploys to GitHub Pages on a manual run, or on
   pushes to `main` once the repo variable `PAGES_ENABLED` is `"true"`.
@@ -136,7 +151,9 @@ holding high score, coins, unlocks, leaderboard, achievements.
 - `scripts/core/GameManager.gd` — game state, score/combo/FEVER/lives, run stats (`record_cut`,
   `accuracy`, `grade`, personal bests), mode control, F11 fullscreen; emits signals UI listens to.
 - `scripts/core/SaveDataManager.gd` — JSON persistence (leaderboard, achievements, unlocked knives,
-  settings incl. volumes/`audio_offset_ms`/bests, 3 save slots); auto-saves on change.
+  settings incl. volumes/`audio_offset_ms`/bests, 3 save slots); auto-saves on change. Also owns
+  the farm save (schema 4, its migration chain, the debounced farm writer and the 30 s farm
+  heartbeat) and classroom low-power mode — see the farm below.
 - `scripts/core/AudioManager.gd` — **all sound, and the beat clock.** `play_sfx(name)` plays a
   synthesized SFX; `play_music(track)` / `play_song({style, bpm, seed})` composes + renders a song
   on a `WorkerThreadPool` task (cached, prefetchable, two-deck crossfades) as four synced stems
@@ -182,31 +199,92 @@ hold / rotten / golden notes; per-difficulty `RULES`); `ConcertController` runs 
 run to the shared results screen. **Keep `ConcertChart.gd` and `SongComposer.compose()` in
 lockstep with `web/core.js`.**
 
-**Balance is data-driven:** knives, potatoes, farm items and the research tree live in
-`resources/game_data/*.json` (`knives.json`, `potatoes.json`, `items.json`, `research.json`) — new
-content is typically one JSON entry plus (for new mechanics) one `MinigameBase` subclass. Potatoes
-are drawn procedurally (no sprite assets required to run).
+**Balance is data-driven** (`resources/game_data/`): kitchen knives and potatoes in `knives.json` /
+`potatoes.json`, achievements in `achievements.json`, the whole farm economy in `farm.json` (below)
+— new kitchen content is typically one JSON entry plus (for new mechanics) one `MinigameBase`
+subclass. Potatoes are drawn procedurally (no sprite assets required to run).
 
 **The overworld** is two walkable maps in `scripts/world/` sharing a `WorldController` base
-(movement, blockers, camera, day-night, prompts, shop overlays, economy actions) and `WorldHUD`:
-the **farm** (`FarmController` — the whole pasture is one free-form plowable grid; `FarmTile`s are
-sparse, created on demand only once a cell is plowed or holds a sprinkler; plow → plant →
-water/sprinkler → fertilize → harvest, soil stays plowed; `[C]` covers a plowed plot back to
-grass for coins — 9 freebies, no plow refund, must replow) and the **town** (`TownController` —
-seed/knife/tool stalls, the championship kitchen and the Concert Hall bandstand that enters Concert
-mode; the designated home for future non-farming content). Progression runs on the farm's **Research Shed** (`research.json` nodes bought with coins +
-research points: logistics/tools/crops/growth/science/water/soil/championship, incl. research-gated
-crops; a PROGRESSION and an AUTOMATION track switched with [TAB], upgrades in many small tiers). The automation
-track's standing orders are managed at two yard buildings — the **Seed Co-op** and **Supply Depot**,
-each shuttered until its standing-order research is bought — where the player schedules which
-crops/fertilizer the farm auto-restocks and how much to keep on hand (orders pay a delivery premium,
-so a fully-automated farm runs at a thinner margin than buying by hand). The harvest ships on the
-**market truck** at the top of the farm (load spuds, send it off, coins + RP return after a wall-clock
-delay — selling no longer happens in town). Gates on the map edges travel between them. Farm state is
-`SaveDataManager.farm` schema 3 (sparse `tiles` dict keyed `"col:row"`, plus `research`/
-`research_points`/`truck`/`seed_order`/`fertilizer_order`); schema-1 (`plots` array) and schema-2 (`field:row:col` + `sections_owned`)
-saves migrate automatically through `SaveDataManager._migrate_farm()` (a 1→2→3 chain) — migration
-runs on the raw dict *before* the defaults merge. `scripts/visuals/` holds the procedural backdrops/FX.
+(movement, blockers, a camera with overview/follow zoom on Z, the wheel or trackpad pan/pinch,
+a real-clock night tint, clickable stations with a proximity prompt, the Farm Book drawer, the knife
+stand, popups) and `WorldHUD` (all drawn UI). Every click target is registered in a
+`scripts/ui/HitRegions.gd`, padded to ≥ 44 px — the trackpad rule: nothing needs drag, double-click,
+right-click or hover. Input routes Pip's note (modal) → the open drawer → HUD regions → the world.
+Real input on either map calls `FarmEconomy.note_input` (at most once a frame); nothing else does,
+so the kitchen, the menu and an idle open window all count as "away". Both maps settle the farm
+every 0.5 s; gates link them. `scripts/visuals/` holds the procedural backdrops/FX.
+
+**Spudling Acres, the farm** (`FarmController`, `FarmHud`, `FarmBook`, `FarmField`, `FarmCritters`,
+`FarmBackground`), is a cozy incremental optimization game. Six fenced fields of 12 plots plus a late
+Greenhouse (index 6) are bought with deeds. One verb, **Tend**, works on a whole field: harvest the
+ripe crop and replant the field's **plan** (set free in its field card, which shows each crop's
+"ready at" time), or plant an empty one; a short wallet plants free Russet. Coins pay at harvest
+and nothing rots. Short crops pay more per minute, long ones more per harvest, so the best plan is
+the crop that ripens just before you're back. **Spudlings** (a hut per field: Pip, Dot, …) clock in
+`clock.clockin_s` after your last input, work the **shift** the farmhouse tier sets, pick after a
+walk (Quick Hands) and replant free, then nap. A crop standing when you left is *yours*: it gets a
+grace of min(`clock.your_crop_grace_s`, its grow time) past ripe, then pays full value × your star
+EV; crops they planted while you were away pay their **share**. Crops unlock through the **Seed
+Catalog** (pages gated on plots *shipped*, so kitchen coins can't skip it). Every coin purchase is a
+**Farm Book** row (Land · Helpers · Tools · Soil & Strains · Catalog · Stats) showing its cost,
+"+X/min here · +Y/min away" and a payback for *your* logged schedule (`absences`/`presence`); there
+is no auto-buyer — [Pin] sets the Next Goal and Q buys it. More levers: **fence sprinklers** (a
+socket on each shared fence waters both neighbours; moving is free), the **Greenhouse**,
+Copper/Iron/Gold **Hoes**, infinite **Soil**, per-crop **Prize Strains** (ribbons on the farmhouse)
+and the daily **Market Favorite** (a date hash; the bonus locks at planting). **Butterflies** visit
+while you're here; a welcome one follows Collect after a long absence. **Pip's note** reports an
+absence and **[Collect]** hand-tends every ripe field, so a check-in is note → Collect → butterfly →
+one decision. Nothing runs while the game is closed: the next `settle()` computes the absence in
+closed form (**offline settle**). **Cross-mode:** the wallet is shared; kitchen, Concert and SPUD
+BLASTER runs also pay a capped **Farm Picnic** (`SaveDataManager.award_picnic`); Strains raise the
+kitchen's golden odds (`kitchen_golden_bonus`); santoku/chef/cleaver have Chef-XP gates
+(`knives.json` `unlock_xp`); the menu's Farm row shows a `FarmEconomy.preview()` teaser. The
+**town** (`TownController`) holds the knife stand, the championship kitchen, the Concert Hall
+bandstand and two farm storefronts (seed stall → Book Catalog tab, tool shed → Tools tab; they sell
+nothing extra). It is the home for future non-farming content.
+
+**Farm code.** `scripts/farm/FarmEconomy.gd` is the entire economy: static and **pure** over
+`(farm: Dictionary, now_ms: int, tz_s: int)` — no `Time`, nodes, audio, saving or global RNG (its
+xorshift32 state is `farm.rng`). Times are integer ms and fractional coins an integer milli-coin
+`carry`, so one bulk `settle()` equals many small ones (asserted, with JSON round-trips). Actions
+(`tend`, `tend_all`, `collect`, `set_plan`, `replant_now`, `buy`, `place_sprinkler`,
+`catch_butterfly`, …) settle first, mutate the dict and return `{ok, coins, spent, msg, events}`;
+queries (`field_view`, `plan_options`, `book`, `next_goal`, `preview`, `rate_here`/`rate_away`)
+never mutate. Scenes mutate farm state only through it and turn `events` into achievements, SFX and
+banners. `FarmClock` is the only farm code that reads the time (`offset_ms` time travel,
+`frozen_ms`, `tz_override` for tests); `FarmView` holds pure read-only scene helpers (geometry
+from `farm.json`, note/report peeks); `FarmMigration` is the pure schema-3 → 4 conversion;
+`scripts/utils/NumFmt.gd` formats every wallet, rate, duration and clock time. Autoloads and
+`FarmEconomy` itself must not name these classes as identifiers — `load()`/`preload()` them by path
+(a fresh checkout parses autoloads before the global class list exists; see commit 3000e3d).
+
+**Farm saves.** `SaveDataManager.farm` is schema 4; `FarmEconomy.new_farm()` is its template
+(seven `fields` with plan/crop/`planted_g`/`by`/`seed_paid`/`fav`/`hut`/milli-coin `carry`, plus
+the clock stamps, upgrades `up`, Catalog `page`, `shipped`, income buckets, the session log, buffs,
+`report`, `goal`, `rng`, `ui` and the one-time `migration` ledger). Older saves chain 1→2→3→4 in
+`SaveDataManager._migrate_farm()` on the raw dict *before* the defaults merge; 3→4 is
+`FarmMigration.migrate_v3` fed the frozen v3 tables in `resources/game_data/legacy/`
+(`research_v3`/`items_v3`/`crops_v3.json`, via `GameData.legacy_tables()`), so balance edits never
+change how an old save lands: retired gear and research come back as coins, unlocks stay, and the
+raw file is copied once to `farm.schema3.json`. `FarmEconomy.normalize()` deep-fills defaults and
+int-casts after every load (Godot's JSON parses numbers as floats). Scenes call
+`request_farm_save()` after each action (written 2 s after the last request, forced every 10 s);
+`flush_farm()` writes at once and runs on scene exit, focus-out, window close, slot switch and
+before quitting; `save_farm()` writes only `farm.json`. A 30 s heartbeat `Timer`
+(`PROCESS_MODE_ALWAYS`) settles a started farm from every scene and never stamps input. Scenes
+that idle cheaply (menu, farm, town) call `set_low_power_ok(true)`, so losing focus drops to
+`LOW_POWER_FPS` with OS low-processor mode. **Never cache `SaveDataManager.farm`** (or anything
+inside it): `switch_slot()`, `load_game()` and tests replace it wholesale, so re-read it every tick.
+
+**Farm balance.** `resources/game_data/farm.json` is the single balance source (crops, price
+ladders, multipliers, the Catalog, clock rules, even the field layout). Read numbers at runtime
+through `FarmEconomy.cfg()` / `crop_info()` / `cost_of()`; never hard-code a tuned value in scene
+code, tests or docs. Tune with the simulator (from `godot/`):
+`godot --headless --path . -s tests/farm/farm_sim.gd -- --all`, or `--profile class --days 14 --log`
+for one player, or `--override '<json>'` to try a knob without editing the file. It plays the real
+`FarmEconomy` with the design's profile bots (`tests/farm/FarmBot.gd`, `FarmSuite.gd`).
+`tests/farm/BALANCE.md` records the evidence and why each knob sits where it does; update it with
+any `farm.json` change. `FarmBalanceTest` is the CI gate.
 
 **SPUD BLASTER** (`scripts/fps/`, menu item [9]) is a 3D first-person deathmatch — the only 3D mode
 in an otherwise 2D game, built entirely in code (no art assets). `FpsNetwork` (autoload) manages the
@@ -234,7 +312,8 @@ Shareable links use a bare hash token `#s<seed>-<difficulty>`.
 
 - **Don't cross-pollinate the editions** — they're parallel implementations, not a shared core
   (except the composer/chart port above, which must stay identical).
-- Console game balance → `Data/GameData.cs`; Godot game balance → `resources/game_data/*.json`.
+- Console game balance → `Data/GameData.cs`; Godot game balance → `resources/game_data/*.json`
+  (the farm: `farm.json` only — then re-run the simulator and update `tests/farm/BALANCE.md`).
 - `Game` partials all declare `partial class Game`; keep new game-flow methods in the partial that
   matches its concern rather than growing `Game.cs` unboundedly.
 - Any new Godot headless test must print a unique sentinel string and self-quit so CI can grep for it.

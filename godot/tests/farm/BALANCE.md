@@ -4,7 +4,7 @@ This is the evidence behind `resources/game_data/farm.json`. Every number below 
 simulator, which plays the real `scripts/farm/FarmEconomy.gd` on the shipped `farm.json` with the
 profile players of design §6.1 (`tests/farm/FarmBot.gd`). `tests/FarmBalanceTest.gd` is the CI gate.
 
-**Status:** `FarmBalanceTest` prints `FARM BALANCE OK` in 57.6 s locally (budget 90 s). The full-length
+**Status:** `FarmBalanceTest` prints `FARM BALANCE OK` in 57.6 s locally (budget 240 s). The full-length
 report (`farm_sim --all`) passes everything except two diversity assertions that knob tuning cannot
 reach, SD3's full clause and SD9. See [Open items](#open-items-for-the-lead).
 

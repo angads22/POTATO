@@ -85,10 +85,12 @@ stumble. Streaks raise a x1–x4 multiplier, then FEVER doubles it. Easy, Normal
 change the note grid, the density and the belt speed.
 
 ### The farm, the town, and SPUD BLASTER (visual edition)
-- **Potato farm:** an open-world homestead. Plow, plant, water, fertilize and harvest
-  (crops keep growing while the game is closed), ship the harvest on the market truck,
-  and buy upgrades in the Research Shed's node tree. Automation research unlocks
-  standing orders at the Seed Co-op and the Supply Depot.
+- **Spudling Acres, the potato farm:** a cozy farm you check in on. Give each field a crop
+  plan that fits your schedule, hire Spudlings who pick and replant while you're away (even
+  with the game closed), and spend coins in the Farm Book, which shows how fast each purchase
+  pays back for the way you play. Nothing rots, and a check-in is three clicks: Collect on
+  Pip's note, catch the butterfly, make one decision. The farm is in the desktop builds only;
+  on a Chromebook, play the web edition (Concert mode).
 - **Town:** seed, knife and tool stalls around a fountain plaza, the championship kitchen,
   and the Concert Hall bandstand, which is a walk-up way into Concert mode. Knives you buy
   multiply your slicing score.
@@ -104,7 +106,7 @@ change the note grid, the density and the belt speed.
 | Bin a rotten potato | `X` or right-click |
 | Pause | `ESC` |
 | Fullscreen | `F11` |
-| Farm / town | `WASD` to walk, `E` to interact, `F` for fertilizer / sprinklers, `C` to cover a plot, `1`–`9` in shops |
+| Farm / town | Click anything, or `WASD` + `E` / `SPACE`; `F` field card, `T` tend all, `B` Farm Book, `Q` buy your goal, `G` catch the butterfly, `Z` zoom, `M` mute |
 | SPUD BLASTER | `WASD`, mouse look, LMB to shoot, RMB to aim, `1`–`5` to switch weapons, `R` to reload, `SPACE` to jump |
 
 **Audio feels off?** Settings → *Calibrate audio offset* plays a kick drum. Tap along and
@@ -173,7 +175,8 @@ cd godot
 godot --headless --import .                                             # compile check
 godot --headless --path . res://tests/SmokeTest.tscn --quit-after 4000  # two stages + FEVER, on the beat
 godot --headless --path . res://tests/ConcertSmokeTest.tscn --quit-after 6000
-# …plus FarmSmokeTest, TownSmokeTest, FpsSmokeTest, BossSmokeTest (see CLAUDE.md)
+# …plus FarmSmokeTest, TownSmokeTest, FarmBalanceTest, FarmMigrationTest,
+# FpsSmokeTest, BossSmokeTest (see CLAUDE.md)
 
 # Web edition
 python3 web/build.py                     # -> web/dist/SliceIt-Web.html (single file)
@@ -205,7 +208,8 @@ the *Web Edition* workflow.
 
 | Version | What changed |
 |---------|--------------|
-| **v4.0.0** | A procedural soundtrack and SFX, beat-locked gameplay, Concert mode, the web edition, pause menu, graded results, audio settings and calibration, console audio on Linux/macOS |
+| **v4.1.0** | The farm becomes **Spudling Acres**: a cozy incremental optimization farm with field plans, Spudling helpers, the Seed Catalog, the Farm Book with paybacks, sprinklers, Soil, Prize Strains, the Market Favorite and butterflies; offline settle; the Farm Picnic from every mode; a new town; schema-4 saves with automatic migration |
+| v4.0.0 | A procedural soundtrack and SFX, beat-locked gameplay, Concert mode, the web edition, pause menu, graded results, audio settings and calibration, console audio on Linux/macOS |
 | v3.5.0 | Hardened network-facing surfaces (input validation, rate limits) |
 | v3.4.0 | Three switchable save slots |
 | v3.3.x | Farm research tree rebalance, automation track with standing-order depots, layout cleanup |
@@ -230,12 +234,13 @@ POTATO/
 │   │   ├── core/           # GameManager, SaveDataManager, AudioManager (beat clock), updater
 │   │   ├── gameplay/       # GameplayController (beat-scheduled kitchen), PotatoVisual
 │   │   ├── minigames/      # Slice, Peel, SpeedCut, Julienne, Dodge, Boss — beat-locked
-│   │   ├── world/          # Farm + town overworld
+│   │   ├── farm/           # Spudling Acres economy core (pure, clock-injected)
+│   │   ├── world/          # Farm + town overworld scenes
 │   │   ├── fps/            # SPUD BLASTER
 │   │   ├── multiplayer/    # LAN rhythm duel
 │   │   ├── ui/             # Menu, HUD, results, pause overlay
 │   │   └── visuals/        # Procedural backdrops and FX
-│   ├── resources/game_data # Knives, potatoes, items, research, achievements (JSON)
+│   ├── resources/game_data # Knives, potatoes, farm balance, achievements (JSON)
 │   └── tests/              # Headless auto-player smoke tests (CI)
 ├── web/                    # Web edition: index.html + core.js (composer port) + audio.js
 │   └── tools/              # Godot/web parity check, headless-browser smoke test
