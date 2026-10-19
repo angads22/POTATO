@@ -408,17 +408,31 @@ func _process(delta):
 		_ripe_layer.position.y = -absf(sin(Time.get_ticks_msec() / 220.0)) * RIPE_BOUNCE
 
 # ── butterfly: catch target on screen, edge arrow off screen ──
-# Drawn after the drawer. While the drawer is open its area counts as off
-# screen: a butterfly behind it gets the edge arrow, clamped left of the
-# drawer, so it is never hidden and never sits over a Buy / Pin button.
+# Drawn after the drawer. Only the open play area counts as "on screen":
+# below the top HUD, above the prompt bar and the bottom bar, left of the open
+# drawer. A butterfly anywhere else (off screen, behind the drawer, under the
+# prompt or the bottom bar) gets the edge arrow, kept inside the play area, so
+# it is never hidden and never sits over a Buy / Pin button, the prompt or
+# the bottom bar. The catch box is clipped to the play area for the same
+# reason. (The still "Butterfly!" chip under the goal card is the main
+# trackpad target; this is the "where is it" cue.)
 
 const CATCH_R_MIN := 44.0           # catch box half-size floor (88 px at 0.45 zoom)
-const ARROW_INNER := Rect2(50, 140, 1180, 450)
+const PLAY_TOP := 112.0             # below the wallet, goal card and chip row
 
+# Where world overlays may take clicks (screen space).
+func play_rect() -> Rect2:
+	var bottom := BOTTOM_Y - 8.0
+	if prompt_rect.size != Vector2.ZERO:
+		bottom = minf(bottom, prompt_rect.position.y - 4.0)
+	var right := FarmBook.RECT.position.x - 4.0 if ctrl.book.open else 1280.0
+	return Rect2(0, PLAY_TOP, right, bottom - PLAY_TOP)
+
+# The edge arrow's centre is clamped to this rect: its ring (r 34), tip and
+# key letter stay inside play_rect().
 func butterfly_inner() -> Rect2:
-	if ctrl.book.open:
-		return Rect2(ARROW_INNER.position, Vector2(FarmBook.RECT.position.x - 44.0 - ARROW_INNER.position.x, ARROW_INNER.size.y))
-	return ARROW_INNER
+	var pr := play_rect()
+	return Rect2(pr.position.x + 50.0, pr.position.y + 50.0, pr.size.x - 100.0, maxf(0.0, pr.size.y - 100.0))
 
 func _draw_butterfly_target(font: Font):
 	var cr = ctrl.critters
@@ -427,11 +441,11 @@ func _draw_butterfly_target(font: Font):
 	var sp: Vector2 = ctrl.world_to_screen(cr.bf_pos)
 	var rad := maxf(CATCH_R_MIN, 40.0 * ctrl.zoom_now)
 	var box := Rect2(sp - Vector2(rad, rad), Vector2(rad, rad) * 2.0)
-	var inner := butterfly_inner()
-	var under_drawer: bool = ctrl.book.open and box.intersects(FarmBook.RECT)
-	if inner.has_point(sp) and not under_drawer:
-		regions.add(box, "bf:catch")
+	var pr := play_rect()
+	if pr.grow(-6.0).has_point(sp):
+		regions.add(box.intersection(pr), "bf:catch")
 		return
+	var inner := butterfly_inner()
 	var c := Vector2(clampf(sp.x, inner.position.x, inner.end.x), clampf(sp.y, inner.position.y, inner.end.y))
 	var dir := (sp - c).normalized() if sp.distance_to(c) > 1.0 else Vector2.RIGHT
 	var r := Rect2(c - Vector2(30, 30), Vector2(60, 60))
@@ -440,7 +454,12 @@ func _draw_butterfly_target(font: Font):
 	draw_arc(c, 34.0, -PI / 2, -PI / 2 + TAU * cr.bf_life01, 28, Color(1.0, 0.95, 0.6, 0.9), 3.0)
 	icon_butterfly(self, c, 13.0, sin(Time.get_ticks_msec() / 50.0))
 	icon_tri(self, c + dir * 40.0, 10.0, dir, GOLD)
-	draw_string(font, Vector2(c.x - 9, c.y + 50), "G", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, GOLD)
+	# the key letter sits beside the ring, away from the tip: under it for a
+	# sideways arrow, to the side for an up / down one
+	var gp := c + Vector2(0.0, 46.0)
+	if absf(dir.y) >= absf(dir.x):
+		gp = c + Vector2(-46.0 if dir.x > 0.2 else 46.0, 0.0)
+	draw_string(font, Vector2(gp.x - text_w(font, "G", 16) / 2.0, gp.y + 6.0), "G", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, GOLD)
 	regions.add(r, "bf:arrow")
 
 # ── overlays: drawer, sprinkler arrange ──

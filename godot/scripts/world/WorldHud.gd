@@ -43,6 +43,7 @@ const POPUP_STEP := 40.0
 static var _styles := {}
 
 var redraws := 0
+var prompt_rect := Rect2()   # the prompt bar as last drawn (Rect2() when hidden)
 var _dirty := true
 var _sig: Array = []
 var _since := 0.0
@@ -94,10 +95,30 @@ func _draw():
 # ── town HUD (FarmHud overrides) ──
 
 func _draw_hud(font: Font):
+	if ctrl.is_overview():
+		_draw_station_labels(font)
 	draw_wallet_panel(self, font, Rect2(10, 8, 280, 56), ctrl.wallet_display(), "")
 	_draw_icon_buttons(["sound", "zoom", "book", "menu"])
 	_draw_bottom_bar(font, [["book_bar", "B", "Farm Book"], ["zoom_bar", "Z", "Zoom"],
 			["sound_bar", "M", "Sound" if AudioManager.sound_enabled else "Muted"], ["menu_bar", "Esc", "Menu"]])
+
+# Town overview: the stalls' painted boards shrink to ~9 px, so every station
+# with a "label" gets a readable tag just under it (a 44 px+ target that acts
+# like a click on the stall itself).
+func _draw_station_labels(font: Font):
+	for s in ctrl.stations:
+		var lbl := str(s.get("label", ""))
+		if lbl == "":
+			continue
+		var wr: Rect2 = s["rect"]
+		var p: Vector2 = ctrl.world_to_screen(Vector2(wr.get_center().x, wr.end.y))
+		var w := text_w(font, lbl, 15) + 24.0
+		var r := Rect2(p.x - w / 2.0, p.y + 2.0, w, 28)
+		if r.position.y < 76.0 or r.end.y > BOTTOM_Y - 4.0:
+			continue
+		panel(self, r, Color(0.2, 0.13, 0.06, 0.92), Color(0.85, 0.68, 0.3, 0.7), 8)
+		draw_string(font, Vector2(r.position.x + 12, r.position.y + 20), lbl, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, INK)
+		regions.add(r, "station:" + str(s["id"]), s["id"])
 
 # Top-right row of 56x56 icon buttons, right-aligned at x 1270. Ids in
 # `inert` are drawn dimmed and not clickable (the farm's arrange mode).
@@ -129,6 +150,7 @@ func _draw_bottom_bar(font: Font, items: Array):
 # The prompt bar is also a button: a click does exactly what [E] does (and it
 # swallows the click, so it never falls through to the field underneath).
 func _draw_prompt(font: Font):
+	prompt_rect = Rect2()
 	if ctrl.prompt == "" or ctrl.ui_blocking():
 		return
 	var text: String = fit(font, ctrl.prompt, 19, 900)
@@ -136,7 +158,7 @@ func _draw_prompt(font: Font):
 	var r := Rect2(640 - ps.x / 2 - 18, 594, ps.x + 36, 44)
 	panel(self, r, PANEL_BG)
 	draw_string(font, Vector2(r.position.x + 18, r.position.y + 29), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 19, INK)
-	regions.add(r, "prompt")
+	prompt_rect = regions.add(r, "prompt")
 
 func _draw_overlays(font: Font):
 	if ctrl.open_shop == "knives":

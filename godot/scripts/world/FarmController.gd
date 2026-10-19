@@ -31,10 +31,11 @@ var bg: FarmBackground
 var fields: Array = []           # FarmField x7 (index = field index)
 var critters: FarmCritters
 var fireflies: CPUParticles2D
-var views: Array = []            # FarmEconomy.field_view per field, refreshed every frame
+var views: Array = []            # FarmEconomy.field_view per field, refreshed at 10 Hz and after every action
 var note_open := false
 var note: Dictionary = {}        # {report}: what the open note shows
 var pending_collect := false     # "Change plans first" left ripe fields: T / [Collect] tends them
+var welcome_owed := false        # ...and the welcome butterfly that note earned (paid by the deferred Collect)
 var arrange: Dictionary = {}     # sprinkler arrange mode: {active, field, mode, sel, from, was_overview}
 var hud_dirty := true
 var last_result: Dictionary = {} # the last FarmEconomy action result (test hook)
@@ -158,8 +159,7 @@ func _tick(delta: float):
 		# "Change plans first" armed a hoe-less Collect only for the fields that
 		# were ripe then: once none is ripe, T is plain Tend All again
 		if pending_collect and not _any_ripe():
-			pending_collect = false
-			hud_dirty = true
+			_disarm_pending_collect()
 	critters.tick(delta, f, now)
 	# walking into the butterfly catches it; a butterfly drifting into a player
 	# standing still does not (that would stamp presence without an input)
@@ -449,12 +449,17 @@ func tend_all() -> Dictionary:
 	return res
 
 # Pip's note [Collect]: FarmEconomy.collect (take_report + a Tend All that
-# needs no hoe), the coin shower, and the welcome butterfly it schedules.
+# needs no hoe), the coin shower, and the welcome butterfly it schedules. The
+# deferred Collect after [Change plans first] sees no absence (the note's
+# button stamped it), so it pays the welcome butterfly that note earned.
 func collect() -> Dictionary:
 	var res := FarmEconomy.collect(farm(), now_ms(), tz())
 	last_result = res
 	note_open = false
 	pending_collect = false
+	if welcome_owed and int(res.get("welcome_at_ms", 0)) == 0:
+		res["welcome_at_ms"] = _schedule_welcome()
+	welcome_owed = false
 	_after_action(res)
 	_tend_feedback(res, true)
 	AudioManager.play_sfx("coin_collect")
@@ -465,12 +470,14 @@ func collect() -> Dictionary:
 # the card of the first ripe field opens (with nothing ripe, the drawer stays
 # as it was). T / the [Collect] button tends later; that deferred Collect is
 # disarmed once no field is ripe any more.
-# Known gap (needs a FarmEconomy hook, tuner-owned): the deferred Collect sees
-# no absence, so it schedules no welcome butterfly; note.absence_ms keeps the
-# length for when collect() can take it.
+# The welcome butterfly plain Collect would have scheduled (absence >=
+# clock.welcome_butterfly_min_s) is owed, not lost: it comes 3-8 s after the
+# deferred Collect, or after the last ripe field is tended by hand, or at
+# once when nothing was ripe.
 func close_note_change_plans():
 	var f := farm()
 	note_open = false
+	var owed := int(note.get("absence_ms", 0)) >= FarmView.welcome_min_ms()
 	# stamp first (its settle closes the absence into the report), then read
 	# and clear the report, so no new note is pending until the next absence
 	note_real_input()
@@ -484,8 +491,41 @@ func close_note_change_plans():
 			first = i
 			break
 	pending_collect = first >= 0
+	welcome_owed = owed
 	if first >= 0:
 		open_field_card(first)
+	else:
+		_pay_welcome()
+
+# The deferred Collect was disarmed (every ripe field got tended by hand):
+# the owed welcome butterfly comes now.
+func _disarm_pending_collect():
+	pending_collect = false
+	hud_dirty = true
+	_pay_welcome()
+
+func _pay_welcome():
+	if welcome_owed:
+		welcome_owed = false
+		_schedule_welcome()
+
+# Stopgap until FarmEconomy grows a hook for it (FarmEconomy.gd is
+# tuner-owned): set the same three buffs keys FarmEconomy.collect sets for a
+# welcome butterfly. schedule_butterfly() picks the field from farm.rng (the
+# save stays deterministic) and the 3-8 s delay (butterflies.welcome_delay_s)
+# is derived from that same draw. Returns the spawn time.
+func _schedule_welcome() -> int:
+	var f := farm()
+	var now := now_ms()
+	var at := FarmEconomy.schedule_butterfly(f, now)
+	var d: Array = FarmEconomy.cfg()["butterflies"].get("welcome_delay_s", [3, 8])
+	var lo := int(d[0]) * 1000
+	var span := maxi(0, (int(d[1]) - int(d[0])) * 1000)
+	var bf: Dictionary = f["buffs"]
+	bf["next_butterfly_ms"] = now + lo + posmod(at - now, span + 1)
+	bf["welcome"] = true
+	SaveDataManager.request_farm_save()
+	return int(bf["next_butterfly_ms"])
 
 func _tend_feedback(res: Dictionary, many: bool):
 	var harvested := 0
@@ -521,7 +561,7 @@ func _after_action(res: Dictionary):
 	super._after_action(res)
 	_refresh_views()
 	if pending_collect and not _any_ripe():
-		pending_collect = false
+		_disarm_pending_collect()
 
 # ── goal, butterfly ──
 
@@ -595,6 +635,7 @@ func open_note():
 	var f := farm()
 	note = {"report": FarmView.peek_report(f), "absence_ms": FarmView.idle_ms(f, now_ms())}
 	note_open = true
+	welcome_owed = false             # a new note: its own Collect schedules the welcome
 	_note_t = 0.0
 	_note_tick = 0.0
 	if arrange_active():

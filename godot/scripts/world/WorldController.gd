@@ -540,6 +540,11 @@ func _hud_action(id: String, data):
 		_:
 			if id.begins_with("knife:"):
 				buy_or_equip_knife(str(data))
+			elif id.begins_with("station:"):
+				var st := station(id.substr(8))
+				if not st.is_empty():
+					face_toward(st["pos"])
+					(st["act"] as Callable).call()
 			else:
 				_on_hud(id, data)
 

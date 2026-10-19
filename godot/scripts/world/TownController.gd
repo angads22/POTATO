@@ -12,7 +12,9 @@ class_name TownController
 # Test hooks: station(id) for id in seeds, tools, knives, kitchen, concert,
 # gate ({pos, rect, act}); open_book(tab); book (FarmBook); open_knives();
 # hud.regions.rect_of("knife:<id>"). B (or the Book buttons) opens the Farm
-# Book here too.
+# Book here too. In overview (where the painted stall boards are ~9 px) the
+# stalls get readable screen-space tags, regions "station:<id>", which act
+# like a click on the stall.
 
 var bg: TownBackground
 
@@ -56,13 +58,13 @@ func _build_world():
 	stations = [
 		{"id": "seeds", "pos": TownBackground.SEED_STAND.get_center() + Vector2(0, 70), "r": 120.0,
 			"rect": TownBackground.SEED_STAND.grow(24),
-			"text": "[E] Seed stall: the Seed Catalog (Farm Book)", "act": func(): open_book("catalog")},
+			"text": "[E] Seed stall: the Seed Catalog (Farm Book)", "label": "Seeds · Catalog", "act": func(): open_book("catalog")},
 		{"id": "knives", "pos": TownBackground.KNIFE_STAND.get_center() + Vector2(0, 70), "r": 120.0,
 			"rect": TownBackground.KNIFE_STAND.grow(24),
-			"text": "[E] Browse the knife stand", "act": open_knives},
+			"text": "[E] Browse the knife stand", "label": "Knife stand", "act": open_knives},
 		{"id": "tools", "pos": TownBackground.TOOL_STAND.get_center() + Vector2(0, 70), "r": 120.0,
 			"rect": TownBackground.TOOL_STAND.grow(24),
-			"text": "[E] Tool shed: hoes and sprinklers (Farm Book)", "act": func(): open_book("tools")},
+			"text": "[E] Tool shed: hoes and sprinklers (Farm Book)", "label": "Tool shed", "act": func(): open_book("tools")},
 		{"id": "kitchen", "pos": Vector2(TownBackground.KITCHEN_WALL.get_center().x, TownBackground.KITCHEN_WALL.end.y + 30),
 			"r": 120.0, "rect": TownBackground.KITCHEN_WALL,
 			"text": "[E] Enter the championship kitchen", "act": enter_kitchen},
