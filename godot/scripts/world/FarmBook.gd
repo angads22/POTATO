@@ -14,7 +14,18 @@ class_name FarmBook
 #   close · tab:<land|helpers|tools|soil|catalog|stats> · scroll:up/down
 #   row:<row id> · buy:<row id> · pin:<row id>          (book rows, e.g. buy:hut:0)
 #   card:prev · card:next · plan:<crop> · card:hire · card:sprinkler
-#   card:tend · card:replant · card:deed                 (field card)
+#   card:sprinkler_move · card:tend · card:replant · card:deed (field card)
+#
+# Replant now on a GROWING crop is two steps (nothing is ever lost to one
+# accidental tap): the first click / Enter arms it (the row turns into a
+# full-width orange "Uproot ...? Click again" button), the very next input on
+# it within ARM_S confirms; any other input or ARM_S disarms. A ripe or empty
+# field replants (= tends) at once. Test hooks: replant_armed(), disarm().
+#
+# The last Book tab is remembered in farm.ui.book_tab (UI-only, like ui.zoom).
+# Rows (FarmEconomy.book, ~5 ms) are recomputed when invalidated (actions,
+# settles), when the wallet changes, or every ROWS_MAX_AGE_MS; the card's plan
+# options are cached for PLAN_CACHE_MS.
 
 const RECT := Rect2(860, 76, 410, 560)
 const TABS := ["land", "helpers", "tools", "soil", "catalog", "stats"]
@@ -28,6 +39,9 @@ const ROW_STEP := 80.0
 const LIST_TOP := 220.0
 const VISIBLE_ROWS := 5
 const PLAN_STEP := 46.0
+const ARM_S := 3.0
+const ROWS_MAX_AGE_MS := 10000
+const PLAN_CACHE_MS := 500
 
 var ctrl                       # WorldController
 var open := false
@@ -40,17 +54,30 @@ var regions := HitRegions.new()
 
 var _all_rows: Array = []
 var _rows_at := -100000
+var _rows_wallet := -1
 var _dirty := true
+var _plans: Array = []
+var _plans_key := ""
+var _plans_at := -100000
+var _arm_field := -1
+var _arm_serial := -1
+var _arm_ms := 0
 
 # ── open / close ──
 
+# t == "" reopens the last tab (farm.ui.book_tab).
 func open_book(t := ""):
 	open = true
 	mode = "book"
-	if t != "" and t in TABS:
+	if t == "":
+		var ui = _farm().get("ui", {})
+		t = str(ui.get("book_tab", tab)) if ui is Dictionary else tab
+	if t in TABS:
 		tab = t
+	_remember_tab()
 	sel = 0
 	scroll = 0
+	disarm()
 	invalidate()
 
 func open_card(i: int):
@@ -58,10 +85,33 @@ func open_card(i: int):
 	mode = "card"
 	field = clampi(i, 0, FarmEconomy.FIELDS - 1)
 	sel = _card_focus_default()
+	disarm()
 	invalidate()
 
 func close():
 	open = false
+	disarm()
+
+func _remember_tab():
+	var f := _farm()
+	if not f.has("ui") or not (f["ui"] is Dictionary):
+		return
+	if str(f["ui"].get("book_tab", "")) != tab:
+		f["ui"]["book_tab"] = tab
+		SaveDataManager.request_farm_save()
+
+# ── Replant now: arm, then confirm ──
+
+func replant_armed() -> bool:
+	return open and mode == "card" and _arm_field == field and _arm_field >= 0 \
+			and Time.get_ticks_msec() - _arm_ms < int(ARM_S * 1000.0)
+
+# Armed AND no other input since (what the card draws; the HUD signature).
+func armed_view() -> bool:
+	return replant_armed() and (ctrl == null or ctrl.input_serial == _arm_serial)
+
+func disarm():
+	_arm_field = -1
 
 func is_card() -> bool:
 	return open and mode == "card"
@@ -79,11 +129,24 @@ func _farm() -> Dictionary:
 
 func all_rows() -> Array:
 	var now := FarmClock.now_ms()
-	if _dirty or absi(now - _rows_at) > 1000:
+	var w := int(_farm().get("wallet", 0))
+	if _dirty or w != _rows_wallet or absi(now - _rows_at) > ROWS_MAX_AGE_MS:
 		_all_rows = FarmEconomy.book(_farm(), now, FarmClock.tz_s())
 		_rows_at = now
+		_rows_wallet = w
 		_dirty = false
 	return _all_rows
+
+# The field card's plan rows (FarmEconomy.plan_options), cached briefly.
+func plan_options() -> Array:
+	var now := FarmClock.now_ms()
+	var f := _farm()
+	var key := "%d|%s|%s|%d" % [field, f["fields"][field]["plan"], f["fields"][field]["crop"], int(f.get("page", 0))]
+	if _dirty or key != _plans_key or absi(now - _plans_at) > PLAN_CACHE_MS:
+		_plans = FarmEconomy.plan_options(f, field, now, FarmClock.tz_s())
+		_plans_key = key
+		_plans_at = now
+	return _plans
 
 func rows() -> Array:
 	var out: Array = []
@@ -196,12 +259,15 @@ func key(event: InputEventKey) -> bool:
 
 func _set_tab(idx: int):
 	tab = TABS[idx]
+	_remember_tab()
 	sel = 0
 	scroll = 0
 	AudioManager.play_sfx("menu_move")
 
 func _card_key(k: Key, _shift: bool) -> bool:
 	var items := _card_items()
+	if not (k in [KEY_ENTER, KEY_KP_ENTER] and sel < items.size() and str(items[sel]) == "card:replant"):
+		disarm()
 	match k:
 		KEY_UP:
 			sel = posmod(sel - 1, items.size())
@@ -233,6 +299,8 @@ func click(pos: Vector2) -> bool:
 
 # Run a region id (buttons, rows, tabs) as if it were clicked.
 func activate(id: String):
+	if id != "card:replant":
+		disarm()
 	if id == "close":
 		close()
 		AudioManager.play_sfx("menu_back")
@@ -286,12 +354,31 @@ func activate(id: String):
 			ctrl.tend_field(field)
 	elif id == "card:replant":
 		_focus(id)
-		ctrl.farm_replant(field)
+		_replant_click()
 	elif id == "card:deed":
 		if field == FarmEconomy.GREENHOUSE:
 			ctrl.farm_buy("greenhouse", null)
 		else:
 			ctrl.farm_buy("deed", field)
+
+# First click arms (growing crop only), the next input confirms. A test or a
+# direct call with no input in between also confirms.
+func _replant_click():
+	var v := FarmEconomy.field_view(_farm(), field, FarmClock.now_ms())
+	var growing: bool = v["owned"] and not v["empty"] and not v["ripe"]
+	if not growing:
+		disarm()
+		ctrl.farm_replant(field)
+		return
+	var serial: int = ctrl.input_serial if ctrl != null else 0
+	if replant_armed() and serial - _arm_serial <= 1:
+		disarm()
+		ctrl.farm_replant(field)
+		return
+	_arm_field = field
+	_arm_serial = serial
+	_arm_ms = Time.get_ticks_msec()
+	AudioManager.play_sfx("menu_select")
 
 func _select_id(row_id: String):
 	var rs := rows()
@@ -339,7 +426,14 @@ func sprinkler_state() -> Dictionary:
 func _sprinkler_action():
 	var st := sprinkler_state()
 	match str(st["kind"]):
-		"place", "buy", "move":
+		"buy":
+			# a greyed Buy stays on the card: say what's missing, don't arrange
+			var need := int(st.get("cost", 0)) - SaveDataManager.wallet()
+			if need > 0:
+				ctrl._popup("Needs %s c more for a sprinkler" % NumFmt.coins(need), WorldHUD.WARN)
+			elif ctrl.has_method("begin_arrange"):
+				ctrl.begin_arrange(field, "buy")
+		"place", "move":
 			if ctrl.has_method("begin_arrange"):
 				ctrl.begin_arrange(field, str(st["kind"]))
 		"locked":
@@ -395,9 +489,9 @@ func _week_line(f: Dictionary, now: int) -> String:
 	if not FarmView.started(f):
 		return "Your last 7 days: no visits yet"
 	if not FarmView.history_ready(f, now):
-		return "Guessing your week for now: here %d%% · away %s" % [FarmView.here_pct(f, now),
+		return "Guessing your week for now: here %s · away %s" % [FarmView.here_text(f, now),
 				NumFmt.dur(FarmEconomy.typical_absence_s(f, now))]
-	return "Your last 7 days: here %d%% · typical absence %s" % [FarmView.here_pct(f, now),
+	return "Your last 7 days: here %s · typical absence %s" % [FarmView.here_text(f, now),
 			NumFmt.dur(FarmEconomy.typical_absence_s(f, now))]
 
 func _draw_rows(ci: CanvasItem, font: Font, f: Dictionary):
@@ -440,7 +534,8 @@ func _draw_row(ci: CanvasItem, font: Font, f: Dictionary, r: Dictionary, rr: Rec
 	ci.draw_string(font, Vector2(tx, rr.position.y + 20), WorldHUD.fit(font, str(r["name"]), 15, tw), HORIZONTAL_ALIGNMENT_LEFT, -1, 15, name_col)
 	tx = rr.position.x + 10
 	tw = ROW_W - 10.0 - 118.0
-	ci.draw_string(font, Vector2(tx, rr.position.y + 37), WorldHUD.fit(font, str(r["effect"]), 12, tw), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, WorldHUD.INK_DIM)
+	var eff := effect_text(font, str(r["effect"]), tw)
+	ci.draw_string(font, Vector2(tx, rr.position.y + 37), eff[0], HORIZONTAL_ALIGNMENT_LEFT, -1, eff[1], WorldHUD.INK_DIM)
 	var lines := row_detail(f, r)
 	if r["locked"]:
 		# a lock reason gets both detail lines ("Catalog page 3: ship 480 Red · 312/480")
@@ -466,9 +561,38 @@ func _draw_row(ci: CanvasItem, font: Font, f: Dictionary, r: Dictionary, rr: Rec
 	WorldHUD.icon_pin(ci, pin.get_center() + Vector2(0, 2), 10.0, r["pinned"])
 	regions.add(pin, "pin:" + id)
 
+# A row's effect line that fits tw: [text, size]. 12 px, then 11 px, then a
+# few plain abbreviations of FarmEconomy's wording, then an ellipsis.
+const EFFECT_ABBR := [["You keep ", "Keep "], ["Spudling-planted crops", "their crops"], ["Stars: ", ""],
+		[" per absence", " away"], [" every crop", " all crops"]]
+
+static func effect_text(font: Font, text: String, tw: float) -> Array:
+	if WorldHUD.text_w(font, text, 12) <= tw:
+		return [text, 12]
+	if WorldHUD.text_w(font, text, 11) <= tw:
+		return [text, 11]
+	var t := text
+	for ab in EFFECT_ABBR:
+		t = t.replace(ab[0], ab[1])
+	if WorldHUD.text_w(font, t, 12) <= tw:
+		return [t, 12]
+	return [WorldHUD.fit(font, t, 11, tw), 11]
+
+# "+38/min" / "<0.1/min" / "none": a gain as the Book shows it. Negative
+# deltas (a bigger farmhouse can shift picks) are shown as no gain.
+static func gain_text(per_min: float) -> String:
+	if per_min <= 0.0:
+		return "none"
+	if per_min < 0.05:
+		return "<0.1/min"
+	return NumFmt.rate(per_min)
+
+const PAYBACK_CAP_S := 30 * 86400
+
 # The two detail lines of a row: [line1, line2, colour1, colour2]. Rate
 # lines read "+38/min here · +12/min away" then "≈ 3h 10m payback for you";
-# rows that change no income get a plain description (lead ruling 2).
+# rows that change no income get a plain description (lead ruling 2); a row
+# whose gain for your schedule is zero (or negative) says just that.
 func row_detail(f: Dictionary, r: Dictionary) -> Array:
 	var green := Color(0.62, 0.9, 0.5)
 	if r["locked"]:
@@ -483,9 +607,13 @@ func row_detail(f: Dictionary, r: Dictionary) -> Array:
 		return ["Helps once you hire a Spudling", "Spudlings work only while you're away", WorldHUD.INK, WorldHUD.INK_DIM]
 	if item == "strain" and absf(dh) < 1e-6 and absf(da) < 1e-6:
 		return ["No %s harvests lately" % FarmView.crop_name(str(r["arg"])), "Its value shows once you grow it", WorldHUD.INK, WorldHUD.INK_DIM]
-	var gains := "%s here · %s away" % [NumFmt.rate(dh), NumFmt.rate(da)]
+	if dh <= 0.0 and da <= 0.0:
+		return ["No gain for your schedule", "nothing more here or away", WorldHUD.INK_DIM, WorldHUD.INK_MUTED]
+	var gains := "%s here · %s away" % [gain_text(dh), gain_text(da)]
 	if pb < 0.0:
 		return [gains, "no gain for your schedule", green, WorldHUD.INK_MUTED]
+	if pb > PAYBACK_CAP_S:
+		return [gains, "> 30 days payback for you", green, WorldHUD.INK_DIM]
 	return [gains, "≈ %s payback for you" % NumFmt.dur(pb), green, WorldHUD.GOLD]
 
 func _next_tool(f: Dictionary) -> Dictionary:
@@ -570,7 +698,7 @@ func _draw_stats(ci: CanvasItem, font: Font, f: Dictionary, now: int):
 		["Butterflies · stars", "%d · %s" % [int(st.get("butterflies", 0)), NumFmt.coins(int(st.get("stars", 0)))]],
 		["Farmhouse", "%s · %s shifts" % [FarmView.house_name(FarmView.house_tier(f)), NumFmt.dur(FarmView.shift_s(f))]],
 		["Soil · hoe", "L%d · %s" % [int(f["up"]["soil"]), ctrl._tool_name(int(f["up"]["tool"]))]],
-		["Here (7 days)", "%d%% · typical absence %s" % [FarmView.here_pct(f, now), NumFmt.dur(FarmEconomy.typical_absence_s(f, now))]],
+		["Here (7 days)", "%s · typical absence %s" % [FarmView.here_text(f, now), NumFmt.dur(FarmEconomy.typical_absence_s(f, now))]],
 	]
 	for ln in lines:
 		ci.draw_string(font, Vector2(x, y), str(ln[0]), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, WorldHUD.INK_DIM)
@@ -636,7 +764,10 @@ func _draw_card(ci: CanvasItem, font: Font):
 		regions.add(pr[0], pr[1])
 	var title := "%s  ·  key %d" % [v["name"], i + 1]
 	ci.draw_string(font, Vector2(x0 + 58, y0 + 24), WorldHUD.fit(font, title, 18, 238), HORIZONTAL_ALIGNMENT_LEFT, -1, 18, WorldHUD.GOLD)
-	ci.draw_string(font, Vector2(x0 + 58, y0 + 44), WorldHUD.fit(font, card_status(f, v, tzs), 12, 240),
+	var status := card_status(f, v, tzs)
+	if WorldHUD.text_w(font, status, 12) > 240:
+		status = card_status(f, v, tzs, false)       # drop the "(in …)" part rather than cut it
+	ci.draw_string(font, Vector2(x0 + 58, y0 + 44), WorldHUD.fit(font, status, 12, 240),
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, WorldHUD.INK)
 	if not v["owned"]:
 		_draw_for_sale(ci, font, f, v, focus)
@@ -646,7 +777,7 @@ func _draw_card(ci: CanvasItem, font: Font):
 	ci.draw_string(font, Vector2(x0 + 16, y + 12), "PLAN · what Tend plants next", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, WorldHUD.INK_MUTED)
 	y += 16.0
 	var plan: String = v["plan"]
-	for o in FarmEconomy.plan_options(f, i, now, tzs):
+	for o in plan_options():
 		var r := Rect2(x0 + 15, y, ROW_W, 44)
 		var id := "plan:" + str(o["crop"])
 		var is_plan: bool = o["crop"] == plan
@@ -706,39 +837,65 @@ func _draw_card(ci: CanvasItem, font: Font):
 	WorldHUD.panel(ci, sr, Color(0.12, 0.16, 0.2, 0.9), Color(0.5, 0.75, 0.95, 0.35), 8)
 	if v["watered"]:
 		WorldHUD.icon_droplet(ci, Vector2(sr.position.x + 18, sr.get_center().y), 8.0)
-	var btn_w := (166.0 if spr["label"] != "" else 0.0) + (72.0 if spr.get("can_move", false) else 0.0)
+	var btn_w := (SPR_W if spr["label"] != "" else 0.0) + (MOVE_W + 4.0 if spr.get("can_move", false) else 0.0)
 	var stext := str(spr["text"])
-	if btn_w > 200.0:
+	if WorldHUD.text_w(font, stext, 13) > ROW_W - 40 - btn_w:
 		stext = stext.replace("Watered by fence ", "Watered by ")
+	if WorldHUD.text_w(font, stext, 13) > ROW_W - 40 - btn_w:
+		stext = stext.replace("Watered by ", "Fence ")
 	ci.draw_string(font, Vector2(sr.position.x + 34, sr.position.y + 27), WorldHUD.fit(font, stext, 13,
 			ROW_W - 40 - btn_w), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, WorldHUD.INK)
 	if spr["label"] != "":
-		var b := Rect2(sr.end.x - 166, sr.position.y, 166, 44)
+		var b := Rect2(sr.end.x - SPR_W, sr.position.y, SPR_W, 44)
 		var en: bool = spr["kind"] != "buy" or SaveDataManager.wallet() >= int(spr.get("cost", 0))
 		WorldHUD.text_button(ci, font, b, str(spr["label"]), 13, spr["kind"] == "place", en, focus == "card:sprinkler")
 		regions.add(b, "card:sprinkler")
 	else:
 		regions.add(sr, "card:sprinkler")
 	if spr.get("can_move", false):
-		var mb := Rect2(sr.end.x - btn_w, sr.position.y, 68, 44)
-		WorldHUD.text_button(ci, font, mb, "Move", 13, false, true, focus == "card:sprinkler_move")
+		var mb := Rect2(sr.end.x - btn_w, sr.position.y, MOVE_W, 44)
+		WorldHUD.text_button(ci, font, mb, "Move here", 12, false, true, focus == "card:sprinkler_move")
 		regions.add(mb, "card:sprinkler_move")
 	y += 48.0
-	# Tend now / Replant now
+	# Tend now / Replant now (two steps on a growing crop: see replant_armed)
 	var growing: bool = not v["empty"] and not v["ripe"]
-	var tr := Rect2(x0 + 15, y, 186, 44)
-	var rr := Rect2(x0 + 209, y, 186, 44)
-	var tend_lbl := "Harvest + replant" if v["ripe"] else ("Plant %s" % FarmView.crop_name(plan) if v["empty"] else "Growing…")
-	WorldHUD.text_button(ci, font, tr, tend_lbl, 14, not growing, not growing, focus == "card:tend")
-	regions.add(tr, "card:tend")
-	var rp_lbl := "Replant now · +%s c" % NumFmt.coins(int(v["refund"])) if growing else "Replant now"
-	WorldHUD.text_button(ci, font, rr, rp_lbl, 14, false, growing, focus == "card:replant")
-	regions.add(rr, "card:replant")
 	var hint := "Click a crop to plan it · Enter picks · arrows move · Esc closes"
-	ci.draw_string(font, Vector2(x0 + 16, RECT.end.y - 8), WorldHUD.fit(font, hint, 11, ROW_W), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, WorldHUD.INK_MUTED)
+	var hint_col := WorldHUD.INK_MUTED
+	if growing and armed_view():
+		var ar := Rect2(x0 + 15, y, ROW_W, 44)
+		WorldHUD.panel(ci, ar, Color(0.42, 0.17, 0.06, 0.98), WorldHUD.WARN, 8)
+		ci.draw_rect(ar.grow(3), Color(1.0, 0.6, 0.3, 0.8), false, 2.0)
+		var al := WorldHUD.fit(font, "Uproot %s (%s left)? Click again" % [FarmView.crop_name(str(v["crop"])),
+				NumFmt.dur(int(v["left_ms"]) / 1000.0)], 14, ROW_W - 16)
+		ci.draw_string(font, Vector2(ar.get_center().x - WorldHUD.text_w(font, al, 14) / 2, ar.get_center().y + 5), al,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 14, WorldHUD.INK)
+		regions.add(ar, "card:replant")
+		var paid := int(v["seed_paid"])
+		hint = ("Refund %s of %s c seed · any other click keeps it" % [NumFmt.coins(int(v["refund"])), NumFmt.coins(paid)]) \
+				if int(v["refund"]) > 0 else "No refund (a Spudling planted it) · any other click keeps it"
+		hint_col = WorldHUD.WARN
+	else:
+		var tr := Rect2(x0 + 15, y, TEND_W, 44)
+		var rr := Rect2(x0 + 15 + TEND_W + 8, y, ROW_W - TEND_W - 8, 44)
+		var tend_lbl := "Harvest + replant" if v["ripe"] else ("Plant %s" % FarmView.crop_name(plan) if v["empty"] else "Growing…")
+		WorldHUD.text_button(ci, font, tr, tend_lbl, 14, not growing, not growing, focus == "card:tend")
+		regions.add(tr, "card:tend")
+		var rp_lbl := "Replant now"
+		if growing:
+			# the safe state names the loss, not a "+" gain
+			rp_lbl = "Replant now (refund %s c)" % NumFmt.coins(int(v["refund"])) if int(v["refund"]) > 0 else "Replant now (no refund)"
+		var rs := 14 if WorldHUD.text_w(font, rp_lbl, 14) <= rr.size.x - 12 else 13
+		WorldHUD.text_button(ci, font, rr, rp_lbl, rs, false, growing, focus == "card:replant")
+		regions.add(rr, "card:replant")
+	ci.draw_string(font, Vector2(x0 + 16, RECT.end.y - 8), WorldHUD.fit(font, hint, 11, ROW_W), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, hint_col)
+
+const TEND_W := 156.0
+const MOVE_W := 76.0
+const SPR_W := 152.0
 
 # Status under the card title: "ripe", "ready at 10:52 (in 23m)", "empty".
-func card_status(f: Dictionary, v: Dictionary, tzs: int) -> String:
+# with_left = false drops the "(in 23m)" part (when the long form won't fit).
+func card_status(f: Dictionary, v: Dictionary, tzs: int, with_left := true) -> String:
 	if not v["owned"]:
 		return "for sale" if int(v["cost"]) >= 0 else "not for sale"
 	var crop := FarmView.crop_name(str(v["crop"]))
@@ -746,6 +903,8 @@ func card_status(f: Dictionary, v: Dictionary, tzs: int) -> String:
 		return "empty · Tend plants %s" % FarmView.crop_name(str(v["plan"]))
 	if v["ripe"]:
 		return "%s is ripe" % crop
+	if not with_left:
+		return "%s · ready %s" % [crop, NumFmt.clock(int(v["ready_at_ms"]), tzs)]
 	return "%s · ready %s (in %s)" % [crop, NumFmt.clock(int(v["ready_at_ms"]), tzs), NumFmt.dur(int(v["left_ms"]) / 1000.0)]
 
 func _next_spudling_name(f: Dictionary) -> String:
@@ -762,8 +921,8 @@ func _draw_for_sale(ci: CanvasItem, font: Font, f: Dictionary, v: Dictionary, fo
 		lines = ["The Greenhouse: a 7th field under glass.", "Crops grow ×%.2f here, always watered." % float(FarmEconomy.cfg()["greenhouse"]["grow_mult"]),
 				"It can take a Spudling hut too."]
 	else:
-		lines = ["12 plots, already tilled and fenced.", "A deed's price depends on how many fields", "you own, not which one: pick your layout.",
-				"Sprinklers sit on the fences between fields."]
+		lines = ["%d plots, already tilled and fenced." % FarmView.plots_per_field(), "A deed's price depends on how many fields",
+				"you own, not which one: pick your layout.", "Sprinklers sit on the fences between fields."]
 	if gh:
 		_glass_icon(ci, Vector2(x0 + 30, y + 26))
 	else:

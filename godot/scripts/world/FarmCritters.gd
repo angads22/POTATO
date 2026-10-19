@@ -3,14 +3,17 @@ class_name FarmCritters
 
 # Little living things above the fields (design §5.5, §7.3):
 # - the butterfly: it appears whenever FarmEconomy.butterfly_due() (a timed
-#   spawn, or the welcome butterfly Collect schedules), flutters over
-#   buffs.butterfly_field with a gold trail and a 12 s countdown ring, and is
-#   caught by a click, by G from anywhere, or by walking within 60 px; the
-#   HUD draws its edge arrow while it is off screen;
+#   spawn, or the welcome butterfly Collect schedules), flutters slowly over
+#   buffs.butterfly_field (landing on a plot for a second every few seconds,
+#   so a trackpad can catch it) with a gold trail and a 12 s countdown ring,
+#   and is caught by a click (or its HUD chip), by G from anywhere, or by
+#   walking into it; the HUD draws its edge arrow while it is off screen;
 # - Spudling figures at their hut doors, waving while you're here, hopping
 #   about their field while they work, out of sight while they nap;
 # - the coin pops: "+3" / "+4 *" floating up from each plot after a tend, in a
 #   quick ripple (stars are drawn, the font has none).
+# Redraws: every frame only while the butterfly or a pop moves; the Spudling
+# chores at idle_hz (12, 6 while you're away); otherwise not at all.
 
 var ctrl                      # FarmController
 var t := 0.0
@@ -25,6 +28,14 @@ var bf_welcome := false
 var _trail: Array = []        # recent positions
 
 var _pops: Array = []         # {pos, text, stars, age, delay}
+var idle_hz := 12.0           # Spudling chores redraw rate (the controller lowers it while you're away)
+var redraws := 0              # test hook
+var _redraw_acc := 0.0
+var _drew_dynamic := false
+
+# Butterfly flight: rest REST_S on a plot, then fly FLY_S (eased in and out).
+const REST_S := 1.0
+const FLY_S := 2.2
 
 func _ready():
 	z_index = 3
@@ -46,8 +57,10 @@ func tick(delta: float, farm: Dictionary, now: int):
 		bf_life01 = clampf(1.0 - float(now - spawn) / float(life_ms), 0.0, 1.0)
 		var r := FarmView.field_rect(bf_field)
 		var u := float(now - spawn) / 1000.0
-		bf_pos = r.get_center() + Vector2(sin(u * 0.9) * r.size.x * 0.38, sin(u * 1.7 + 0.6) * r.size.y * 0.36) \
-				+ Vector2(0, -20 + sin(u * 7.0) * 6.0)
+		var s := flight_param(u)
+		var resting := fmod(u, REST_S + FLY_S) < REST_S
+		bf_pos = r.get_center() + Vector2(sin(s * 0.45) * r.size.x * 0.38, sin(s * 0.85 + 0.6) * r.size.y * 0.36) \
+				+ Vector2(0, -20 + (0.0 if resting else sin(u * 5.0) * 5.0))
 		_trail.push_front(bf_pos)
 		if _trail.size() > 14:
 			_trail.pop_back()
@@ -56,7 +69,26 @@ func tick(delta: float, farm: Dictionary, now: int):
 	for p in _pops:
 		p.age += delta
 	_pops = _pops.filter(func(p): return p.age < p.delay + 1.1)
-	queue_redraw()
+	# redraw every frame only while the butterfly or coin pops move; Spudling
+	# chores at idle_hz; otherwise only once more to clear the last frame
+	var dynamic := bf_active or not _pops.is_empty()
+	if dynamic or _drew_dynamic:
+		_drew_dynamic = dynamic
+		_redraw_acc = 0.0
+		queue_redraw()
+	elif farm.has("fields") and int(farm["up"].get("huts", 0)) > 0:
+		_redraw_acc += delta
+		if _redraw_acc >= 1.0 / maxf(1.0, idle_hz):
+			_redraw_acc = 0.0
+			queue_redraw()
+
+# The butterfly's path parameter at u seconds after spawn: it sits still for
+# REST_S, then flies FLY_S worth of path with an eased start and landing.
+static func flight_param(u: float) -> float:
+	var period := REST_S + FLY_S
+	var k := floorf(u / period)
+	var x := clampf((fmod(u, period) - REST_S) / FLY_S, 0.0, 1.0)
+	return (k + x * x * (3.0 - 2.0 * x)) * FLY_S
 
 # Coin pops for a tend: one per plot, rippling across the field.
 func pop_field(i: int, coins: int, stars: Array):
@@ -85,6 +117,7 @@ func butterfly_world() -> Vector2:
 	return bf_pos
 
 func _draw():
+	redraws += 1
 	var farm: Dictionary = SaveDataManager.farm
 	if farm.has("fields") and ctrl != null:
 		_draw_spudlings(farm)

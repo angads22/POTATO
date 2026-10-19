@@ -71,9 +71,16 @@ func _on_clear_ground(p: Vector2) -> bool:
 			return false
 	return p.distance_to(FOUNTAIN_C) > 240.0
 
+var _acc := 0.0
+
+# Grass sway and the fountain only need ~20 redraws a second (the backdrop is
+# the biggest canvas item in the scene).
 func _process(delta):
 	t += delta
-	queue_redraw()
+	_acc += delta
+	if _acc >= 1.0 / 20.0:
+		_acc = 0.0
+		queue_redraw()
 
 func _draw():
 	_draw_grass()

@@ -76,6 +76,10 @@ func _ready():
 		var p = Vector2(rng.randf_range(100, WORLD.x - 100), rng.randf_range(100, WORLD.y - 100))
 		if _on_clear_ground(p):
 			_rocks.append(p)
+	ground = Ground.new()
+	ground.bg = self
+	ground.show_behind_parent = true
+	add_child(ground)
 
 # Keeps grass decorations off the buildings, fields, pond, garden and paths.
 func _on_clear_ground(p: Vector2) -> bool:
@@ -111,20 +115,22 @@ static func _segment_distance(p: Vector2, a: Vector2, b: Vector2) -> float:
 	return p.distance_to(a + ab * tt)
 
 var _acc := 0.0
+var redraw_hz := 20.0      # the controller drops it to 8 while you're away
+var ground: Node2D         # the static ground layer (drawn once)
 
-# The backdrop only animates grass, water and sprinkler spray, so 30 redraws
-# a second are plenty (it is the biggest canvas item in the scene).
+# The backdrop only animates grass tufts, water, smoke, trees and sprinkler
+# spray, slowly: 20 redraws a second are plenty. The static ground (the bulk
+# of the draw calls) lives in the Ground child and is drawn once.
 func _process(delta):
 	t += delta
 	_acc += delta
-	if _acc >= 1.0 / 30.0:
+	if _acc >= 1.0 / redraw_hz:
 		_acc = 0.0
 		queue_redraw()
 
 func _draw():
 	var farm: Dictionary = SaveDataManager.farm
-	_draw_grass()
-	_draw_paths()
+	_draw_tufts()
 	_draw_kitchen_garden()
 	_draw_pond()
 	_draw_hay()
@@ -136,22 +142,8 @@ func _draw():
 	_draw_town_gate()
 	_draw_hedge_border()
 
-func _draw_grass():
-	for i in range(0, int(WORLD.y), 120):
-		var shade = Color(0.42, 0.62, 0.3) if (i / 120) % 2 == 0 else Color(0.38, 0.58, 0.27)
-		draw_rect(Rect2(0, i, WORLD.x, 120), shade)
-	for d in _dapples:
-		draw_circle(d.pos, d.r, d.col)
-	for f in _flowers:
-		var p: Vector2 = f.pos
-		for k in range(4):
-			var a = k * TAU / 4.0
-			draw_circle(p + Vector2(cos(a), sin(a)) * 4.0, 3.0, f.col)
-		draw_circle(p, 2.6, Color(0.98, 0.8, 0.25))
-	for r in _rocks:
-		draw_circle(r + Vector2(2, 2), 9.0, Color(0, 0, 0, 0.18))
-		draw_circle(r, 9.0, Color(0.6, 0.6, 0.58))
-		draw_circle(r - Vector2(2, 3), 4.5, Color(0.72, 0.72, 0.7))
+# The animated grass: tufts sway (the static ground is the Ground child).
+func _draw_tufts():
 	for tf in _tufts:
 		var p: Vector2 = tf.pos
 		var sway = sin(t * 1.8 + tf.ph) * 2.5
@@ -160,23 +152,40 @@ func _draw_grass():
 		draw_line(p, p + Vector2(sway, -14), col, 2.0)
 		draw_line(p, p + Vector2(4 + sway, -10), col, 2.0)
 
-func _draw_paths():
+# Everything on the ground that never moves (grass stripes, dapples, flowers,
+# rocks, the paths): drawn once into the Ground child, behind this node.
+func draw_ground(ci: CanvasItem):
+	for i in range(0, int(WORLD.y), 120):
+		var shade = Color(0.42, 0.62, 0.3) if (i / 120) % 2 == 0 else Color(0.38, 0.58, 0.27)
+		ci.draw_rect(Rect2(0, i, WORLD.x, 120), shade)
+	for d in _dapples:
+		ci.draw_circle(d.pos, d.r, d.col)
+	for f in _flowers:
+		var p: Vector2 = f.pos
+		for k in range(4):
+			var a = k * TAU / 4.0
+			ci.draw_circle(p + Vector2(cos(a), sin(a)) * 4.0, 3.0, f.col)
+		ci.draw_circle(p, 2.6, Color(0.98, 0.8, 0.25))
+	for r in _rocks:
+		ci.draw_circle(r + Vector2(2, 2), 9.0, Color(0, 0, 0, 0.18))
+		ci.draw_circle(r, 9.0, Color(0.6, 0.6, 0.58))
+		ci.draw_circle(r - Vector2(2, 3), 4.5, Color(0.72, 0.72, 0.7))
 	var grass_edge := Color(0.3, 0.46, 0.22, 0.5)
 	var gravel := Color(0.5, 0.38, 0.23)
 	var earth := Color(0.62, 0.48, 0.30)
 	var worn := Color(0.7, 0.57, 0.37)
 	for path in PATHS:
-		draw_polyline(PackedVector2Array(path), grass_edge, 60.0)
+		ci.draw_polyline(PackedVector2Array(path), grass_edge, 60.0)
 	for k in PATHS.size():
 		var path: Array = PATHS[k]
 		var wd := 1.0 if k == 0 else 0.7
 		var pts = PackedVector2Array(path)
-		draw_polyline(pts, gravel, 52.0 * wd)
-		draw_polyline(pts, earth, 44.0 * wd)
-		draw_polyline(pts, worn, 20.0 * wd)
+		ci.draw_polyline(pts, gravel, 52.0 * wd)
+		ci.draw_polyline(pts, earth, 44.0 * wd)
+		ci.draw_polyline(pts, worn, 20.0 * wd)
 		for i in range(path.size()):
-			draw_circle(path[i], 22.0 * wd, earth)
-			draw_circle(path[i], 10.0 * wd, worn)
+			ci.draw_circle(path[i], 22.0 * wd, earth)
+			ci.draw_circle(path[i], 10.0 * wd, worn)
 	var grng := RandomNumberGenerator.new()
 	grng.seed = 0x6A77
 	for path in PATHS:
@@ -188,7 +197,14 @@ func _draw_paths():
 				var base := a.lerp(b, float(s) / maxf(1.0, steps))
 				var off := Vector2(grng.randf_range(-14, 14), grng.randf_range(-14, 14))
 				var shade: Color = gravel.darkened(0.12) if (s % 2 == 0) else worn.lightened(0.05)
-				draw_circle(base + off, grng.randf_range(1.5, 3.0), shade)
+				ci.draw_circle(base + off, grng.randf_range(1.5, 3.0), shade)
+
+class Ground extends Node2D:
+	var bg
+	var redraws := 0
+	func _draw():
+		redraws += 1
+		bg.draw_ground(self)
 
 func _draw_pond():
 	draw_set_transform(POND_C, 0.0, Vector2(1.0, POND_R.y / POND_R.x))

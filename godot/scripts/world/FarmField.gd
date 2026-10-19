@@ -8,9 +8,12 @@ class_name FarmField
 # Spudling's name and "z z" when napping, a droplet on watered fields and a
 # drawn star on a Favorite-locked crop.
 #
-# The controller passes a fresh field_view every frame (refresh); the node
-# redraws only when its stage bucket changes, or ~30 times a second for the
-# ripe bob while it is on screen (design §7.6). StyleBoxFlats are cached.
+# The controller passes a fresh field_view (refresh, ~10 Hz); the node redraws
+# only when its stage bucket changes (design §7.6). The ripe potatoes live on
+# two child layers (a checkerboard of plots) and the "harvest me" ring on a
+# third: they are drawn once per bucket and animated by their transform and
+# modulate, so a ripe field costs no redraws while it bobs. Only a rare crop's
+# orbiting sparkles redraw (at bob_hz). StyleBoxFlats are cached.
 
 var index := 0
 var rect := Rect2()
@@ -20,8 +23,19 @@ var redraws := 0           # test hook: how often _draw ran
 var t := 0.0
 var _bucket := ""
 var _bob_acc := 0.0
+var _ripe_a: Node2D        # ripe plots where (col + row) is even
+var _ripe_b: Node2D        # ... odd (bobs a little later)
+var _ring: Node2D
+var _spark: Node2D
 
 static var _sb := {}
+static var bob_hz := 30.0  # rare-crop sparkle redraws per second (the controller drops it to 10 while you're away)
+
+# A child canvas item that draws through a callback of this field.
+class Layer extends Node2D:
+	var draw_fn: Callable
+	func _draw():
+		draw_fn.call(self)
 
 const PLOT := Vector2(140, 110)
 
@@ -29,6 +43,17 @@ func setup(i: int):
 	index = i
 	rect = FarmView.field_rect(i)
 	position = rect.position
+	_ripe_a = _layer(func(ci): _draw_ripe_plots(ci, 0))
+	_ripe_b = _layer(func(ci): _draw_ripe_plots(ci, 1))
+	_ring = _layer(_draw_ring)
+	_spark = _layer(_draw_sparkles)
+
+func _layer(fn: Callable) -> Node2D:
+	var l := Layer.new()
+	l.draw_fn = fn
+	l.visible = false
+	add_child(l)
+	return l
 
 # Stage bucket: everything a redraw depends on except the ripe bob.
 func bucket_of(v: Dictionary) -> String:
@@ -43,14 +68,27 @@ func refresh(v: Dictionary, visible_now: bool):
 	if b != _bucket:
 		_bucket = b
 		queue_redraw()
+		var ripe: bool = v.get("owned", false) and int(v.get("stage", 0)) == 4
+		var rare: bool = ripe and bool(FarmEconomy.crop_info(str(v.get("crop", ""))).get("rare", false))
+		for l in [_ripe_a, _ripe_b, _ring]:
+			l.visible = ripe
+			l.queue_redraw()
+		_spark.visible = rare
+		_spark.queue_redraw()
 
 func _process(delta):
 	t += delta
-	if view.get("ripe", false) and on_screen:
+	if not _ripe_a.visible or not on_screen:
+		return
+	# the bob and the ring pulse are transforms / modulate: no redraw
+	_ripe_a.position = Vector2(sin(t * 2.0) * 1.5, -absf(sin(t * 3.0)) * 3.0)
+	_ripe_b.position = Vector2(sin(t * 2.0 + 1.6) * 1.5, -absf(sin(t * 3.0 + 1.6)) * 3.0)
+	_ring.modulate.a = 0.45 + 0.4 * (0.5 + 0.5 * sin(t * 3.0))
+	if _spark.visible:
 		_bob_acc += delta
-		if _bob_acc >= 1.0 / 30.0:
+		if _bob_acc >= 1.0 / bob_hz:
 			_bob_acc = 0.0
-			queue_redraw()
+			_spark.queue_redraw()
 
 static func _style(key: String, bg: Color, border: Color, radius: int, bw: int) -> StyleBoxFlat:
 	if _sb.has(key):
@@ -87,16 +125,10 @@ func _draw():
 			_draw_soil_bed(pc, view["watered"] and stage > 0)
 			if stage >= 1 and stage <= 3:
 				_draw_growing(pc, stage, c + r * cols)
-			elif stage == 4:
-				_draw_ready(pc, crop, c + r * cols)
 	if gh:
 		_draw_glass()
 	else:
 		_draw_fence()
-	if view["ripe"]:
-		# the "harvest me" ring around the whole field (shape, not just colour)
-		var pulse := 0.5 + 0.5 * sin(t * 3.0)
-		draw_rect(Rect2(Vector2(-14, -14), rect.size + Vector2(28, 28)), Color(1.0, 0.88, 0.35, 0.45 + 0.4 * pulse), false, 5.0)
 	if view["fav"] and crop != "":
 		_flag_star(Vector2(18, -26))
 	if view["watered"]:
@@ -132,22 +164,44 @@ func _draw_growing(pc: Vector2, stage: int, k: int):
 		draw_circle(Vector2.ZERO, 7.0 + p * 4.0, stem.lightened(0.12 * i))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
-func _draw_ready(pc: Vector2, crop: String, k: int):
+# The ripe plots of one checkerboard parity, at rest (the layer bobs).
+func _draw_ripe_plots(ci: CanvasItem, parity: int):
+	if view.is_empty() or int(view.get("stage", 0)) != 4:
+		return
+	var cols := int(rect.size.x / PLOT.x)
+	var rows := int(rect.size.y / PLOT.y)
+	for r in rows:
+		for c in cols:
+			if (c + r) % 2 == parity:
+				_draw_ready(ci, Vector2(PLOT.x * (c + 0.5), PLOT.y * (r + 0.5)), str(view["crop"]))
+
+func _draw_ready(ci: CanvasItem, pc: Vector2, crop: String):
 	var info := FarmEconomy.crop_info(crop)
 	var body := Color(str(info.get("color", "#b87333")))
-	var bob := sin(t * 3.0 + k * 0.6) * 3.0
-	var sway := sin(t * 2.0 + k) * 2.0
 	for off in [Vector2(-14, -26), Vector2(14, -24), Vector2(0, -38)]:
-		draw_circle(pc + off + Vector2(sway, 0), 16.0, Color(0.28, 0.5, 0.22))
-	draw_circle(pc + Vector2(sway - 6, -42), 8.0, Color(0.38, 0.6, 0.3))
+		ci.draw_circle(pc + off, 16.0, Color(0.28, 0.5, 0.22))
+	ci.draw_circle(pc + Vector2(-6, -42), 8.0, Color(0.38, 0.6, 0.3))
 	for i in range(3):
-		var pp := pc + Vector2(-26.0 + i * 26.0, 14 + 3 * sin(i * 2.0) - absf(bob) * (1.0 if i == 1 else 0.6))
-		draw_circle(pp, 11.0, body)
-		draw_arc(pp, 11.0, 0, TAU, 16, body.darkened(0.4), 2.0)
-	if info.get("rare", false):
-		for i in range(3):
-			var a := t * 2.0 + i * TAU / 3.0 + k
-			draw_circle(pc + Vector2(cos(a) * 34.0, -20 + sin(a) * 22.0), 2.5, Color(1.0, 0.9, 0.4, 0.85))
+		var pp := pc + Vector2(-26.0 + i * 26.0, 14 + 3 * sin(i * 2.0) - (1.0 if i == 1 else 0.0))
+		ci.draw_circle(pp, 11.0, body)
+		ci.draw_arc(pp, 11.0, 0, TAU, 16, body.darkened(0.4), 2.0)
+
+# The "harvest me" ring around the whole field (shape, not just colour); its
+# pulse is the layer's modulate.
+func _draw_ring(ci: CanvasItem):
+	ci.draw_rect(Rect2(Vector2(-14, -14), rect.size + Vector2(28, 28)), Color(1.0, 0.88, 0.35, 1.0), false, 5.0)
+
+# A rare crop's sparkles orbiting each plot (the only ripe part that redraws).
+func _draw_sparkles(ci: CanvasItem):
+	var cols := int(rect.size.x / PLOT.x)
+	var rows := int(rect.size.y / PLOT.y)
+	for r in rows:
+		for c in cols:
+			var pc := Vector2(PLOT.x * (c + 0.5), PLOT.y * (r + 0.5))
+			var k := c + r * cols
+			for i in range(3):
+				var a := t * 2.0 + i * TAU / 3.0 + k
+				ci.draw_circle(pc + Vector2(cos(a) * 34.0, -20 + sin(a) * 22.0), 2.5, Color(1.0, 0.9, 0.4, 0.85))
 
 # ── fence, glass, for-sale lot ──
 

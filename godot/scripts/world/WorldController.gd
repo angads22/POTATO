@@ -10,10 +10,13 @@ class_name WorldController
 # most) so Spudlings never clock in while you are shopping, and both maps
 # settle the farm every 0.5 s.
 #
-# Input routing (design §7.1): _modal_input (the farm's Pip's note) → HUD hit
-# regions → the drawer → the world. Subclasses hook in through the virtuals
-# below; test drivers can call handle_input(event) directly or go through
-# Input.parse_input_event (both reach the same code).
+# Input routing (design §7.1): _modal_input (the farm's Pip's note) → the open
+# drawer (nothing on the HUD is meant to sit over it, so a click inside it is
+# always the drawer's) → HUD hit regions → the world. Subclasses hook in
+# through the virtuals below; test drivers can call handle_input(event)
+# directly or push events with get_tree().root.push_input(ev, true) (both
+# reach the same code; Input.parse_input_event never reaches a headless
+# scene, whose window is 0x0).
 
 const PLAYER_SPEED := 290.0
 const POPUP_LIFE := 1.9
@@ -23,6 +26,10 @@ const FOLLOW_ZOOM := 1.0
 const NIGHT_TINT_MAX := 0.35     # the night tint never hides the farm
 const ROLL_S := 0.8              # wallet roll-up time
 const GESTURE_COOLDOWN := 0.35
+const SCROLL_COOLDOWN := 0.12    # trackpad swipes / hi-res wheels over the drawer
+const SCROLL_STEP := 2.0         # accumulated pan delta (or wheel factor) per row
+const ESC_ARM_S := 1.5           # Esc with nothing open: press again within this to leave
+const VIEW_REFRESH_S := 0.1      # field views / prompt refresh (10 Hz; actions refresh at once)
 
 # Set by travel gates just before change_scene_to_file so the destination
 # scene knows where to put the player.
@@ -52,7 +59,8 @@ var blockers: Array = []   # Rect2s the player can't walk through
 var overview := false      # zoom state: true = overview, false = follow
 var zoom_now := 1.0
 var wallet_shown := 0.0    # the HUD's rolling wallet
-var input_count := 0       # real inputs noted (test hook)
+var input_count := 0       # real inputs noted (test hook; at most one per frame)
+var input_serial := 0      # every real input that reached the scene (not frame-deduped)
 var _roll_from := 0.0
 var _roll_t := 1.0
 var _roll_to := 0
@@ -62,6 +70,12 @@ var _input_frame := -1
 var _step_clock := 0.0
 var _gesture_t := 0.0
 var _swing_cool := 0.0
+var _scroll_t := 0.0
+var _scroll_acc := 0.0
+var _esc_t := 0.0
+var _scan_t := 0.0
+var _scan_pos := Vector2(INF, INF)
+var _scan_at := 0
 
 # ── subclass hooks ──
 
@@ -195,8 +209,18 @@ func _process(delta):
 	_update_camera(delta)
 	_gesture_t = maxf(0.0, _gesture_t - delta)
 	_swing_cool = maxf(0.0, _swing_cool - delta)
+	_scroll_t = maxf(0.0, _scroll_t - delta)
+	_esc_t = maxf(0.0, _esc_t - delta)
 	_tick(delta)
-	_scan_interactions()
+	# the prompt only changes when the player moves, a drawer opens/closes or a
+	# field's countdown ticks: rescan on movement, else at 10 Hz
+	_scan_t -= delta
+	var now := now_ms()
+	if _scan_t <= 0.0 or player.position != _scan_pos or absi(now - _scan_at) >= int(VIEW_REFRESH_S * 1000.0):
+		_scan_t = VIEW_REFRESH_S
+		_scan_pos = player.position
+		_scan_at = now
+		_scan_interactions()
 	_roll_wallet(delta)
 	banner_age += delta
 	for p in popups:
@@ -224,6 +248,9 @@ func settle_now() -> Dictionary:
 			or not res.get("events", []).is_empty() or bool(res.get("rebased", false)):
 		SaveDataManager.request_farm_save()
 		_react(res)
+		book.invalidate()
+		if hud != null:
+			hud.mark_dirty()
 	_on_settle(res)
 	return res
 
@@ -399,6 +426,14 @@ func handle_input(event: InputEvent):
 	if _modal_input(event):
 		return
 	note_real_input()
+	input_serial += 1
+	_scan_t = 0.0
+	if hud != null:
+		hud.mark_dirty()
+	# The design never needs a double-click: the second press of one is only
+	# presence (stamped above), never a second Buy / Collect / tend.
+	if event is InputEventMouseButton and event.double_click and event.button_index == MOUSE_BUTTON_LEFT:
+		return
 	if event is InputEventKey:
 		if event.echo:
 			if ui_blocking() and event.keycode in [KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT]:
@@ -410,11 +445,13 @@ func handle_input(event: InputEvent):
 			MOUSE_BUTTON_LEFT:
 				click(event.position)
 			MOUSE_BUTTON_WHEEL_UP:
-				_scroll_or_zoom(event.position, -1)
+				_scroll_or_zoom(event.position, -1, false, event.factor)
 			MOUSE_BUTTON_WHEEL_DOWN:
-				_scroll_or_zoom(event.position, 1)
+				_scroll_or_zoom(event.position, 1, false, event.factor)
 	elif event is InputEventPanGesture:
-		if absf(event.delta.y) > 0.3:
+		if book.open and book.contains(event.position):
+			_scroll_drawer(event.delta.y, true)
+		elif absf(event.delta.y) > 0.3:
 			_scroll_or_zoom(event.position, 1 if event.delta.y > 0 else -1, true)
 	elif event is InputEventMagnifyGesture:
 		if _gesture_t <= 0.0 and absf(event.factor - 1.0) > 0.02:
@@ -437,9 +474,14 @@ func note_real_input() -> Dictionary:
 	_react(res)
 	return res
 
-func _scroll_or_zoom(pos: Vector2, dir: int, gesture := false):
+func _scroll_or_zoom(pos: Vector2, dir: int, gesture := false, factor := 1.0):
 	if book.open and book.contains(pos):
-		book.scroll_by(dir)
+		# a plain wheel notch reports factor 1 (or 0 where unsupported): one row
+		# each; precision touchpads send fractions at frame rate: accumulate
+		if factor <= 0.0 or factor >= 0.999:
+			book.scroll_by(dir)
+		else:
+			_scroll_drawer(dir * factor * SCROLL_STEP * 0.5, true)
 		return
 	if open_shop != "":
 		return
@@ -450,13 +492,28 @@ func _scroll_or_zoom(pos: Vector2, dir: int, gesture := false):
 	# wheel / ctrl+wheel / two-finger scroll: up zooms in, down zooms out
 	set_overview(dir > 0)
 
+# A two-finger swipe (or hi-res wheel) over the drawer: one row per
+# SCROLL_STEP of accumulated delta, at most one row per SCROLL_COOLDOWN, so a
+# single swipe moves a row or two instead of jumping to the end.
+func _scroll_drawer(dy: float, _gesture := true):
+	if signf(dy) != signf(_scroll_acc):
+		_scroll_acc = 0.0
+	_scroll_acc += dy
+	if absf(_scroll_acc) < SCROLL_STEP or _scroll_t > 0.0:
+		return
+	book.scroll_by(1 if _scroll_acc > 0.0 else -1)
+	_scroll_acc = 0.0
+	_scroll_t = SCROLL_COOLDOWN
+
 func click(pos: Vector2):
+	# The open drawer first: no HUD target is meant to sit over it, and world
+	# overlays (field signs, the butterfly) must never steal a Buy / Pin click.
+	if book.open and book.contains(pos):
+		book.click(pos)
+		return
 	var h: Dictionary = hud.regions.hit(pos)
 	if not h.is_empty():
 		_hud_action(str(h["id"]), h.get("data"))
-		return
-	if book.open and book.contains(pos):
-		book.click(pos)
 		return
 	if open_shop != "":
 		if not WorldHUD.SHOP_PANEL.has_point(pos):
@@ -465,7 +522,7 @@ func click(pos: Vector2):
 	_world_click(screen_to_world(pos), pos)
 
 func _hud_action(id: String, data):
-	if id in ["btn:sound_bar", "btn:zoom_bar", "btn:menu_bar"]:
+	if id in ["btn:sound_bar", "btn:zoom_bar", "btn:menu_bar", "btn:book_bar"]:
 		id = id.trim_suffix("_bar")
 	match id:
 		"btn:sound":
@@ -476,14 +533,28 @@ func _hud_action(id: String, data):
 			go_menu()
 		"shop:close":
 			close_shop()
+		"prompt":
+			interact()
+		"btn:book":
+			toggle_book()
 		_:
 			if id.begins_with("knife:"):
 				buy_or_equip_knife(str(data))
 			else:
 				_on_hud(id, data)
 
+# Movement polls PHYSICAL W/A/S/D while shortcuts read the logical keycode. On
+# AZERTY (or Dvorak) a movement key types another letter (physical A = Q,
+# physical W = Z, Dvorak physical D = E), so while the player can walk such a
+# key is movement only, never a shortcut. QWERTY is unaffected (keycode ==
+# physical keycode there).
+static func is_movement_alias(event: InputEventKey) -> bool:
+	return event.physical_keycode in [KEY_W, KEY_A, KEY_S, KEY_D] and event.keycode != event.physical_keycode
+
 func _key_input(event: InputEventKey):
 	var k := event.keycode
+	if can_move() and is_movement_alias(event):
+		return
 	if k == KEY_M:
 		toggle_mute()
 		return
@@ -500,17 +571,38 @@ func _key_input(event: InputEventKey):
 	match k:
 		KEY_Z:
 			toggle_zoom()
+		KEY_B:
+			toggle_book()
 		KEY_E, KEY_SPACE:
 			interact()
 
+# B / the Book buttons: open the Farm Book (on its last tab), or close it.
+func toggle_book():
+	if book.open and book.mode == "book":
+		book.close()
+		AudioManager.play_sfx("menu_back")
+	else:
+		open_book("")
+
+# Esc closes the drawer or shop first. With nothing open, the first press only
+# warns ("Esc again for the menu") so a student closing things doesn't fall
+# out of the farm; a second press within ESC_ARM_S leaves. The HUD Menu
+# button leaves at once.
 func escape():
-	if book.open:
+	if book.open and book.replant_armed():
+		book.disarm()                 # Esc just takes back an armed "Replant now"
+		AudioManager.play_sfx("menu_back")
+	elif book.open:
 		book.close()
 		AudioManager.play_sfx("menu_back")
 	elif open_shop != "":
 		close_shop()
-	else:
+	elif _esc_t > 0.0:
+		_esc_t = 0.0
 		go_menu()
+	else:
+		_esc_t = ESC_ARM_S
+		_popup("Press Esc again for the menu", INK_HINT)
 
 func interact():
 	if prompt_action.is_valid():
@@ -617,6 +709,9 @@ func _after_action(res: Dictionary):
 	SaveDataManager.request_farm_save()
 	_react(res)
 	book.invalidate()
+	_scan_t = 0.0
+	if hud != null:
+		hud.mark_dirty()
 
 # Popups / banners / SFX for FarmEconomy events (both scenes).
 func _react(res: Dictionary):
@@ -631,7 +726,7 @@ func _react(res: Dictionary):
 			"hut_hired":
 				_popup("%s moved into the %s hut!" % [e["name"], FarmView.field_name(int(e["field"]))], WorldHUD.GOOD)
 			"deed":
-				_popup("%s is yours: 12 tilled plots!" % FarmView.field_name(int(e["field"])), WorldHUD.GOOD)
+				_popup("%s is yours: %d tilled plots!" % [FarmView.field_name(int(e["field"])), FarmView.plots_per_field()], WorldHUD.GOOD)
 			"greenhouse":
 				_show_banner("Greenhouse built!", "Crops under glass grow almost twice as fast.")
 			"house":
@@ -741,7 +836,18 @@ func buy_or_equip_knife(id: String) -> bool:
 
 # ── feedback ──
 
+const INK_HINT := Color(0.85, 0.9, 1.0)
+
 func _popup(text: String, color: Color):
+	# the same line again (e.g. two "Goal done!" in a row) restarts its life
+	# instead of stacking a duplicate
+	for p in popups:
+		if p.text == text and p.age < POPUP_LIFE * 0.5:
+			p.age = 0.0
+			p.color = color
+			if color == WorldHUD.WARN:
+				AudioManager.play_sfx("error")
+			return
 	popups.append({"text": text, "color": color, "age": 0.0})
 	if popups.size() > 6:
 		popups.pop_front()
@@ -750,6 +856,8 @@ func _popup(text: String, color: Color):
 		AudioManager.play_sfx("error")
 
 func _show_banner(text: String, sub := ""):
+	if hud != null:
+		hud.mark_dirty()
 	banner_text = text
 	banner_sub = sub
 	banner_age = 0.0

@@ -8,15 +8,22 @@ class_name FarmController
 # SaveDataManager.farm (fresh every tick), calls FarmEconomy actions with
 # FarmClock time, reacts to their events and asks for a debounced save.
 #
-# Routing (WorldController.handle_input): Pip's note (modal) -> HUD hit
-# regions -> the drawer -> the world. Keys (§7.1): WASD/arrows move; E/Space
-# tend the field you stand in or use the station you stand at; F field card
-# of that field; 1-7 field card from anywhere; T Tend All; B Farm Book;
+# Routing (WorldController.handle_input): Pip's note (modal) -> the open
+# drawer -> HUD hit regions -> the world. Keys (§7.1): WASD/arrows move;
+# E/Space tend the field you stand in or use the station you stand at; F field
+# card of that field; 1-7 field card from anywhere; T Tend All; B Farm Book;
 # Q buy the Next Goal; G catch the butterfly; Z zoom; M mute; Esc closes the
-# drawer/note, else back to the menu. Mouse: click a ripe or empty field to
-# tend it, a growing or unowned one (or any field sign) for its card; click
-# the butterfly, a hut, the farmhouse or the gate; wheel / pinch / two-finger
+# arrange mode / note / drawer, else warns once and then goes back to the
+# menu. Mouse: click a ripe or empty field to tend it, a growing or unowned
+# one (or any field sign) for its card; click the butterfly (or its chip), a
+# hut, the farmhouse, the gate or the prompt bar; wheel / pinch / two-finger
 # scroll zoom between overview (0.45) and follow (1.0).
+#
+# Per-frame work is kept small (design §7.6): field views, stations and the
+# prompt refresh at 10 Hz (and at once after every action, settle or clock
+# jump), the HUD redraws on change, ripe fields and RIPE! signs bob by their
+# transform (no redraw), and while you're away (no input for 2 min) the
+# backdrop, critters and rare-crop sparkles slow down further.
 
 const CATCH_RADIUS := 60.0
 
@@ -33,19 +40,27 @@ var hud_dirty := true
 var last_result: Dictionary = {} # the last FarmEconomy action result (test hook)
 var _note_t := 0.0
 var _note_tick := 0.0
+var _views_t := 0.0
+var _views_at := 0         # farm-clock ms of the last view refresh
+var _station_sig := ""
+var _present := true
 
 func _ready():
 	var f := farm()
-	if not FarmView.started(f):
+	var first := not FarmView.started(f)
+	if first:
 		# first visit (or a freshly migrated farm): stamp the clock
 		FarmEconomy.start(f, now_ms(), tz())
 		SaveDataManager.request_farm_save()
 	super._ready()
 	settle_now()
 	_refresh_views()
+	_update_presence_rates(true)
 	if FarmView.note_pending(farm(), now_ms()):
 		open_note()
-	else:
+	elif first or str(FarmEconomy.next_goal(farm(), now_ms())["kind"]) == "tutorial":
+		# the big welcome banner only while it teaches something: later entries
+		# (e.g. back from town) go straight to the farm
 		_show_banner("SPUDLING ACRES", _welcome_sub())
 	_check_achievements()
 
@@ -76,6 +91,8 @@ func _initial_overview() -> bool:
 	return z < 0.7
 
 func _on_zoom_changed():
+	if arrange_active():
+		return      # arrange's forced overview is temporary: keep the player's preference
 	var f := farm()
 	if not f.has("ui") or not (f["ui"] is Dictionary):
 		f["ui"] = {}
@@ -130,12 +147,26 @@ func _walkable(p: Vector2) -> bool:
 func _tick(delta: float):
 	var f := farm()
 	var now := now_ms()
-	_refresh_views()
+	# 10 Hz in play; a farm-clock jump (sleep/resume, tests' time travel)
+	# refreshes on the next frame
+	_views_t -= delta
+	if _views_t <= 0.0 or absi(now - _views_at) >= int(VIEW_REFRESH_S * 1000.0):
+		_views_t = VIEW_REFRESH_S
+		_refresh_views()
+		_refresh_stations()
+		_update_presence_rates()
+		# "Change plans first" armed a hoe-less Collect only for the fields that
+		# were ripe then: once none is ripe, T is plain Tend All again
+		if pending_collect and not _any_ripe():
+			pending_collect = false
+			hud_dirty = true
 	critters.tick(delta, f, now)
-	if critters.bf_active and not note_open and player.position.distance_to(critters.bf_pos) <= CATCH_RADIUS:
+	# walking into the butterfly catches it; a butterfly drifting into a player
+	# standing still does not (that would stamp presence without an input)
+	if critters.bf_active and player.moving and not note_open \
+			and player.position.distance_to(critters.bf_pos) <= CATCH_RADIUS:
 		catch_butterfly()
 	fireflies.emitting = night01 > 0.5
-	_refresh_stations()
 	if note_open:
 		_note_t += delta
 		var coins := int(note.get("report", {}).get("coins", 0))
@@ -150,6 +181,7 @@ func _refresh_views():
 	if not f.has("fields"):
 		return
 	var now := now_ms()
+	_views_at = now
 	var screen := Rect2(-40, -40, 1360, 800)
 	views.resize(FarmEconomy.FIELDS)
 	for i in FarmEconomy.FIELDS:
@@ -157,11 +189,38 @@ func _refresh_views():
 		if i < fields.size():
 			fields[i].refresh(views[i], field_screen_rect(i).intersects(screen))
 
+func _any_ripe() -> bool:
+	for v in views:
+		if v is Dictionary and v.get("owned", false) and v.get("ripe", false):
+			return true
+	return false
+
+# Away (no input for 2 min, e.g. the laptop left open in class): the backdrop
+# (8 Hz), the Spudling chores (6 Hz) and rare-crop sparkles (10 Hz) slow down.
+func _update_presence_rates(force := false):
+	var p := player_present()
+	if p == _present and not force:
+		return
+	_present = p
+	bg.redraw_hz = 20.0 if p else 8.0
+	FarmField.bob_hz = 30.0 if p else 10.0
+	critters.idle_hz = 12.0 if p else 6.0
+	hud.mark_dirty()
+
 func _on_settle(res: Dictionary):
-	if not res.is_empty():
+	if int(res.get("coins", 0)) > 0 or int(res.get("picks", 0)) > 0 or not res.get("events", []).is_empty() \
+			or not res.get("pages", []).is_empty():
 		hud_dirty = true
 
+# Stations change only when a hut is hired or the farmhouse grows.
 func _refresh_stations():
+	var f := farm()
+	var sig := str(FarmView.house_tier(f))
+	for i in FarmEconomy.FIELDS:
+		sig += "|%s%s" % [f["fields"][i]["owned"] and f["fields"][i]["hut"], str(views[i]["hut_name"]) if views.size() > i else ""]
+	if sig == _station_sig and not stations.is_empty():
+		return
+	_station_sig = sig
 	stations = [
 		{"id": "house", "pos": FarmBackground.HOUSE_DOOR, "r": 95.0, "rect": FarmBackground.HOUSE_WALL,
 			"text": "[E] The %s: hire and upgrade Spudlings (Farm Book)" % FarmView.house_name(FarmView.house_tier(farm())),
@@ -169,7 +228,6 @@ func _refresh_stations():
 		{"id": "gate", "pos": FarmBackground.TOWN_GATE_POS, "r": 120.0, "rect": Rect2(2400, 540, 160, 150),
 			"text": "[E] Take the road into town", "act": goto_town},
 	]
-	var f := farm()
 	for i in FarmEconomy.FIELDS:
 		if f["fields"][i]["owned"] and f["fields"][i]["hut"]:
 			var idx := i
@@ -219,7 +277,7 @@ func _scan_interactions():
 		prompt_action = func(): tend_field(i)
 	elif v["empty"]:
 		var plan := str(v["plan"])
-		var seed := 12 * int(FarmEconomy.crop_info(plan).get("seed", 0))
+		var seed := FarmView.plots_per_field() * int(FarmEconomy.crop_info(plan).get("seed", 0))
 		prompt = "[E] Plant %s with %s (%s)  ·  [F] Field card" % [nm, FarmView.crop_name(plan),
 				"free" if seed == 0 else NumFmt.coins(seed) + " c"]
 		prompt_action = func(): tend_field(i)
@@ -231,9 +289,12 @@ func _scan_interactions():
 # ── input ──
 
 # Pip's note owns every input while it is open (and doesn't stamp presence:
-# its buttons do, through Collect / note_input). An input that ends an
-# absence of report_min_s or more while the scene is open opens the note
-# and is consumed.
+# its buttons do, through Collect / note_input). Mid-session, an input that
+# ends an absence of report_min_s or more opens the note (and is consumed)
+# only when the note has news: Spudling baskets, a new Catalog page, or an
+# absence long enough for the welcome butterfly. A quiet 2-9 minutes (reading
+# the Book, waiting for a Yukon) just stamps the input and lets it act; its
+# empty report is taken so no stale note pops up on the next entry.
 func _modal_input(event: InputEvent) -> bool:
 	if note_open:
 		if event is InputEventKey:
@@ -256,10 +317,17 @@ func _modal_input(event: InputEvent) -> bool:
 	var f := farm()
 	var now := now_ms()
 	if FarmView.started(f) and FarmView.idle_ms(f, now) >= FarmView.report_min_ms():
-		FarmEconomy.settle(f, now, tz())
+		settle_now()
+		f = farm()
 		if FarmView.note_pending(f, now):
-			open_note()
-			return true
+			if FarmView.note_has_news(f, now):
+				open_note()
+				return true
+			# stamp first (its settle closes the absence into the report), then
+			# drop the quiet report; handle_input's own stamp is a no-op this frame
+			note_real_input()
+			FarmEconomy.take_report(f)
+			SaveDataManager.request_farm_save()
 	return false
 
 func _key_input(event: InputEventKey):
@@ -281,12 +349,6 @@ func _scene_key(event: InputEventKey) -> bool:
 				open_field_card(i)
 		KEY_T:
 			tend_all()
-		KEY_B:
-			if book.open and book.mode == "book":
-				book.close()
-				AudioManager.play_sfx("menu_back")
-			else:
-				open_book("")
 		KEY_Q:
 			buy_goal()
 		KEY_G:
@@ -307,17 +369,11 @@ func escape():
 
 func _on_hud(id: String, data) -> bool:
 	match id:
-		"btn:book", "btn:book_bar":
-			if book.open and book.mode == "book":
-				book.close()
-				AudioManager.play_sfx("menu_back")
-			else:
-				open_book("")
 		"btn:tend_all":
 			tend_all()
 		"goal":
 			goal_click()
-		"bf:catch", "bf:arrow":
+		"bf:catch", "bf:arrow", "bf:chip":
 			catch_butterfly()
 		"arrange:cancel":
 			cancel_arrange()
@@ -333,7 +389,7 @@ func _on_hud(id: String, data) -> bool:
 func _world_click(world_pos: Vector2, screen_pos: Vector2) -> bool:
 	if arrange_active():
 		return true
-	if critters.bf_active and world_pos.distance_to(critters.bf_pos) <= maxf(44.0, 30.0 / zoom_now):
+	if critters.bf_active and world_pos.distance_to(critters.bf_pos) <= maxf(FarmHud.CATCH_R_MIN, 40.0 * zoom_now) / zoom_now:
 		catch_butterfly()
 		return true
 	if super._world_click(world_pos, screen_pos):
@@ -351,6 +407,7 @@ func _world_click(world_pos: Vector2, screen_pos: Vector2) -> bool:
 func field_click(i: int):
 	if views.size() <= i:
 		_refresh_views()
+	views[i] = FarmEconomy.field_view(farm(), i, now_ms())   # views refresh at 10 Hz: be exact here
 	var v: Dictionary = views[i]
 	if v["owned"] and (v["empty"] or v["ripe"]):
 		tend_field(i)
@@ -358,7 +415,8 @@ func field_click(i: int):
 		open_field_card(i)
 
 func open_field_card(i: int):
-	arrange = {}
+	if arrange_active():
+		_end_arrange(false)
 	book.open_card(i)
 	face_toward(FarmView.field_rect(i).get_center())
 	AudioManager.play_sfx("menu_select")
@@ -404,7 +462,12 @@ func collect() -> Dictionary:
 
 # Pip's note [Change plans first]: the note closes WITHOUT collecting (the
 # report is read, the absence ends; ripe fields stay ripe, nothing rots), and
-# the card of the first ripe field opens. T / the [Collect] button tends later.
+# the card of the first ripe field opens (with nothing ripe, the drawer stays
+# as it was). T / the [Collect] button tends later; that deferred Collect is
+# disarmed once no field is ripe any more.
+# Known gap (needs a FarmEconomy hook, tuner-owned): the deferred Collect sees
+# no absence, so it schedules no welcome butterfly; note.absence_ms keeps the
+# length for when collect() can take it.
 func close_note_change_plans():
 	var f := farm()
 	note_open = false
@@ -421,7 +484,8 @@ func close_note_change_plans():
 			first = i
 			break
 	pending_collect = first >= 0
-	open_field_card(maxi(0, first))
+	if first >= 0:
+		open_field_card(first)
 
 func _tend_feedback(res: Dictionary, many: bool):
 	var harvested := 0
@@ -456,10 +520,23 @@ func _after_action(res: Dictionary):
 	hud_dirty = true
 	super._after_action(res)
 	_refresh_views()
+	if pending_collect and not _any_ripe():
+		pending_collect = false
 
 # ── goal, butterfly ──
 
 func buy_goal() -> Dictionary:
+	var g := FarmEconomy.next_goal(farm(), now_ms())
+	if not g["can_buy"] and str(g["item"]) == "" and str(g["kind"]) in ["page", "done", "tutorial"]:
+		# nothing Q can buy: still an input (stamped), and teach the 3-click path
+		var res0 := FarmEconomy.buy_goal(farm(), now_ms(), tz())
+		_after_action(res0)
+		last_result = res0
+		if str(g["kind"]) == "tutorial":
+			_popup(str(g["hint"]), WorldHUD.INK_DIM)
+		else:
+			_popup("Nothing to buy yet: pin a Farm Book row (P) and Q buys it", WorldHUD.WARN)
+		return res0
 	var res := farm_buy_goal()
 	last_result = res
 	return res
@@ -511,13 +588,18 @@ func catch_butterfly(forced_outcome := "") -> Dictionary:
 
 # ── Pip's note ──
 
+# The drawer stays open under the note (it is modal anyway), so Collect or
+# Change plans returns you to the same tab and row. An arrange in progress
+# ends and restores the zoom.
 func open_note():
-	note = {"report": FarmView.peek_report(farm())}
+	var f := farm()
+	note = {"report": FarmView.peek_report(f), "absence_ms": FarmView.idle_ms(f, now_ms())}
 	note_open = true
 	_note_t = 0.0
 	_note_tick = 0.0
-	book.close()
-	arrange = {}
+	if arrange_active():
+		_end_arrange(false)
+	hud_dirty = true
 	AudioManager.play_sfx("note_open")
 
 # The note's lines: [{icon, text}], counting the coin line up over 1.2 s.
@@ -531,24 +613,36 @@ func note_lines() -> Array:
 		var picks: Dictionary = rep.get("picks", {})
 		var keys := picks.keys()
 		keys.sort_custom(func(a, b): return int(picks[a]) > int(picks[b]))
+		# the top three crops, then "+N more" (a full farm picks every crop)
 		var parts: PackedStringArray = []
-		for c in keys:
-			parts.append("%s ×%d" % [FarmView.crop_name(str(c)), int(picks[c])])
-		out.append({"icon": "potato", "text": "We picked %d basket%s while you were gone: +%s c (%s)" % [baskets,
+		for k in mini(NOTE_TOP_CROPS, keys.size()):
+			parts.append("%s ×%s" % [FarmView.crop_name(str(keys[k])), NumFmt.coins(int(picks[keys[k]]))])
+		if keys.size() > NOTE_TOP_CROPS:
+			parts.append("+%d more" % (keys.size() - NOTE_TOP_CROPS))
+		out.append({"icon": "potato", "text": "We picked %s basket%s while you were gone: +%s c (%s)" % [NumFmt.coins(baskets),
 				"" if baskets == 1 else "s", NumFmt.coins(shown), ", ".join(parts)]})
 	if not helpers.is_empty():
 		var who := _names(helpers)
 		var worked := int(rep.get("worked_ms", 0)) / 1000
 		var away := int(rep.get("away_ms", 0)) / 1000
 		if bool(rep.get("napped", false)):
-			out.append({"icon": "moon", "text": "%s worked %s of your %s, then napped. A bigger farmhouse covers more." % [who,
-					NumFmt.dur(worked), NumFmt.dur(away)]})
+			# the upsell only while a bigger farmhouse exists
+			var more := " A bigger farmhouse covers more." if FarmEconomy.cost_of(farm(), "house", null) >= 0 else ""
+			out.append({"icon": "moon", "text": "%s worked %s of your %s, then napped.%s" % [who,
+					NumFmt.dur(worked), NumFmt.dur(away), more]})
 		elif worked > 0:
 			out.append({"icon": "moon", "text": "%s worked %s while you were away." % [who, NumFmt.dur(worked)]})
 	var ripe := int(rep.get("ripe", 0))
+	var empty := _empty_owned()
 	if ripe > 0:
-		out.append({"icon": "wheat", "text": "%d field%s ripe and waiting (≈ +%s c)" % [ripe, " is" if ripe == 1 else "s are",
-				NumFmt.coins(int(rep.get("waiting_coins", 0)))]})
+		var txt := "%d field%s ripe and waiting (≈ +%s c)" % [ripe, " is" if ripe == 1 else "s are",
+				NumFmt.coins(int(rep.get("waiting_coins", 0)))]
+		if empty > 0:
+			txt += "; %d empty" % empty
+		out.append({"icon": "wheat", "text": txt + ". Collect tends them all."})
+	elif empty > 0:
+		out.append({"icon": "wheat", "text": "%d field%s empty: Collect plants %s." % [empty, " is" if empty == 1 else "s are",
+				"it" if empty == 1 else "them"]})
 	else:
 		out.append({"icon": "wheat", "text": "Every field is still growing."})
 	var pages: Array = rep.get("pages", [])
@@ -569,6 +663,15 @@ func note_lines() -> Array:
 	if mig is Dictionary and not mig.is_empty():
 		out.append({"icon": "star", "text": "The farm got a makeover! Refunded %s c for retired gear; your crops, unlocks and Spudlings came with you." % NumFmt.coins(int(mig.get("refund", 0)))})
 	return out
+
+const NOTE_TOP_CROPS := 3
+
+func _empty_owned() -> int:
+	var n := 0
+	for v in views:
+		if v is Dictionary and v["owned"] and v["empty"]:
+			n += 1
+	return n
 
 static func _names(helpers: Array) -> String:
 	if helpers.size() == 1:
@@ -621,15 +724,22 @@ func arrange_hint() -> String:
 			return "Click a placed sprinkler, then a free socket"
 	return "Click a fence socket for your sprinkler · it waters both fields"
 
+# A socket was clicked (or Enter on the selected one).
+# - placed socket: picks it up as `from` (in "move" mode the picked one stays
+#   picked when clicked again; in the other modes a second click drops it);
+# - free socket: moves `from` there, else places one from stock ("place"),
+#   else buys one there, but ONLY in "buy" mode: "move" never spends coins.
 func arrange_pick(s: String) -> Dictionary:
 	if not arrange_active():
 		return {"ok": false}
 	var f := farm()
+	var mode := str(arrange.get("mode", ""))
 	arrange["sel"] = s
 	if s in f["sprinklers"]:
-		arrange["from"] = "" if str(arrange.get("from", "")) == s else s
+		var was := str(arrange.get("from", ""))
+		arrange["from"] = s if (mode == "move" or was != s) else ""
 		AudioManager.play_sfx("menu_move")
-		return {"ok": true, "picked": s}
+		return {"ok": true, "picked": str(arrange["from"])}
 	var res: Dictionary
 	var from := str(arrange.get("from", ""))
 	if from != "":
@@ -638,8 +748,11 @@ func arrange_pick(s: String) -> Dictionary:
 	elif FarmView.sprinklers_in_stock(f) > 0:
 		res = FarmEconomy.place_sprinkler(f, s, "", now_ms(), tz())
 		_after_action(res)
-	else:
+	elif mode == "buy":
 		res = farm_buy("sprinkler", s)
+	else:
+		_popup("Click a placed sprinkler first, then a free socket", WorldHUD.WARN)
+		res = {"ok": false, "msg": "Click a placed sprinkler first"}
 	last_result = res
 	if res["ok"]:
 		AudioManager.play_sfx_varied("tend_pop", 0.05)
@@ -653,12 +766,23 @@ func cancel_arrange():
 		AudioManager.play_sfx("menu_back")
 		_end_arrange()
 
-func _end_arrange():
+# Leave arrange mode: restore the zoom the player had, and (unless something
+# else is about to open) go back to the field card it started from.
+func _end_arrange(reopen_card := true):
 	var i := int(arrange.get("field", 0))
 	var was: bool = arrange.get("was_overview", true)
 	arrange = {}
 	set_overview(was, true)
-	book.open_card(i)
+	hud_dirty = true
+	if reopen_card:
+		book.open_card(i)
+
+# The Book / goal can't open over arrange mode (it is modal); a programmatic
+# open ends it first.
+func open_book(tab := ""):
+	if arrange_active():
+		_end_arrange(false)
+	super.open_book(tab)
 
 func _arrange_key(event: InputEventKey):
 	if event.echo and not event.keycode in [KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT]:
@@ -678,6 +802,8 @@ func _arrange_key(event: InputEventKey):
 			cancel_arrange()
 		KEY_M:
 			toggle_mute()
+		KEY_G:
+			catch_butterfly()
 
 # ── travel ──
 

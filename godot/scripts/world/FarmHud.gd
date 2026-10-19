@@ -4,19 +4,24 @@ class_name FarmHud
 # The farm HUD (design §7.2), at 1280x720:
 #   top-left   wallet (rolling) + "here ~X/min · away ~Y/min"
 #   top-centre Next Goal card (label, progress bar, ETA / check-ins, Q hint;
-#              click = buy when affordable) with the Market Favorite chip and
-#              an active Bumper countdown chip under it
+#              click = buy when affordable) with the Market Favorite chip, an
+#              active Bumper countdown chip and, while a butterfly is out, a
+#              "Butterfly! click or G" chip with its countdown ring under it
+#              (centred left of the drawer while the drawer is open)
 #   top-right  drawn icon buttons: sound, zoom, book, menu
 #   bottom     [T Tend All] [B Farm Book] [Z Zoom] [M Sound] [Esc Menu]
 #   world      screen-space field signs over each field's projected rect
 #              (crop + time left, a bouncing RIPE! with a ring, + plant,
 #              FOR SALE · price, hut badge, Favorite star, droplet), the
-#              butterfly's catch target and its edge arrow, the sprinkler
-#              arrange overlay, and Pip's note (the only modal).
+#              butterfly's catch target and its edge arrow (drawn after the
+#              drawer and kept clear of it), the sprinkler arrange overlay, and
+#              Pip's note (the only modal).
 # Region ids (test hooks, all in screen space via regions.rect_of(id)):
 #   btn:sound btn:zoom btn:book btn:menu btn:tend_all btn:book_bar btn:zoom_bar
-#   btn:sound_bar btn:menu_bar goal sign:<0..6> bf:catch bf:arrow
+#   btn:sound_bar btn:menu_bar goal prompt sign:<0..6> bf:catch bf:arrow bf:chip
 #   socket:<1-2..> arrange:cancel  ·  note_regions: note:collect note:change
+# Arrange mode is modal: only sound, zoom, menu, the sockets and Cancel are
+# registered (the Book, goal and Tend All are drawn dimmed).
 
 var note_regions := HitRegions.new()
 
@@ -26,19 +31,41 @@ var _rate_away := 0.0
 var _goal: Dictionary = {}
 var _goal_at := -100000
 
+func signature() -> Array:
+	var sig := super.signature()
+	var a: Dictionary = ctrl.arrange
+	sig.append_array([ctrl.note_open, bool(a.get("active", false)), str(a.get("sel", "")), str(a.get("from", "")),
+			ctrl.critters != null and ctrl.critters.bf_active, ctrl.pending_collect, ctrl.hud_dirty])
+	return sig
+
+func anim_hz() -> float:
+	var hz := super.anim_hz()
+	if hz >= 60.0:
+		return hz
+	if ctrl.note_open and ctrl._note_t < 1.4:
+		return 60.0                       # the coin line counts up
+	if ctrl.critters != null and ctrl.critters.bf_active:
+		return 30.0                       # chip ring, edge arrow flap
+	var f: Dictionary = SaveDataManager.farm
+	if f.has("buffs") and int(f["buffs"].get("bumper_until_ms", 0)) > FarmClock.now_ms():
+		hz = 15.0                         # Bumper chip ring
+	return hz
+
 func _draw_hud(font: Font):
 	var f: Dictionary = SaveDataManager.farm
 	var now := FarmClock.now_ms()
+	var arranging: bool = ctrl.arrange_active()
 	_refresh_cache(f, now)
 	_draw_signs(font, f, now)
-	_draw_butterfly_target(font)
 	_draw_wallet(font, f, now)
-	_draw_goal(font, f, now)
+	_draw_goal(font, f, now, not arranging)
+	if arranging:
+		draw_rect(Rect2(320, 8, 640, 64), Color(0.08, 0.06, 0.04, 0.55))     # inert while arranging
 	_draw_chips(font, f, now)
-	_draw_icon_buttons(["sound", "zoom", "book", "menu"])
+	_draw_icon_buttons(["sound", "zoom", "book", "menu"], ["book"] if arranging else [])
 	var tend_lbl := "Collect" if ctrl.pending_collect else "Tend All"
 	var tend_ok: bool = ctrl.pending_collect or FarmEconomy.has_tend_all(f)
-	_draw_bottom_bar(font, [["tend_all", "T", tend_lbl, tend_ok], ["book_bar", "B", "Farm Book"],
+	_draw_bottom_bar(font, [["tend_all", "T", tend_lbl, tend_ok, arranging], ["book_bar", "B", "Farm Book", true, arranging],
 			["zoom_bar", "Z", "Zoom"], ["sound_bar", "M", "Sound" if AudioManager.sound_enabled else "Muted"],
 			["menu_bar", "Esc", "Menu"]])
 
@@ -63,14 +90,15 @@ func _draw_wallet(font: Font, _f: Dictionary, _now: int):
 func goal() -> Dictionary:
 	return _goal
 
-func _draw_goal(font: Font, _f: Dictionary, _now: int):
+func _draw_goal(font: Font, _f: Dictionary, _now: int, clickable := true):
 	var r := Rect2(320, 8, 640, 64)
 	var g := _goal
 	if g.is_empty():
 		return
 	var can: bool = g.get("can_buy", false)
 	panel(self, r, Color(0.24, 0.17, 0.07, 0.94) if can else PANEL_BG, GOLD if can else Color(0.85, 0.68, 0.3, 0.6))
-	regions.add(r, "goal")
+	if clickable:
+		regions.add(r, "goal")
 	var kind := str(g["kind"])
 	var tag := "NEXT"
 	match kind:
@@ -98,10 +126,21 @@ func _draw_goal(font: Font, _f: Dictionary, _now: int):
 	var prog := int(g.get("progress", 0))
 	var x := r.position.x + 14
 	if kind == "tutorial" and target <= 1 and str(g.get("item", "")) == "":
+		# a live line beats the static farm.json hint: next_goal gives an eta
+		# (Field 1's) only for the harvest step, so say "Russet on Field 1 ·
+		# ready in 39s" or "Field 1 is ripe"; the hint shows when there is none
 		var hint := str(g.get("hint", ""))
-		if int(g.get("eta_s", -1)) > 0:
-			hint += " · ready in %s" % NumFmt.dur(int(g["eta_s"]))
+		if int(g.get("eta_s", -1)) >= 0:
+			hint = _field1_line(int(g["eta_s"]))
 		draw_string(font, Vector2(x, y2 + 4), fit(font, hint, 14, r.size.x - 30), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, INK_DIM)
+		return
+	var why := str(g.get("locked_reason", ""))
+	if why != "" and str(g.get("item", "")) != "":
+		# a pinned row that is still locked: show the lock and its own progress
+		# text, never a (full) coin bar next to a refusal
+		icon_lock(self, Vector2(x + 8, y2), 8.0, Color(1.0, 0.66, 0.4))
+		draw_string(font, Vector2(x + 24, y2 + 4), fit(font, why, 14, r.size.x - 50), HORIZONTAL_ALIGNMENT_LEFT, -1, 14,
+				Color(1.0, 0.66, 0.4))
 		return
 	if target > 0:
 		progress_bar(self, Rect2(x, y2 - 7, 220, 12), float(prog) / float(target), GOLD if str(g.get("item", "")) != "" else GOOD)
@@ -112,6 +151,16 @@ func _draw_goal(font: Font, _f: Dictionary, _now: int):
 	var eta := _eta_text(g)
 	if eta != "":
 		draw_string(font, Vector2(x, y2 + 4), fit(font, eta, 14, r.end.x - x - 10), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, INK_DIM)
+
+# The tutorial harvest step's line: "Russet on Field 1 · ready in 39s", or
+# "Field 1 is ripe: click it or press E on it".
+func _field1_line(eta_s: int) -> String:
+	var nm := FarmView.field_name(0)
+	var v: Dictionary = ctrl.views[0] if not ctrl.views.is_empty() else {}
+	if eta_s <= 0 or bool(v.get("ripe", false)):
+		return "%s is ripe: click it or press E on it" % nm
+	var left := int(v.get("left_ms", eta_s * 1000)) / 1000.0
+	return "%s on %s · ready in %s" % [FarmView.crop_name(str(v.get("crop", ""))), nm, NumFmt.dur(left)]
 
 func _eta_text(g: Dictionary) -> String:
 	if g.get("can_buy", false):
@@ -132,49 +181,82 @@ func _eta_text(g: Dictionary) -> String:
 
 # ── chips: Market Favorite (today + tomorrow), active Bumper ──
 
+# The chip row sits under the goal card, centred on it; while the drawer is
+# open it is centred in the free span left of the drawer (320..850) so the
+# Bumper ring and the butterfly chip (the sound-off twins) stay visible. A
+# chip that doesn't fit gets its short text; the Favorite chip goes last.
+const CHIP_Y := 78.0
+
 func _draw_chips(font: Font, f: Dictionary, now: int):
 	if not f.has("buffs"):
 		return
 	var tzs := FarmClock.tz_s()
 	var today := FarmView.favorite_today(now, tzs)
 	var tmrw := FarmView.favorite_tomorrow(now, tzs)
-	var fav_txt := "%s ×%s today" % [FarmView.crop_name(today), NumFmt.compact(FarmView.fav_mult())]
+	var fav_short := "%s ×%s today" % [FarmView.crop_name(today), NumFmt.compact(FarmView.fav_mult())]
+	var fav_txt := fav_short
 	if not today in f["unlocked"]:
 		fav_txt = "%s (Catalog page %d) ×%s today" % [FarmView.crop_name(today), int(FarmEconomy.crop_info(today).get("page", 0)),
 				NumFmt.compact(FarmView.fav_mult())]
 	fav_txt += " · tomorrow %s" % FarmView.crop_name(tmrw)
-	var chips: Array = [{"kind": "fav", "text": fav_txt}]
+	var chips: Array = []
+	var cr = ctrl.critters
+	if cr != null and cr.bf_active:
+		chips.append({"kind": "bf", "text": "Butterfly! Click here or press G", "short": "Butterfly! Click or G",
+				"frac": float(cr.bf_life01)})
 	var bump := int(f["buffs"].get("bumper_until_ms", 0)) - now
 	if bump > 0:
-		chips.append({"kind": "bumper", "text": "Bumper ×2 · %s" % NumFmt.dur(bump / 1000.0), "frac": bump / float(int(FarmEconomy.cfg()["butterflies"].get("bumper_s", 30)) * 1000)})
-	var widths: Array = []
-	var total := 0.0
+		var btxt := "Bumper ×2 · %s" % NumFmt.dur(bump / 1000.0)
+		chips.append({"kind": "bumper", "text": btxt, "short": btxt,
+				"frac": bump / float(int(FarmEconomy.cfg()["butterflies"].get("bumper_s", 30)) * 1000)})
+	chips.append({"kind": "fav", "text": fav_txt, "short": fav_short})
+	var span := Rect2(320, 0, 530, 0) if ctrl.book.open else Rect2(320, 0, 640, 0)
+	# full texts, then short ones, then drop the Favorite chip
+	for attempt in 3:
+		var total := 0.0
+		for c in chips:
+			c["w"] = text_w(font, str(c["text"] if attempt == 0 else c["short"]), 14) + 44
+			c["t"] = c["text"] if attempt == 0 else c["short"]
+			total += float(c["w"]) + 8
+		if total - 8 <= span.size.x or chips.size() <= 1:
+			break
+		if attempt == 1 and chips[-1]["kind"] == "fav":
+			chips.pop_back()
+	var total2 := 0.0
 	for c in chips:
-		var w := text_w(font, str(c["text"]), 14) + 44
-		widths.append(w)
-		total += w + 8
-	var x := 640.0 - (total - 8) / 2.0
-	for k in chips.size():
-		var c: Dictionary = chips[k]
-		var r := Rect2(x, 78, widths[k], 30)
-		panel(self, r, Color(0.16, 0.11, 0.06, 0.88), Color(0.85, 0.68, 0.3, 0.45), 15)
-		if c["kind"] == "fav":
-			icon_star(self, Vector2(r.position.x + 18, r.get_center().y), 9.0)
-		else:
-			icon_butterfly(self, Vector2(r.position.x + 18, r.get_center().y), 9.0, sin(Time.get_ticks_msec() / 60.0))
-			draw_arc(Vector2(r.position.x + 18, r.get_center().y), 13.0, -PI / 2, -PI / 2 + TAU * clampf(float(c["frac"]), 0, 1), 20, GOLD, 2.0)
-		draw_string(font, Vector2(r.position.x + 34, r.position.y + 20), str(c["text"]), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, INK)
-		x += widths[k] + 8
+		total2 += float(c["w"]) + 8
+	var x := span.get_center().x - (total2 - 8) / 2.0
+	for c in chips:
+		var r := Rect2(x, CHIP_Y, float(c["w"]), 30)
+		var is_bf: bool = c["kind"] == "bf"
+		panel(self, r, Color(0.3, 0.2, 0.06, 0.95) if is_bf else Color(0.16, 0.11, 0.06, 0.88),
+				GOLD if is_bf else Color(0.85, 0.68, 0.3, 0.45), 15)
+		var ic := Vector2(r.position.x + 18, r.get_center().y)
+		match str(c["kind"]):
+			"fav":
+				icon_star(self, ic, 9.0)
+			"bf":
+				icon_butterfly(self, ic, 10.0, sin(Time.get_ticks_msec() / 90.0), Color(0.6, 0.85, 1.0) if cr.bf_welcome else Color(1.0, 0.78, 0.25))
+				draw_arc(ic, 13.0, -PI / 2, -PI / 2 + TAU * clampf(float(c["frac"]), 0, 1), 20, GOLD, 2.0)
+			_:
+				icon_butterfly(self, ic, 9.0, sin(Time.get_ticks_msec() / 60.0))
+				draw_arc(ic, 13.0, -PI / 2, -PI / 2 + TAU * clampf(float(c["frac"]), 0, 1), 20, GOLD, 2.0)
+		draw_string(font, Vector2(r.position.x + 34, r.position.y + 20), str(c["t"]), HORIZONTAL_ALIGNMENT_LEFT, -1, 14,
+				GOLD if is_bf else INK)
+		if is_bf:
+			regions.add(r, "bf:chip")         # a still, 44 px+ target (padded) for trackpads
+		x += float(c["w"]) + 8
 
 # ── field signs (screen space over each field's projected rect) ──
 
-func _draw_signs(font: Font, f: Dictionary, now: int):
+func _draw_signs(font: Font, f: Dictionary, _now: int):
+	_ripe_specs = []
 	if not f.has("fields") or ctrl.views.is_empty() or ctrl.arrange_active():
+		_sync_ripe_layer()
 		return
 	var screen := Rect2(0, 0, 1280, 720)
 	var zoom_small: bool = ctrl.zoom_now < 0.7
 	var size := 15 if zoom_small else 18
-	var tzs := FarmClock.tz_s()
 	for i in FarmEconomy.FIELDS:
 		var v: Dictionary = ctrl.views[i]
 		var fr: Rect2 = ctrl.field_screen_rect(i)
@@ -220,12 +302,11 @@ func _draw_signs(font: Font, f: Dictionary, now: int):
 			lead = 28.0 if ripe else 22.0
 		var w := minf(fr.size.x - 8.0, maxf(mw + lead + 24.0, badge_w + 16.0))
 		w = maxf(w, 96.0)
-		var bounce := absf(sin(Time.get_ticks_msec() / 220.0)) * 6.0 if ripe else 0.0
 		var sy := fr.position.y + 6.0
 		# keep signs clear of the goal card and its chips (the Greenhouse in overview)
 		if sy < 116.0 and fr.get_center().x > 280.0 and fr.get_center().x < 1000.0:
 			sy = maxf(sy, fr.get_center().y - 20.0)
-		var sr := Rect2(fr.get_center().x - w / 2, sy - bounce, w, 40)
+		var sr := Rect2(fr.get_center().x - w / 2, sy, w, 40)
 		var full := sr
 		if not badges.is_empty():
 			full = Rect2(sr.position, Vector2(w, 64))
@@ -236,57 +317,123 @@ func _draw_signs(font: Font, f: Dictionary, now: int):
 			bg = Color(0.4, 0.28, 0.05, 0.94)
 		elif not v["owned"]:
 			bg = Color(0.32, 0.2, 0.1, 0.9)
-		panel(self, sr, bg, GOLD if ripe else Color(0.85, 0.68, 0.3, 0.55), 8)
-		var tx := sr.position.x + 10
-		if locked:
-			icon_lock(self, Vector2(tx + 6, sr.get_center().y), 7.0, Color(1.0, 0.8, 0.5))
-			tx += 20
-		elif dot.a > 0:
-			icon_potato(self, Vector2(tx + 8, sr.get_center().y), 7.5, dot)
-			if ripe:
-				var pulse := 0.5 + 0.5 * sin(Time.get_ticks_msec() / 160.0)
-				draw_arc(Vector2(tx + 8, sr.get_center().y), 11.0 + pulse * 2.0, 0, TAU, 20, Color(1.0, 0.9, 0.4, 0.9), 2.5)
-			tx += lead
-		draw_string(font, Vector2(tx, sr.get_center().y + size * 0.36), fit(font, main, size, sr.end.x - tx - 6),
-				HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
-		if not badges.is_empty():
-			var br := Rect2(sr.position.x + 6, sr.end.y - 2, w - 12, 24)
-			panel(self, br, Color(0.14, 0.1, 0.05, 0.88), Color(0.85, 0.68, 0.3, 0.3), 6)
-			var bx := br.position.x + 8
-			for b in badges:
-				match b:
-					"hut":
-						var k := int(f["fields"][i].get("hut_k", 0))
-						icon_hut(self, Vector2(bx + 7, br.get_center().y + 3), 7.0, FarmView.hut_hat(k))
-						draw_string(font, Vector2(bx + 18, br.position.y + 17), str(v["hut_name"]), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, INK)
-						bx += 22 + name_w
-						if v["napping"]:
-							icon_zz(self, Vector2(bx + 4, br.get_center().y + 2), 5.0)
-							bx += 18
-						bx += 6
-					"fav":
-						icon_star(self, Vector2(bx + 7, br.get_center().y), 7.0)
-						bx += 20
-					"drop":
-						icon_droplet(self, Vector2(bx + 7, br.get_center().y), 6.0)
-						bx += 20
+		var spec := {"sr": sr, "w": w, "bg": bg, "ripe": ripe, "locked": locked, "dot": dot, "lead": lead, "main": main,
+				"size": size, "col": col, "badges": badges, "name_w": name_w, "hut_name": str(v["hut_name"]),
+				"napping": bool(v["napping"]), "hut_k": int(f["fields"][i].get("hut_k", 0))}
+		if ripe:
+			_ripe_specs.append(spec)        # drawn by the bouncing ripe layer
+		else:
+			draw_sign(self, font, spec)
 		if not ctrl.arrange_active():
-			regions.add(full, "sign:%d" % i, i)
+			# a ripe sign bounces up to RIPE_BOUNCE px: its target covers that too
+			regions.add(full.grow_individual(0, RIPE_BOUNCE if ripe else 0.0, 0, 0), "sign:%d" % i, i)
+	_sync_ripe_layer()
+
+# One field sign into any canvas item (the HUD itself, or the ripe layer).
+static func draw_sign(ci: CanvasItem, font: Font, sp: Dictionary):
+	var sr: Rect2 = sp["sr"]
+	var size: int = sp["size"]
+	var ripe: bool = sp["ripe"]
+	var dot: Color = sp["dot"]
+	panel(ci, sr, sp["bg"], GOLD if ripe else Color(0.85, 0.68, 0.3, 0.55), 8)
+	var tx := sr.position.x + 10
+	if sp["locked"]:
+		icon_lock(ci, Vector2(tx + 6, sr.get_center().y), 7.0, Color(1.0, 0.8, 0.5))
+		tx += 20
+	elif dot.a > 0:
+		icon_potato(ci, Vector2(tx + 8, sr.get_center().y), 7.5, dot)
+		if ripe:
+			ci.draw_arc(Vector2(tx + 8, sr.get_center().y), 12.0, 0, TAU, 20, Color(1.0, 0.9, 0.4, 0.9), 2.5)
+		tx += float(sp["lead"])
+	ci.draw_string(font, Vector2(tx, sr.get_center().y + size * 0.36), fit(font, str(sp["main"]), size, sr.end.x - tx - 6),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, size, sp["col"])
+	var badges: Array = sp["badges"]
+	if badges.is_empty():
+		return
+	var br := Rect2(sr.position.x + 6, sr.end.y - 2, float(sp["w"]) - 12, 24)
+	panel(ci, br, Color(0.14, 0.1, 0.05, 0.88), Color(0.85, 0.68, 0.3, 0.3), 6)
+	var bx := br.position.x + 8
+	for b in badges:
+		match b:
+			"hut":
+				icon_hut(ci, Vector2(bx + 7, br.get_center().y + 3), 7.0, FarmView.hut_hat(int(sp["hut_k"])))
+				ci.draw_string(font, Vector2(bx + 18, br.position.y + 17), str(sp["hut_name"]), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, INK)
+				bx += 22 + float(sp["name_w"])
+				if sp["napping"]:
+					icon_zz(ci, Vector2(bx + 4, br.get_center().y + 2), 5.0)
+					bx += 18
+				bx += 6
+			"fav":
+				icon_star(ci, Vector2(bx + 7, br.get_center().y), 7.0)
+				bx += 20
+			"drop":
+				icon_droplet(ci, Vector2(bx + 7, br.get_center().y), 6.0)
+				bx += 20
+
+# ── the ripe signs' layer ──
+# Ripe signs are drawn once (whenever the HUD redraws) into a child layer
+# behind the rest of the HUD; their bounce is that layer's position, so a
+# bouncing RIPE! costs no HUD redraws (design §7.6).
+
+const RIPE_BOUNCE := 6.0
+
+class SignLayer extends Node2D:
+	var specs: Array = []
+	var redraws := 0
+	func _draw():
+		redraws += 1
+		var font := ThemeDB.fallback_font
+		for sp in specs:
+			FarmHud.draw_sign(self, font, sp)
+
+var _ripe_layer: SignLayer
+var _ripe_specs: Array = []
+
+func _ready():
+	_ripe_layer = SignLayer.new()
+	_ripe_layer.show_behind_parent = true
+	add_child(_ripe_layer)
+
+func _sync_ripe_layer():
+	if _ripe_layer == null:
+		return
+	if _ripe_layer.specs != _ripe_specs:
+		_ripe_layer.specs = _ripe_specs
+		_ripe_layer.queue_redraw()
+	_ripe_layer.visible = not _ripe_specs.is_empty()
+
+func _process(delta):
+	super._process(delta)
+	if _ripe_layer != null and _ripe_layer.visible:
+		_ripe_layer.position.y = -absf(sin(Time.get_ticks_msec() / 220.0)) * RIPE_BOUNCE
 
 # ── butterfly: catch target on screen, edge arrow off screen ──
+# Drawn after the drawer. While the drawer is open its area counts as off
+# screen: a butterfly behind it gets the edge arrow, clamped left of the
+# drawer, so it is never hidden and never sits over a Buy / Pin button.
+
+const CATCH_R_MIN := 44.0           # catch box half-size floor (88 px at 0.45 zoom)
+const ARROW_INNER := Rect2(50, 140, 1180, 450)
+
+func butterfly_inner() -> Rect2:
+	if ctrl.book.open:
+		return Rect2(ARROW_INNER.position, Vector2(FarmBook.RECT.position.x - 44.0 - ARROW_INNER.position.x, ARROW_INNER.size.y))
+	return ARROW_INNER
 
 func _draw_butterfly_target(font: Font):
 	var cr = ctrl.critters
 	if cr == null or not cr.bf_active:
 		return
 	var sp: Vector2 = ctrl.world_to_screen(cr.bf_pos)
-	var inner := Rect2(50, 140, 1180, 450)
-	if inner.has_point(sp):
-		var rad := maxf(30.0, 40.0 * ctrl.zoom_now)
-		regions.add(Rect2(sp - Vector2(rad, rad), Vector2(rad, rad) * 2.0), "bf:catch")
+	var rad := maxf(CATCH_R_MIN, 40.0 * ctrl.zoom_now)
+	var box := Rect2(sp - Vector2(rad, rad), Vector2(rad, rad) * 2.0)
+	var inner := butterfly_inner()
+	var under_drawer: bool = ctrl.book.open and box.intersects(FarmBook.RECT)
+	if inner.has_point(sp) and not under_drawer:
+		regions.add(box, "bf:catch")
 		return
 	var c := Vector2(clampf(sp.x, inner.position.x, inner.end.x), clampf(sp.y, inner.position.y, inner.end.y))
-	var dir := (sp - c).normalized()
+	var dir := (sp - c).normalized() if sp.distance_to(c) > 1.0 else Vector2.RIGHT
 	var r := Rect2(c - Vector2(30, 30), Vector2(60, 60))
 	draw_circle(c, 30.0, Color(0.18, 0.12, 0.06, 0.92))
 	draw_arc(c, 30.0, 0, TAU, 28, GOLD, 2.5)
@@ -300,8 +447,12 @@ func _draw_butterfly_target(font: Font):
 
 func _draw_overlays(font: Font):
 	if ctrl.arrange_active():
+		_draw_butterfly_target(font)        # the sockets (registered after) win
 		_draw_arrange(font)
+		super._draw_overlays(font)
+		return
 	super._draw_overlays(font)
+	_draw_butterfly_target(font)
 
 func _draw_arrange(font: Font):
 	var a: Dictionary = ctrl.arrange
@@ -369,10 +520,29 @@ func _draw_modal(font: Font):
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(0.45, 0.32, 0.18))
 	if not helpers.is_empty():
 		FarmBook._spudling_icon(self, Vector2(r.end.x - 52, r.position.y + 50), 20.0, FarmView.hut_hat(0))
-	var y := r.position.y + 100.0
-	for ln in ctrl.note_lines():
-		_note_line(font, Vector2(r.position.x + 30, y), str(ln["icon"]), str(ln["text"]), ink, r.size.x - 80)
-		y += 56.0 if WorldHUD.text_w(font, str(ln["text"]), 16) > r.size.x - 80 else 36.0
+	# lines laid out by their real wrapped height (up to 3 rows each); a long
+	# note drops to 15 px with tighter gaps so it never runs into the buttons
+	var lines: Array = ctrl.note_lines()
+	var w := r.size.x - 80
+	var avail := (r.end.y - 84.0) - (r.position.y + 96.0)
+	var size := 16
+	var gap := 12.0
+	var heights: Array = []
+	for attempt in 2:
+		heights.clear()
+		var total := 0.0
+		for ln in lines:
+			var h := font.get_multiline_string_size(str(ln["text"]), HORIZONTAL_ALIGNMENT_LEFT, w, size, NOTE_MAX_ROWS).y
+			heights.append(h)
+			total += h + gap
+		if total - gap <= avail:
+			break
+		size = 15
+		gap = 6.0
+	var y := r.position.y + 96.0
+	for k in lines.size():
+		_note_line(font, Vector2(r.position.x + 30, y), str(lines[k]["icon"]), str(lines[k]["text"]), ink, w, size)
+		y += float(heights[k]) + gap
 	var collect := Rect2(r.position.x + 70, r.end.y - 74, 200, 56)
 	var change := Rect2(r.position.x + 296, r.end.y - 68, 240, 46)
 	text_button(self, font, collect, "Collect", 22, true, true, true)
@@ -382,8 +552,10 @@ func _draw_modal(font: Font):
 	note_regions.add(collect, "note:collect")
 	note_regions.add(change, "note:change")
 
-func _note_line(font: Font, p: Vector2, icon: String, text: String, ink: Color, w: float):
-	var ic := p + Vector2(10, 4)
+const NOTE_MAX_ROWS := 3
+
+func _note_line(font: Font, p: Vector2, icon: String, text: String, ink: Color, w: float, size := 16):
+	var ic := p + Vector2(10, 12)
 	match icon:
 		"potato":
 			icon_potato(self, ic, 10.0, Color(0.78, 0.55, 0.3))
@@ -398,4 +570,5 @@ func _note_line(font: Font, p: Vector2, icon: String, text: String, ink: Color, 
 			icon_coin(self, ic, 10.0)
 		"star":
 			icon_star(self, ic, 10.0)
-	draw_multiline_string(font, Vector2(p.x + 30, p.y + 10), text, HORIZONTAL_ALIGNMENT_LEFT, w, 16, 2, ink)
+	draw_multiline_string(font, Vector2(p.x + 30, p.y + font.get_ascent(size)), text, HORIZONTAL_ALIGNMENT_LEFT, w, size,
+			NOTE_MAX_ROWS, ink)

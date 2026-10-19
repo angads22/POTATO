@@ -12,6 +12,15 @@ class_name WorldHUD
 # The static icon helpers below draw into any CanvasItem (the Farm Book uses
 # them too): the default font has no ★ ▸ → ✓ ✕ ● ≡ or emoji, so every icon is
 # a polygon, arc or line.
+#
+# Redraw only on change (design §7.6): the HUD repaints when its cheap
+# signature changes (wallet, prompt, popups, drawer state, zoom, camera...),
+# when the controller marks it dirty (inputs, actions, settles), at the rate
+# its animations need while something animates (popups, banner, wallet roll;
+# farm: the butterfly, the Bumper ring, the note's count-up), and otherwise at
+# IDLE_HZ so countdown text keeps ticking. `redraws` counts _draw calls (test
+# hook). The farm's bouncing RIPE! signs are a child layer moved by its
+# transform, so they cost no redraws.
 
 var ctrl  # WorldController
 var regions := HitRegions.new()
@@ -28,15 +37,51 @@ const WARN := Color(1.0, 0.55, 0.25)       # refusals, short of coins
 
 const BOTTOM_Y := 648.0
 const BOTTOM_BTN := Vector2(132, 56)
+const IDLE_HZ := 4.0
+const POPUP_STEP := 40.0
 
 static var _styles := {}
 
-func _process(_delta):
-	queue_redraw()
+var redraws := 0
+var _dirty := true
+var _sig: Array = []
+var _since := 0.0
+
+func mark_dirty():
+	_dirty = true
+
+func _process(delta):
+	if ctrl == null:
+		return
+	_since += delta
+	var hz := anim_hz()
+	var sig := signature()
+	if _dirty or sig != _sig or hz >= 60.0 or _since >= 1.0 / maxf(IDLE_HZ, hz):
+		_dirty = false
+		_sig = sig
+		_since = 0.0
+		queue_redraw()
+
+# Everything (cheap) the HUD's picture depends on besides animation time.
+func signature() -> Array:
+	var b = ctrl.book
+	var cam: Vector2 = ctrl.camera.get_screen_center_position() if ctrl.camera != null else Vector2.ZERO
+	return [ctrl.wallet_display(), ctrl.prompt, ctrl.popups.size(), ctrl.open_shop, ctrl.shop_sel,
+			b != null and b.open, b.mode if b != null else "", b.tab if b != null else "", b.sel if b != null else 0,
+			b.scroll if b != null else 0, b.field if b != null else 0, b.armed_view() if b != null else false,
+			snappedf(ctrl.zoom_now, 0.001), cam.round(), AudioManager.sound_enabled, ctrl.overview,
+			ctrl.banner_age < ctrl.BANNER_LIFE]
+
+# Redraws per second the current animations need (0 = none, >= 60 = every frame).
+func anim_hz() -> float:
+	if not ctrl.popups.is_empty() or ctrl.banner_age < ctrl.BANNER_LIFE or ctrl._roll_t < 1.0:
+		return 60.0
+	return 0.0
 
 func _draw():
 	if ctrl == null:
 		return
+	redraws += 1
 	regions.begin()
 	var font := ThemeDB.fallback_font
 	_draw_hud(font)
@@ -50,31 +95,39 @@ func _draw():
 
 func _draw_hud(font: Font):
 	draw_wallet_panel(self, font, Rect2(10, 8, 280, 56), ctrl.wallet_display(), "")
-	_draw_icon_buttons(["sound", "zoom", "menu"])
-	_draw_bottom_bar(font, [["zoom_bar", "Z", "Zoom"], ["sound_bar", "M", "Sound" if AudioManager.sound_enabled else "Muted"],
-			["menu_bar", "Esc", "Menu"]])
+	_draw_icon_buttons(["sound", "zoom", "book", "menu"])
+	_draw_bottom_bar(font, [["book_bar", "B", "Farm Book"], ["zoom_bar", "Z", "Zoom"],
+			["sound_bar", "M", "Sound" if AudioManager.sound_enabled else "Muted"], ["menu_bar", "Esc", "Menu"]])
 
-# Top-right row of 56x56 icon buttons, right-aligned at x 1270.
-func _draw_icon_buttons(ids: Array):
+# Top-right row of 56x56 icon buttons, right-aligned at x 1270. Ids in
+# `inert` are drawn dimmed and not clickable (the farm's arrange mode).
+func _draw_icon_buttons(ids: Array, inert: Array = []):
 	var x := 1270.0 - ids.size() * 62.0 + 6.0
 	for id in ids:
 		var r := Rect2(x, 12, 56, 56)
 		icon_button(self, r, id, ctrl)
-		regions.add(r, "btn:" + str(id))
+		if id in inert:
+			draw_rect(r, Color(0.08, 0.06, 0.04, 0.6))
+		else:
+			regions.add(r, "btn:" + str(id))
 		x += 62.0
 
 # Bottom bar: [key label] buttons centred on the screen. items: [id, key, label]
-# (+ optional enabled flag).
+# (+ optional enabled flag, + optional inert flag: drawn disabled, not clickable).
 func _draw_bottom_bar(font: Font, items: Array):
 	var w := items.size() * (BOTTOM_BTN.x + 8.0) - 8.0
 	var x := 640.0 - w * 0.5
 	for it in items:
 		var enabled: bool = it[3] if it.size() > 3 else true
+		var inert: bool = it[4] if it.size() > 4 else false
 		var r := Rect2(x, BOTTOM_Y, BOTTOM_BTN.x, BOTTOM_BTN.y)
-		key_button(self, font, r, str(it[1]), str(it[2]), enabled)
-		regions.add(r, "btn:" + str(it[0]))
+		key_button(self, font, r, str(it[1]), str(it[2]), enabled and not inert)
+		if not inert:
+			regions.add(r, "btn:" + str(it[0]))
 		x += BOTTOM_BTN.x + 8.0
 
+# The prompt bar is also a button: a click does exactly what [E] does (and it
+# swallows the click, so it never falls through to the field underneath).
 func _draw_prompt(font: Font):
 	if ctrl.prompt == "" or ctrl.ui_blocking():
 		return
@@ -83,6 +136,7 @@ func _draw_prompt(font: Font):
 	var r := Rect2(640 - ps.x / 2 - 18, 594, ps.x + 36, 44)
 	panel(self, r, PANEL_BG)
 	draw_string(font, Vector2(r.position.x + 18, r.position.y + 29), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 19, INK)
+	regions.add(r, "prompt")
 
 func _draw_overlays(font: Font):
 	if ctrl.open_shop == "knives":
@@ -94,23 +148,37 @@ func _draw_overlays(font: Font):
 func _draw_modal(_font: Font):
 	pass
 
+# Popups (the main sound-off feedback) stack in fixed POPUP_STEP slots, the
+# newest on top, and only fade (no drift), so two never overlap. Where they
+# sit: under the goal card normally; left of the open drawer; above the knife
+# stand's panel (the town's top bar is free there) while it is open.
+func popup_layout() -> Dictionary:
+	if ctrl.open_shop != "":
+		return {"cx": 660.0, "y0": 40.0, "max_w": 700.0, "n": 2}
+	if ctrl.book != null and ctrl.book.open:
+		return {"cx": 430.0, "y0": 238.0, "max_w": 800.0, "n": 4}
+	return {"cx": 640.0, "y0": 238.0, "max_w": 1100.0, "n": 4}
+
 func _draw_popups(font: Font):
+	var lay := popup_layout()
+	var cx: float = lay["cx"]
 	var stack := 0
-	for k in range(ctrl.popups.size() - 1, maxi(-1, ctrl.popups.size() - 4), -1):
+	for k in range(ctrl.popups.size() - 1, -1, -1):
 		var p: Dictionary = ctrl.popups[k]
-		var frac: float = p.age / ctrl.POPUP_LIFE
+		var frac: float = clampf(p.age / ctrl.POPUP_LIFE, 0.0, 1.0)
+		var alpha := 1.0 - frac * frac
 		var col: Color = p.color
-		col.a = 1.0 - frac * frac
+		col.a = alpha
 		var size := 24
-		var text: String = fit(font, str(p.text), size, 1100)
+		var text: String = fit(font, str(p.text), size, lay["max_w"])
 		var ts := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size)
-		var py := 238.0 + stack * 38.0 - frac * 30.0
+		var py: float = lay["y0"] + stack * POPUP_STEP
 		stack += 1
-		var back := Rect2(640 - ts.x / 2 - 14, py - 26, ts.x + 28, 36)
-		draw_rect(back, Color(0.08, 0.05, 0.03, 0.55 * (1.0 - frac)))
-		draw_string(font, Vector2(642 - ts.x / 2, py + 2), text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0, 0, 0, col.a * 0.6))
-		draw_string(font, Vector2(640 - ts.x / 2, py), text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
-		if stack >= 4:
+		var back := Rect2(cx - ts.x / 2 - 14, py - 26, ts.x + 28, 36)
+		draw_rect(back, Color(0.08, 0.05, 0.03, 0.62 * alpha))
+		draw_string(font, Vector2(cx + 2 - ts.x / 2, py + 2), text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(0, 0, 0, alpha * 0.6))
+		draw_string(font, Vector2(cx - ts.x / 2, py), text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, col)
+		if stack >= int(lay["n"]):
 			break
 
 func _draw_banner(font: Font):

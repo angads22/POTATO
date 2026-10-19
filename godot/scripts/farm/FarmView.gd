@@ -30,6 +30,12 @@ static func plot_grid() -> Vector2i:
 	var p: Dictionary = FE.cfg().get("plots", {})
 	return Vector2i(int(p.get("cols", 4)), int(p.get("rows", 3)))
 
+# Plots per field (farm.json plots.per_field, else cols x rows).
+static func plots_per_field() -> int:
+	var p: Dictionary = FE.cfg().get("plots", {})
+	var g := plot_grid()
+	return int(p.get("per_field", g.x * g.y))
+
 # Fence socket ids in a stable order ("1-2", "2-3", "4-5", "5-6", "1-4", ...).
 static func sockets() -> Array:
 	return FE.cfg()["fields"]["sockets"].keys()
@@ -99,6 +105,21 @@ static func note_pending(farm: Dictionary, now_ms: int) -> bool:
 		away += open
 	return away >= report_min_ms()
 
+# Is a pending note worth interrupting a session for? Spudling baskets, a new
+# Catalog page or the migration ledger, or an absence long enough to earn the
+# welcome butterfly (clock.welcome_butterfly_min_s). Read-only.
+static func note_has_news(farm: Dictionary, now_ms: int) -> bool:
+	if farm.get("migration", {}) is Dictionary and not farm.get("migration", {}).is_empty():
+		return true
+	var r = farm.get("report", {})
+	if r is Dictionary and not r.is_empty():
+		if int(r.get("baskets", 0)) > 0 or not (r.get("pages", []) as Array).is_empty():
+			return true
+	return idle_ms(farm, now_ms) >= welcome_min_ms()
+
+static func welcome_min_ms() -> int:
+	return int(FE.cfg()["clock"].get("welcome_butterfly_min_s", 600)) * 1000
+
 # What take_report() would return, computed on a deep copy (the save is never
 # touched), for drawing the note before [Collect] takes it for real.
 static func peek_report(farm: Dictionary) -> Dictionary:
@@ -120,6 +141,13 @@ static func history_ready(farm: Dictionary, now_ms: int) -> bool:
 # Percent of the last 7 days you were here (f_here), for the Book header.
 static func here_pct(farm: Dictionary, now_ms: int) -> int:
 	return int(round(FE.f_here(farm, now_ms) * 100.0))
+
+# here_pct as text: "<1%" when you were here at all but it rounds to 0.
+static func here_text(farm: Dictionary, now_ms: int) -> String:
+	var fh := FE.f_here(farm, now_ms)
+	if fh > 0.0 and fh < 0.005:
+		return "<1%"
+	return "%d%%" % int(round(fh * 100.0))
 
 # ── crops, Favorite ──
 
@@ -195,7 +223,7 @@ static func hut_line(farm: Dictionary, i: int, now_ms: int, tz_s: int) -> String
 		line = "%s is working until %s · you keep %d%% of what they plant" % [nm, Fmt.clock(w1, tz_s),
 				share_pct(farm)]
 	elif v["napping"]:
-		line = "%s is napping (shift over) · back to work 2 min after you leave" % nm
+		line = "%s is napping (shift over) · back to work %d min after you leave" % [nm, clockin]
 	return line
 
 # Prize Strain ribbons: [{crop, tier}] for every crop with a tier, table order.

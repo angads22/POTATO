@@ -13,6 +13,8 @@ var idle_t := 0.0
 var moving := false
 var face := 1.0      # 1 = right, -1 = left
 var swing_t := 0.0   # > 0 while the swing/toss pose plays
+var _acc := 0.0
+var _was_active := false
 
 func swing():
 	swing_t = SWING_S
@@ -24,7 +26,13 @@ func _process(delta):
 		walk_t = 0.0
 		idle_t += delta
 	swing_t = maxf(0.0, swing_t - delta)
-	queue_redraw()
+	# full rate while walking or swinging; the idle breath is slow, 10 Hz will do
+	var active := moving or swing_t > 0.0
+	_acc += delta
+	if active or _was_active or _acc >= 0.1:
+		_acc = 0.0
+		queue_redraw()
+	_was_active = active
 
 func _draw():
 	var hop = absf(sin(walk_t)) * 7.0 if moving else 0.0

@@ -11,13 +11,18 @@ class_name TownController
 #
 # Test hooks: station(id) for id in seeds, tools, knives, kitchen, concert,
 # gate ({pos, rect, act}); open_book(tab); book (FarmBook); open_knives();
-# hud.regions.rect_of("knife:<id>").
+# hud.regions.rect_of("knife:<id>"). B (or the Book buttons) opens the Farm
+# Book here too.
 
 var bg: TownBackground
 
+static var _banner_shown := false   # the welcome banner once per game session
+
 func _ready():
 	super._ready()
-	_show_banner("POTATO TOWN", "Seeds and tools open the Farm Book · knives · kitchen · concert")
+	if not _banner_shown:
+		_banner_shown = true
+		_show_banner("POTATO TOWN", "Seeds and tools open the Farm Book · knives · kitchen · concert")
 
 func _world_size() -> Vector2:
 	return TownBackground.WORLD
