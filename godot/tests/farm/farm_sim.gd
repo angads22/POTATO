@@ -11,7 +11,7 @@ extends SceneTree
 #   --profile active|class|casual|class+eve    (default class)
 #   --days N                                   (default 14)
 #   --strategy roi|tutorial|s1|s2|s3|s4        (default roi; s3 plants naive)
-#   --planting greedy|naive|fixed:<crop>       (default greedy)
+#   --planting greedy|naive|biggest|fixed:<crop> (default greedy)
 #   --wallet N                                 starting wallet (default 50; bankroll = 10000)
 #   --log                                      purchase log + per-day table
 #   --override '<json>'                        deep-merged into farm.json for this run
@@ -141,6 +141,8 @@ func run_all(s, args: Dictionary) -> void:
 		s.feel()
 	if _on("feelplus"):
 		s.feel_plus(14)
+	if _on("main"):
+		s.sd_profile()
 	if _on("sdfix"):
 		s.sd_fixtures(FarmSuite.ALL4)
 	if _on("sd4"):

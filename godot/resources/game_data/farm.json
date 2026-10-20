@@ -46,7 +46,7 @@
 		{"id": "gold",   "name": "Gold Hoe",   "cost": 5000000, "silver": 0.40, "gold": 0.20, "page": 6, "butterfly_rate": 1.5}
 	],
 	"stars": {"silver_mult": 1.5, "gold_mult": 2.0},
-	"soil": {"base": 100, "growth": 1.28, "mult": 1.045},
+	"soil": {"base": 15, "growth": 1.28, "mult": 1.045},
 	"strains": {"costs": [5000, 50000, 500000, 5000000], "mult": 1.25, "page": 3,
 	            "ribbons": ["bronze", "silver", "gold", "blue"]},
 	"favorite": {"mult": 1.4, "salt": 1592614637,

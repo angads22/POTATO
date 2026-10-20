@@ -18,7 +18,7 @@ extends RefCounted
 #   const FarmBot = preload("res://tests/farm/FarmBot.gd")
 #   var b = FarmBot.new("class")          # profile
 #   b.strategy = "roi"                    # roi|tutorial|s1|s2|s3|s4|h1|none (h1 = roi, at most 1 hut)
-#   b.planting = "greedy"                 # greedy|naive|fixed (fixed_crop)
+#   b.planting = "greedy"                 # greedy|naive|biggest|fixed (fixed_crop)
 #   b.run(14)
 #   b.milestones / b.purchases / b.snaps / b.summary()
 #
@@ -55,6 +55,7 @@ var debug := false                 # print plantings and departure plans
 static var s2_items := ["hut", "share", "quick", "house"]   # S2's favoured Farm Book rows
 static var bias := 0.25             # S1-S3: payback weight of the favoured rows
 var max_book_age_ms := 10 * MIN    # re-read the Farm Book at least this often
+var save_frac := 0.1               # while saving, small buys up to this share of the target's price
 
 # ── state / results ────────────────────────────────────────────────────────
 var farm: Dictionary = {}
@@ -433,7 +434,19 @@ func choose_plan(i: int, t: int) -> String:
 			return fixed_crop if fixed_crop in farm["unlocked"] else FE.FREE_CROP
 		"naive":
 			return _naive(opts, t)
+		"biggest":
+			return _biggest(opts)
 	return _greedy(opts, i, t)
+
+# The plan picker habit: the affordable crop with the biggest "+N c net".
+func _biggest(opts: Array) -> String:
+	var best := FE.FREE_CROP
+	var best_n := -INF
+	for o in opts:
+		if o["unlocked"] and float(o["seed_cost"]) <= float(farm["wallet"]) and float(o["net"]) > best_n:
+			best_n = float(o["net"])
+			best = o["crop"]
+	return best
 
 # Catalog policy: while a page is active, ceil(fields/3) fields (lowest
 # indices) grow the first unmet crop the page needs.
@@ -684,13 +697,18 @@ func _weight(r: Dictionary) -> float:
 				return bias
 	return 1.0
 
-# The Farm Book decision (phase B2): the row with the lowest wait + payback for
-# the bot's own schedule, where wait = (cost - wallet) / its 24 h income rate
-# (0 when affordable) and payback is weighted by the strategy (S1-S3). Buy it
-# if affordable, else save for it. The design's §6.1 rule (best payback,
-# else any affordable row within 2x of it) never saved for a big row once
-# Soil came in small per-field steps: some Soil row was always affordable and
-# within 2x, so the 6th field never got bought. When nothing has a gain, a
+# The Farm Book decision (phase B2): the target is the row with the lowest
+# wait + payback for the bot's own schedule, where wait = (cost - wallet) /
+# its 24 h income rate (0 when affordable) and payback is weighted by the
+# strategy (S1-S3). Buy it if affordable. While saving for it, the design's
+# §6.1 "within 2x" rule still buys an affordable row whose payback is within
+# 2x of the target's, but only a small one (at most save_frac of the
+# target's price, so the target slips at most that much per buy), or any
+# affordable row whose payback is shorter than the wait (it pays for itself
+# before the target is affordable). The §6.1 rule alone never saved for a
+# big row once Soil came in small per-field steps: some Soil row was always
+# affordable and within 2x, so the 6th field never got bought. When nothing
+# has a gain, a
 # zero-gain row (the Copper Hoe: Tend All, no rate change) is a convenience
 # buy once it costs <= 10 minutes of income. Returns {} when nothing to buy;
 # then remembers the wallet at which the decision could change.
@@ -712,6 +730,8 @@ func choose_row(rows: Array) -> Dictionary:
 func _choose_roi(rows: Array) -> Dictionary:
 	var wallet := int(farm["wallet"])
 	var inc := FE.income_rate(farm, int(farm["clock"]["last_settle_ms"]))
+	if inc <= 1e-6:
+		inc = FE.rate_here(farm)          # no income yet (the first minute): the present rate
 	var best: Dictionary = {}
 	var best_s := INF
 	for r in rows:
@@ -729,6 +749,18 @@ func _choose_roi(rows: Array) -> Dictionary:
 		return {}
 	if int(best["cost"]) <= wallet:
 		return best
+	var wait := float(int(best["cost"]) - wallet) / inc if inc > 1e-9 else INF
+	var pb := float(best["payback_s"]) * _weight(best)
+	var alt: Dictionary = {}
+	for r in rows:
+		if r["locked"] or not _allowed(r) or float(r["payback_s"]) <= 0.0 or int(r["cost"]) > wallet:
+			continue
+		var p := float(r["payback_s"]) * _weight(r)
+		var small: bool = p <= 2.0 * pb and float(r["cost"]) <= save_frac * float(best["cost"])
+		if (p < wait or small) and (alt.is_empty() or p < float(alt["payback_s"]) * _weight(alt)):
+			alt = r
+	if not alt.is_empty():
+		return alt
 	_next_wallet = int(best["cost"])
 	return {}
 

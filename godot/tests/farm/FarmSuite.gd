@@ -558,6 +558,49 @@ func cadence(assert_it := false) -> Dictionary:
 				h += HOUR
 		out["active"] = {"ok": miss.is_empty(), "text": "active sessions 1-5: %d/%d hours with an in-session purchase%s" % [
 				hours - miss.size(), hours, "" if miss.is_empty() else " (none in " + " ".join(miss) + ")"]}
+	# per-day detail (the critic's view): class/casual check-ins with a purchase
+	# per day; active purchases per session as arrival + in-session, and the
+	# longest in-session wait
+	for p in MAIN:
+		if not main.has(p):
+			continue
+		var b = main[p]
+		var parts: Array = []
+		if p == "active":
+			for k in b.wins.size():
+				if int(b.wins[k][2]) > b.days:
+					break
+				var a: int = b.wins[k][0]
+				var e: int = b.wins[k][1]
+				var n0 := 0
+				var ts: Array = [a + 60000]
+				for q in b.purchases:
+					if int(q["wi"]) != k:
+						continue
+					if int(q["t"]) <= a + 60000:
+						n0 += 1
+					else:
+						ts.append(int(q["t"]))
+				ts.append(e)
+				var lw := 0
+				for j in range(1, ts.size()):
+					lw = maxi(lw, ts[j] - ts[j - 1])
+				parts.append("d%d %d+%d/%dm" % [k + 1, n0, ts.size() - 2, lw / MIN])
+		else:
+			var per := {}
+			var nd := {}
+			for k in b.wins.size():
+				var d: int = int(b.wins[k][2])
+				if d > b.days:
+					break
+				nd[d] = int(nd.get(d, 0)) + 1
+				for q in b.purchases:
+					if int(q["wi"]) == k:
+						per[d] = int(per.get(d, 0)) + 1
+						break
+			for d in range(1, b.days + 1):
+				parts.append("d%d %d/%d" % [d, int(per.get(d, 0)), int(nd.get(d, 0))])
+		say("   %-7s %s" % [p, " ".join(parts)])
 	for p in out:
 		say("   cadence %s  %s" % [out[p]["text"], pf(out[p]["ok"])])
 		if assert_it:
@@ -904,12 +947,11 @@ func sd3(profiles: Array, ndays: int, full := true) -> void:
 		margins.append("%s %s +%.1f%%" % [SHORT[p], winner[p], (best[p] / maxf(1.0, second) - 1.0) * 100.0])
 	var ok_a := close_all.is_empty()
 	var ok_b := wset.size() >= 2
-	say("SD3 no strategy%s within 5%% of best everywhere: %s %s · distinct winners %d (>=2): %s%s" % [
-			"" if full else " but S5", pf(ok_a), ", ".join(close_all), wset.size(), pf(ok_b),
-			"" if full else "  [CI form, lead ruling 4]"])
+	say("SD3 (info) no strategy%s within 5%% of best everywhere: %s %s · distinct winners %d (>=2): %s" % [
+			"" if full else " but S5", "yes" if ok_a else "no", ", ".join(close_all), wset.size(), "yes" if ok_b else "no"])
 	say("    winner's margin over the runner-up: " + "  ".join(margins))
-	check(ok_a, "SD3", "within 5% of the best on every profile: " + ", ".join(close_all))
-	check(ok_b, "SD3", "one strategy wins every profile: " + str(winner))
+	say("    (informational since phase B2, lead ruling: with a Farm Book priced for each schedule the payback")
+	say("     reader S5 is near-optimal everywhere; profile-dependence is asserted in SD-PROFILE instead)")
 	done()
 
 func sd5(profiles: Array, ndays: int) -> void:
@@ -927,6 +969,75 @@ func sd5(profiles: Array, ndays: int) -> void:
 	say("   " + line)
 	say("SD5 smart beats naive by >=10%% on >=2 profiles: %d  %s   [cal hand-only 1/2/7/12%%]" % [n10, pf(n10 >= 2)])
 	check(n10 >= 2, "SD5", line)
+	# the 'biggest +N net in the plan picker' habit (phase B2 critic), info
+	var lb := ""
+	for p in profiles:
+		var g = roi_run(p, ndays)
+		var bg = bot(p, "roi", "biggest")
+		bg.run(ndays)
+		lb += "%s %s  " % [SHORT[p], pct(float(g.earned()) / maxf(1.0, bg.earned()) - 1.0)]
+	say("   smart vs 'plant the biggest +N net' (info): " + lb)
+	done()
+
+# ════════════════════════════════════════════════════════ SD-PROFILE (lead ruling, phase B2)
+
+# Profile-dependence where it is real and stable (SD3 and SD9 are info):
+#   hands or helpers: the hand share of income over each main run's last 7
+#     days differs by >= 30 percentage points between active and casual;
+#   adoption: some upgrade is bought >= 5 days earlier by one profile than by
+#     another (or never), within the shortest run (the Manor: active and
+#     class buy it around day 4; casual, whose 12 h night the Manor would
+#     turn into share picks, never does).
+const ADOPT := [["house", 3, "Manor 12h"], ["quick", 1, "Quick 30s"], ["quick", 2, "Quick 15s"],
+		["share", 1, "Share 60%"], ["share", 2, "Share 70%"], ["hut", 7, "Hut 7"], ["sprinkler", 3, "Sprinkler 3"],
+		["tool", 2, "Iron Hoe"]]
+
+func sd_profile() -> void:
+	section("SD-PROFILE: hands vs helpers, and upgrade adoption, by profile (lead ruling)")
+	var hs := {}
+	var line := ""
+	for p in MAIN:
+		var b = main[p]
+		var a: Dictionary = b.snap(maxi(1, b.days - 6))
+		var z: Dictionary = b.snap(b.days + 1)
+		hs[p] = float(int(z["hand"]) - int(a["hand"])) / maxf(1.0, float(int(z["lifetime"]) - int(a["lifetime"])))
+		line += "%s %d%%  " % [SHORT[p], int(round(hs[p] * 100))]
+	var gap: float = hs["active"] - hs["casual"]
+	var ok1 := gap >= 0.30
+	say("   hand share of income, last 7 days of each run: %s active - casual %d pp (>= 30)  %s" % [line, int(round(gap * 100)), pf(ok1)])
+	check(ok1, "SD-PROFILE hands", line)
+	var horizon := 1 << 30
+	for p in MAIN:
+		horizon = mini(horizon, main[p].days)
+	var best := 0
+	var best_at := ""
+	for it in ADOPT:
+		var days := {}
+		var cells := ""
+		for p in MAIN:
+			var b = main[p]
+			var n := 0
+			var d := -1
+			for q in b.purchases:
+				if q["item"] == it[0]:
+					n += 1
+					if n == it[1]:
+						d = b.day_of(int(q["t"]))
+						break
+			days[p] = d if d > 0 and d <= horizon else horizon + 1
+			cells += "%s %s  " % [SHORT[p], ("d%d" % d) if d > 0 and d <= horizon else "never"]
+		var lo := 1 << 30
+		var hi := 0
+		for p in days:
+			lo = mini(lo, days[p])
+			hi = maxi(hi, days[p])
+		if hi - lo > best:
+			best = hi - lo
+			best_at = it[2]
+		say("   %-11s %s" % [it[2], cells])
+	var ok2 := best >= 5
+	say("   widest adoption gap within %d days: %s, %d days (>= 5)  %s" % [horizon, best_at, best, pf(ok2)])
+	check(ok2, "SD-PROFILE adoption", "widest gap %d days (%s)" % [best, best_at])
 	done()
 
 # ════════════════════════════════════════════════════════ SD8, SD9
@@ -1008,8 +1119,7 @@ func sd9() -> void:
 		var tau := kendall(seqs[pr[0]], seqs[pr[1]])
 		ok = ok and tau < 0.8
 		line += "%s-%s %.2f  " % [SHORT[pr[0]], SHORT[pr[1]], tau]
-	say("SD9 tau %s %s" % [line, pf(ok)])
-	check(ok, "SD9", line)
+	say("SD9 (info) tau %s %s" % [line, "below 0.8" if ok else "not below 0.8"])
 	done()
 
 # ════════════════════════════════════════════════════════ §5.12 invariants
@@ -1027,6 +1137,10 @@ func invariants() -> void:
 	inv_no_deadlock()
 	inv_perf()
 	inv_determinism()
+	inv_time_debt()
+	inv_bumper_fresh()
+	inv_bare_key()
+	inv_picnic_edges()
 	done()
 
 # A mid-game farm: every field and the Greenhouse, huts, mixed plans planted
@@ -1376,6 +1490,169 @@ func inv_determinism() -> void:
 		say("     " + h)
 	check(ok, "inv8 determinism", "runs %s, rng hits %s" % [same, str(hits)])
 
+# 9 (phase B2) The clock time machine: push the clock forward J, Collect and
+# shop, set it back to real time, repeat. The farm owes the time it lived
+# ahead (clock.debt_ms) and stands still until the wall clock catches up, so
+# only the first jump pays. Also: a planting while the clock is set back gets
+# the Favorite of the farm's own day, not the earlier day's.
+func inv_time_debt() -> void:
+	restore()
+	var f := FE.new_farm()
+	f["wallet"] = 100000
+	f["page"] = 6
+	for i in 3:
+		f["fields"][i]["owned"] = true
+		f["fields"][i]["hut"] = true
+		f["fields"][i]["hut_k"] = i
+		f["fields"][i]["plan"] = "yukon_gold"
+	f["up"]["huts"] = 3
+	f["up"]["house"] = 3
+	FE.normalize(f)
+	var real := T0
+	FE.start(f, real - MIN, 0)
+	FE.tend_all(f, real, 0, true)
+	var gains: Array = []
+	var j := 14 * HOUR
+	for k in 5:
+		var before := int(f["stats"]["lifetime_coins"])
+		FE.note_input(f, real, 0)
+		FE.collect(f, real + j, 0)                    # the clock pushed forward
+		real += MIN                                   # set back to real time a minute later
+		FE.settle(f, real, 0)
+		FE.note_input(f, real, 0)
+		gains.append(int(f["stats"]["lifetime_coins"]) - before)
+	var later := 0
+	var gl: Array = []
+	for k in range(1, gains.size()):
+		later += int(gains[k])
+		gl.append(coins(gains[k]))
+	var debt := int(f["clock"]["debt_ms"])
+	# the Favorite: set back a day to the day whose Favorite is the plan, plant it
+	var g := FE.new_farm()
+	g["wallet"] = 1000000
+	g["page"] = 6
+	FE.normalize(g)
+	var day := FE.day_index(T0, 0)
+	var c := FE.favorite(day - 1)
+	FE.start(g, T0 - MIN, 0)
+	FE.set_plan(g, 0, c)
+	FE.settle(g, T0, 0)
+	FE.settle(g, T0 - DAY, 0)                         # rebased: debt 1 day
+	FE.tend(g, 0, T0 - DAY + MIN, 0)
+	var fav_ok: bool = not bool(g["fields"][0]["fav"]) and FE.favorite_day(g, T0 - DAY + MIN, 0) == day
+	# later cycles earn only what the real minute between them grows
+	var ok: bool = int(gains[0]) > 0 and later <= int(gains[0]) / 20 and debt > 0 and fav_ok
+	say("   9 time debt: forward-%s-and-back cycles earn %s, then %s (real minutes only); debt %s; Favorite planting while set back a day: %s  %s" % [
+			dur(j), coins(gains[0]), " · ".join(gl), dur(debt),
+			"not Favorite (the farm's day)" if fav_ok else "FAVORITE", pf(ok)])
+	check(ok, "inv9 time debt", "cycle gains %s, debt %d, fav_ok %s" % [str(gains), debt, fav_ok])
+
+# 10 (phase B2) Bumper: doubles a crop that ripened during it or in the
+# butterflies.bumper_fresh_s before it, never one left ripe to wait for it.
+func inv_bumper_fresh() -> void:
+	FE.reload_cfg(neutral_override(true))
+	var fresh: int = int(FE.cfg()["butterflies"].get("bumper_fresh_s", 120)) * SEC
+	var vals := {}
+	for late in [fresh / 2, fresh + 10 * MIN]:
+		for bump in [false, true]:
+			var f := FE.new_farm()
+			f["wallet"] = 1000000
+			f["page"] = 6
+			FE.normalize(f)
+			FE.start(f, T0 - MIN, 0)
+			FE.set_plan(f, 0, "purple")
+			FE.tend(f, 0, T0, 0)
+			var ripe: int = T0 + int(FE.crop_info("purple")["grow_ms"])
+			var t: int = ripe + late
+			FE.note_input(f, t - 10 * SEC, 0)
+			if bump:
+				FE.catch_butterfly(f, t - 5 * SEC, false, "bumper")
+			var w := int(f["wallet"])
+			var r: Dictionary = FE.tend(f, 0, t, 0)
+			vals["%d|%s" % [late, bump]] = int(r["coins"])
+	restore()
+	var ok: bool = vals["%d|true" % (fresh / 2)] == 2 * vals["%d|false" % (fresh / 2)] \
+			and vals["%d|true" % (fresh + 10 * MIN)] == vals["%d|false" % (fresh + 10 * MIN)]
+	say("   10 Bumper only on fresh crops: ripe %s before it x2 (%s vs %s), ripe %s before it x1 (%s vs %s)  %s" % [
+			dur(fresh / 2), coins(vals["%d|true" % (fresh / 2)]), coins(vals["%d|false" % (fresh / 2)]),
+			dur(fresh + 10 * MIN), coins(vals["%d|true" % (fresh + 10 * MIN)]), coins(vals["%d|false" % (fresh + 10 * MIN)]), pf(ok)])
+	check(ok, "inv10 Bumper freshness", str(vals))
+
+# 11 (phase B2) A bare key press (the town has no note) only pauses the
+# Spudlings: the next absence gets what is left of the shift, and a Spudling
+# crop standing at the key press stays theirs (share). Reading Pip's note
+# (Collect) renews the shift and makes the standing crops yours.
+func inv_bare_key() -> void:
+	restore()
+	var worked := {}
+	var conv := {}
+	for mode in ["none", "key", "collect"]:
+		# shift: Manor (12 h), a Red hand-planted at T0, an input at +6 h
+		var f := _key_farm("red")
+		var mid := T0 + 6 * HOUR
+		if mode == "key":
+			FE.note_input(f, mid, 0)
+		elif mode == "collect":
+			FE.collect(f, mid, 0)
+		FE.settle(f, T0 + 30 * HOUR, 0)
+		worked[mode] = int(FE.take_report(f)["worked_ms"]) + (6 * HOUR - 120 * SEC if mode == "collect" else 0)
+		# conversion: a Purple the Spudlings replanted at ~+61 m, growing at the
+		# +90 m input, picked at ~+111 m: share after a key, full x star EV after Collect
+		var g := _key_farm("purple")
+		FE.settle(g, T0 + 90 * MIN, 0)
+		if mode == "key":
+			FE.note_input(g, T0 + 90 * MIN, 0)
+		elif mode == "collect":
+			FE.collect(g, T0 + 90 * MIN, 0)
+		conv[mode] = int(FE.settle(g, T0 + 125 * MIN, 0)["coins"])
+	var share := 12.0 * 125.0 * 0.5
+	var ok: bool = worked["key"] == worked["none"] and worked["collect"] > worked["none"] \
+			and absf(conv["key"] - share) <= 1.0 and conv["collect"] > conv["key"]
+	say("   11 bare key at +6 h: Spudling hours none %s · key %s · Collect %s; a Spudling Purple growing at a key press pays %s, at a Collect %s  %s" % [
+			dur(worked["none"]), dur(worked["key"]), dur(worked["collect"]), coins(conv["key"]), coins(conv["collect"]), pf(ok)])
+	check(ok, "inv11 bare key", "worked %s conv %s" % [str(worked), str(conv)])
+
+func _key_farm(crop: String) -> Dictionary:
+	var f := FE.new_farm()
+	f["wallet"] = 1000000
+	f["page"] = 6
+	f["fields"][0]["hut"] = true
+	f["fields"][0]["hut_k"] = 0
+	f["up"]["huts"] = 1
+	f["up"]["house"] = 3
+	f["up"]["quick"] = 2
+	FE.normalize(f)
+	FE.start(f, T0 - MIN, 0)
+	FE.set_plan(f, 0, crop)
+	FE.tend(f, 0, T0, 0)
+	return f
+
+# 12 (phase B2) Number edges: the Picnic's daily allowance and NaN inputs;
+# Soil stops at the wallet cap instead of overflowing.
+func inv_picnic_edges() -> void:
+	restore()
+	var f := FE.new_farm()
+	FE.start(f, T0, 0)
+	var day_max := float(FE.cfg()["picnic"].get("day_max_min", 30))
+	var mins: Array = []
+	for k in 4:
+		mins.append(float(FE.award_picnic(f, 7200.0, 1.0, T0 + k * MIN, 0)["minutes"]))
+	var next_day: float = FE.award_picnic(f, 7200.0, 1.0, T0 + DAY, 0)["minutes"]
+	var tot := 0.0
+	for m in mins:
+		tot += m
+	var nan_ok: bool = FE.picnic_coins(f, NAN, 1.0) == 0 and FE.picnic_coins(f, 60.0, NAN) == 0 \
+			and int(FE.award_picnic(f, NAN, 1.0, T0 + DAY, 0)["coins"]) == 0
+	var g := FE.new_farm()
+	FE.normalize(g)
+	g["fields"][0]["soil"] = 400
+	var soil_ok: bool = FE.cost_of(g, "soil", 0) == -1 and not FE.book(g, T0, 0).any(func(r): return r["item"] == "soil")
+	var ok: bool = absf(tot - day_max) < 0.01 and absf(next_day - minf(day_max, float(FE.cfg()["picnic"]["max_min"]))) < 0.01 \
+			and nan_ok and soil_ok
+	say("   12 Picnic day allowance: four 2 h runs pay %s farm-min (cap %s), next day %s; NaN pays 0: %s; Soil L400 reads maxed: %s  %s" % [
+			" + ".join(mins.map(func(x): return "%.0f" % x)), str(day_max), "%.0f" % next_day, nan_ok, soil_ok, pf(ok)])
+	check(ok, "inv12 number edges", "mins %s next %s nan %s soil %s" % [str(mins), next_day, nan_ok, soil_ok])
+
 # ════════════════════════════════════════════════════════ bankroll, magnitudes, veteran
 
 # Kitchen bankroll (§6.3): a 10,000 c start may move Catalog pages at most
@@ -1510,6 +1787,7 @@ static func run_ci_set(s) -> void:
 	s.feel()
 	s.sd_fixtures(ALL4)
 	s.sd4(ALL4)
+	s.sd_profile()
 	s.sd3(MAIN, 14, false)
 	s.feel_plus(14, true, false)
 	s.sd8()
